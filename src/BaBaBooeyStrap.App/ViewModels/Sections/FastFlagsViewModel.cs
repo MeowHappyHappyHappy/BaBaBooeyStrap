@@ -16,6 +16,13 @@ public sealed class FastFlagsViewModel : ViewModelBase
     private bool _disableDpiScaling;
     private bool _manualFullscreen = true;
 
+    private bool _writeRenderingMode;
+    private bool _writeMSAAMode;
+    private bool _writeFrmQualityOverride;
+    private bool _writeMeshLodLevel;
+    private bool _writeDisableDpiScaling;
+    private bool _writeManualFullscreen;
+
     internal bool IsLoadingPresets { get; private set; }
 
     public FastFlagsViewModel(Settings settings, FastFlagManager fastFlagManager)
@@ -88,6 +95,42 @@ public sealed class FastFlagsViewModel : ViewModelBase
         set => SetProperty(ref _manualFullscreen, value);
     }
 
+    public bool WriteRenderingMode
+    {
+        get => _writeRenderingMode;
+        set => SetProperty(ref _writeRenderingMode, value);
+    }
+
+    public bool WriteMSAAMode
+    {
+        get => _writeMSAAMode;
+        set => SetProperty(ref _writeMSAAMode, value);
+    }
+
+    public bool WriteFrmQualityOverride
+    {
+        get => _writeFrmQualityOverride;
+        set => SetProperty(ref _writeFrmQualityOverride, value);
+    }
+
+    public bool WriteMeshLodLevel
+    {
+        get => _writeMeshLodLevel;
+        set => SetProperty(ref _writeMeshLodLevel, value);
+    }
+
+    public bool WriteDisableDpiScaling
+    {
+        get => _writeDisableDpiScaling;
+        set => SetProperty(ref _writeDisableDpiScaling, value);
+    }
+
+    public bool WriteManualFullscreen
+    {
+        get => _writeManualFullscreen;
+        set => SetProperty(ref _writeManualFullscreen, value);
+    }
+
     public FastFlagEditorViewModel CreateFastFlagEditorViewModel() => new(_fastFlagManager);
 
     public void LoadFastFlagPresets()
@@ -96,14 +139,19 @@ public sealed class FastFlagsViewModel : ViewModelBase
         try
         {
             _fastFlagManager.Load();
-            if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferVulkan")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
+            var vulkanFlag = _fastFlagManager.GetFlag("FFlagDebugGraphicsPreferVulkan");
+            var d3d11Flag = _fastFlagManager.GetFlag("FFlagDebugGraphicsPreferD3D11");
+            WriteRenderingMode = vulkanFlag != null || d3d11Flag != null;
+            if (vulkanFlag?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
                 SelectedRenderingMode = RenderingMode.Vulkan;
-            else if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferD3D11")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
+            else if (d3d11Flag?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
                 SelectedRenderingMode = RenderingMode.D3D11;
             else
                 SelectedRenderingMode = RenderingMode.Default;
 
-            if (int.TryParse(_fastFlagManager.GetFlag("FIntDebugForceMSAASamples")?.ToString(), out int msaa))
+            var msaaFlag = _fastFlagManager.GetFlag("FIntDebugForceMSAASamples");
+            WriteMSAAMode = msaaFlag != null;
+            if (int.TryParse(msaaFlag?.ToString(), out int msaa))
             {
                 SelectedMSAAMode = msaa switch
                 {
@@ -113,15 +161,28 @@ public sealed class FastFlagsViewModel : ViewModelBase
                     _ => MSAAMode.Default
                 };
             }
+            else
+            {
+                SelectedMSAAMode = MSAAMode.Default;
+            }
 
-            if (int.TryParse(_fastFlagManager.GetFlag("DFIntDebugFRMQualityLevelOverride")?.ToString(), out int frm))
+            var frmFlag = _fastFlagManager.GetFlag("DFIntDebugFRMQualityLevelOverride");
+            WriteFrmQualityOverride = frmFlag != null;
+            if (int.TryParse(frmFlag?.ToString(), out int frm))
                 FrmQualityOverride = frm;
 
-            if (int.TryParse(_fastFlagManager.GetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic")?.ToString(), out int lod))
+            var lodFlag = _fastFlagManager.GetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic");
+            WriteMeshLodLevel = lodFlag != null || _fastFlagManager.GetFlag("DFIntCSGLevelOfDetailSwitchingDistance") != null;
+            if (int.TryParse(lodFlag?.ToString(), out int lod))
                 MeshLodLevel = lod;
 
-            DisableDpiScaling = _fastFlagManager.GetFlag("DFFlagDisableDPIScale")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true;
-            ManualFullscreen = _fastFlagManager.GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString()?.Equals("False", StringComparison.OrdinalIgnoreCase) == true;
+            var dpiFlag = _fastFlagManager.GetFlag("DFFlagDisableDPIScale");
+            WriteDisableDpiScaling = dpiFlag != null;
+            DisableDpiScaling = dpiFlag?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true;
+
+            var fullscreenFlag = _fastFlagManager.GetFlag("FFlagHandleAltEnterFullscreenManually");
+            WriteManualFullscreen = fullscreenFlag != null;
+            ManualFullscreen = fullscreenFlag?.ToString()?.Equals("False", StringComparison.OrdinalIgnoreCase) == true;
         }
         finally
         {
@@ -133,32 +194,71 @@ public sealed class FastFlagsViewModel : ViewModelBase
     {
         if (!_settings.UseFastFlagManager) return;
 
-        switch (_selectedRenderingMode)
+        if (WriteRenderingMode)
         {
-            case RenderingMode.Vulkan:
-                _fastFlagManager.ApplyPreset("Rendering.Mode.Vulkan", "True");
-                break;
-            case RenderingMode.D3D11:
-                _fastFlagManager.ApplyPreset("Rendering.Mode.D3D11", "True");
-                break;
-            default:
-                _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferVulkan");
-                _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferD3D11");
-                break;
+            switch (_selectedRenderingMode)
+            {
+                case RenderingMode.Vulkan:
+                    _fastFlagManager.ApplyPreset("Rendering.Mode.Vulkan", "True");
+                    break;
+                case RenderingMode.D3D11:
+                    _fastFlagManager.ApplyPreset("Rendering.Mode.D3D11", "True");
+                    break;
+                default:
+                    _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferVulkan");
+                    _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferD3D11");
+                    break;
+            }
+        }
+        else
+        {
+            _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferVulkan");
+            _fastFlagManager.RemoveFlag("FFlagDebugGraphicsPreferD3D11");
         }
 
-        switch (_selectedMSAAMode)
+        if (WriteMSAAMode)
         {
-            case MSAAMode.x1: _fastFlagManager.ApplyPreset("Rendering.MSAA", 1); break;
-            case MSAAMode.x2: _fastFlagManager.ApplyPreset("Rendering.MSAA", 2); break;
-            case MSAAMode.x4: _fastFlagManager.ApplyPreset("Rendering.MSAA", 4); break;
-            default: _fastFlagManager.RemoveFlag("FIntDebugForceMSAASamples"); break;
+            switch (_selectedMSAAMode)
+            {
+                case MSAAMode.x1: _fastFlagManager.ApplyPreset("Rendering.MSAA", 1); break;
+                case MSAAMode.x2: _fastFlagManager.ApplyPreset("Rendering.MSAA", 2); break;
+                case MSAAMode.x4: _fastFlagManager.ApplyPreset("Rendering.MSAA", 4); break;
+                default: _fastFlagManager.RemoveFlag("FIntDebugForceMSAASamples"); break;
+            }
+        }
+        else
+        {
+            _fastFlagManager.RemoveFlag("FIntDebugForceMSAASamples");
         }
 
-        _fastFlagManager.ApplyPreset("Rendering.FRMQualityOverride", _frmQualityOverride);
-        _fastFlagManager.ApplyPreset("Geometry.MeshLOD", _meshLodLevel);
-        _fastFlagManager.ApplyPreset("Rendering.DisableScaling", _disableDpiScaling ? "True" : "False");
-        _fastFlagManager.ApplyPreset("Rendering.ManualFullscreen", _manualFullscreen ? "False" : "True");
+        if (WriteFrmQualityOverride)
+            _fastFlagManager.ApplyPreset("Rendering.FRMQualityOverride", _frmQualityOverride);
+        else
+            _fastFlagManager.RemoveFlag("DFIntDebugFRMQualityLevelOverride");
+
+        if (WriteMeshLodLevel)
+        {
+            _fastFlagManager.ApplyPreset("Geometry.MeshLOD", _meshLodLevel);
+        }
+        else
+        {
+            _fastFlagManager.RemoveFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic");
+            _fastFlagManager.RemoveFlag("DFIntCSGLevelOfDetailSwitchingDistance");
+            _fastFlagManager.RemoveFlag("DFIntCSGLevelOfDetailSwitchingDistanceL12");
+            _fastFlagManager.RemoveFlag("DFIntCSGLevelOfDetailSwitchingDistanceL23");
+            _fastFlagManager.RemoveFlag("DFIntCSGLevelOfDetailSwitchingDistanceL34");
+        }
+
+        if (WriteDisableDpiScaling)
+            _fastFlagManager.ApplyPreset("Rendering.DisableScaling", _disableDpiScaling ? "True" : "False");
+        else
+            _fastFlagManager.RemoveFlag("DFFlagDisableDPIScale");
+
+        if (WriteManualFullscreen)
+            _fastFlagManager.ApplyPreset("Rendering.ManualFullscreen", _manualFullscreen ? "False" : "True");
+        else
+            _fastFlagManager.RemoveFlag("FFlagHandleAltEnterFullscreenManually");
+
         _fastFlagManager.Save();
     }
 }

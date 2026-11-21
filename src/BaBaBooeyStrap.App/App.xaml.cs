@@ -189,12 +189,6 @@ public partial class App : Application
             orchestrator?.MultiInstanceController.Enable();
             _mainWindow?.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
             trayWrapper?.RefreshMultiInstanceMenuStatus();
-            if (!launchSettings.QuietFlag.Active)
-            {
-                trayWrapper?.ShowBalloonNotification(
-                    LocalizationService.Instance.GetString("Str_Tray_HoldTitle"),
-                    LocalizationService.Instance.GetString("Str_Tray_HoldMessage"));
-            }
 
             if (launchSettings.MenuFlag.Active)
             {
@@ -326,11 +320,6 @@ public partial class App : Application
             {
                 accountStore.Upsert(account);
                 _mainWindow?.ViewModel.AccountManagement.ReloadAccounts();
-                trayWrapper?.ShowBalloonNotification(
-                    LocalizationService.Instance.GetString("Str_Tray_LaunchedTitle"),
-                    result.ProcessId.HasValue
-                        ? LocalizationService.Instance.Format("Str_Tray_LaunchedPidFormat", result.ProcessId.Value)
-                        : LocalizationService.Instance.GetString("Str_Tray_LaunchedDone"));
 
                 if (settingsBackup != null)
                 {
@@ -438,15 +427,7 @@ public partial class App : Application
             var result = await orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
             dialog?.CloseBootstrapper();
 
-            if (result.Success)
-            {
-                trayWrapper?.ShowBalloonNotification(
-                    LocalizationService.Instance.GetString("Str_Tray_LaunchedTitle"),
-                    result.ProcessId.HasValue
-                        ? LocalizationService.Instance.Format("Str_Tray_LaunchedPidFormat", result.ProcessId.Value)
-                        : LocalizationService.Instance.GetString("Str_Tray_LaunchedDone"));
-            }
-            else if (!launchSettings.QuietFlag.Active)
+            if (!result.Success && !launchSettings.QuietFlag.Active)
             {
                 FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),

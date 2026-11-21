@@ -46,68 +46,80 @@
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource Str_FastFlags_RenderingApi}" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="RenderingCombo" Grid.Column="1" SelectedItem="{Binding FastFlags.SelectedRenderingMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteRenderingMode, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str_FastFlags_RenderingApi}" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="RenderingCombo" Grid.Column="2" SelectedItem="{Binding FastFlags.SelectedRenderingMode}" IsEnabled="{Binding FastFlags.WriteRenderingMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource Str_FastFlags_Msaa}" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="MsaaCombo" Grid.Column="1" SelectedItem="{Binding FastFlags.SelectedMSAAMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteMSAAMode, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock Grid.Column="1" Text="{DynamicResource Str_FastFlags_Msaa}" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="MsaaCombo" Grid.Column="2" SelectedItem="{Binding FastFlags.SelectedMSAAMode}" IsEnabled="{Binding FastFlags.WriteMSAAMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteFrmQualityOverride, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center">
                             <TextBlock Text="{DynamicResource Str_FastFlags_FrmQuality}"/>
                             <TextBlock Text="{DynamicResource Str_FastFlags_FrmQualityDesc}" FontSize="11.5" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="2" Value="{Binding FastFlags.FrmQualityOverride, Mode=TwoWay}" IsEnabled="{Binding FastFlags.WriteFrmQualityOverride}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteMeshLodLevel, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1" Margin="0,0,12,0" VerticalAlignment="Center">
                             <TextBlock Text="{DynamicResource Str_FastFlags_MeshLod}"/>
                             <TextBlock Text="{DynamicResource Str_FastFlags_MeshLodDesc}" FontSize="11.5" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="2" Value="{Binding FastFlags.MeshLodLevel, Mode=TwoWay}" IsEnabled="{Binding FastFlags.WriteMeshLodLevel}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
                     </Grid>
 
                     <Grid Margin="0,4,0,10">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteDisableDpiScaling, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1" Margin="0,0,16,0">
                             <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScaling}"/>
                             <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScalingDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.DisableDpiScaling}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding FastFlags.DisableDpiScaling}" IsEnabled="{Binding FastFlags.WriteDisableDpiScaling}" VerticalAlignment="Center"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                        <CheckBox Grid.Column="0" IsChecked="{Binding FastFlags.WriteManualFullscreen, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <StackPanel Grid.Column="1" Margin="0,0,16,0">
                             <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreen}"/>
                             <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreenDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.ManualFullscreen}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding FastFlags.ManualFullscreen}" IsEnabled="{Binding FastFlags.WriteManualFullscreen}" VerticalAlignment="Center"/>
                     </Grid>
 
                     <ui:Button Content="{DynamicResource Str_FastFlags_ApplyPresets}" Appearance="Secondary" Click="ApplyPresets_Click" HorizontalAlignment="Right"/>
