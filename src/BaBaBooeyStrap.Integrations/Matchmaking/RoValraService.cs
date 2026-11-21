@@ -598,10 +598,11 @@ public sealed class RoValraService : IRoValraService
         }
     }
 
-    private static string NormalizeCountryToIso(string country)
+    public static string NormalizeCountryToIso(string? country)
     {
+        if (string.IsNullOrWhiteSpace(country)) return string.Empty;
         string trimmed = country.Trim();
         if (trimmed.Length == 2) return trimmed.ToUpperInvariant();
-        return CountryNameToIso.TryGetValue(trimmed, out string? iso) ? iso : trimmed;
+        return CountryNameToIso.TryGetValue(trimmed, out string? iso) ? iso : string.Empty;
     }
 }

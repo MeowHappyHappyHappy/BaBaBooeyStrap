@@ -100,8 +100,7 @@ public partial class App : Application
             orchestrator.ActiveServersChanged += (_, _) => _services?.TrayWrapper?.RefreshServerLocationStatus();
             orchestrator.ServerLocationResolved += (_, info) =>
             {
-                var (title, message) = NotifyIconWrapper.FormatServerJoinNotification(info);
-                _services?.TrayWrapper?.ShowBalloonNotification(title, message, 5000);
+                _services?.TrayWrapper?.ShowServerJoinToast(info, 5000);
             };
 
             trayWrapper.Initialize(

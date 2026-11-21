@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Interop;
+using BaBaBooeyStrap.App.Views.Dialogs;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
@@ -181,10 +182,61 @@ public sealed class NotifyIconWrapper : IDisposable
 
         string endpoint = FormatEndpoint(info);
         string message = info.Location is ServerLocationInfo loc
-            ? $"{RoValraService.FormatFlagEmoji(loc.Country)} {loc.City}, {loc.Region}, {loc.Country} ({loc.RegionCode})\nIP: {endpoint}"
+            ? $"{loc.City}, {loc.Region}, {loc.Country} ({loc.RegionCode})\nIP: {endpoint}"
             : LocalizationService.Instance.Format("Str_Tray_ServerJoinIpOnlyFormat", endpoint);
 
         return (title, message);
+    }
+
+    public void ShowServerJoinToast(ActiveServerSessionInfo info, int durationMs = 5000)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        var (title, message) = FormatServerJoinNotification(info);
+        LastBalloonTitle = title;
+        LastBalloonMessage = message;
+
+        if (_headlessMode || _disposed) return;
+
+        string endpointText = $"IP: {FormatEndpoint(info)}";
+        string locationText = info.Location is ServerLocationInfo loc
+            ? $"{loc.City}, {loc.Region}, {loc.Country} ({loc.RegionCode})"
+            : LocalizationService.Instance.Format("Str_Tray_ServerJoinIpOnlyFormat", FormatEndpoint(info));
+        string? country = info.Location?.Country;
+        string iso = FlagImageService.ResolveIsoCode(country);
+
+        _ = Task.Run(async () =>
+        {
+            byte[]? pngBytes = FlagImageService.TryGetCachedFlagPngBytes(country);
+            if (pngBytes == null && !string.IsNullOrEmpty(iso))
+            {
+                try
+                {
+                    using var cts = new CancellationTokenSource(1500);
+                    pngBytes = await FlagImageService.GetFlagPngBytesAsync(country, cts.Token).ConfigureAwait(false);
+                }
+                catch { }
+            }
+
+            if (_disposed) return;
+
+            var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
+            if (dispatcher == null) return;
+
+            _ = dispatcher.BeginInvoke(() =>
+            {
+                if (_disposed) return;
+                var wpfFlag = FlagImageService.CreateWpfFlagImage(pngBytes);
+                ServerJoinToastWindow.ShowToast(
+                    title,
+                    locationText,
+                    endpointText,
+                    iso,
+                    wpfFlag,
+                    durationMs,
+                    onClick: () => CopyServerSessionDetails(info));
+            });
+        });
     }
 
     public void RefreshMultiInstanceMenuStatus()
@@ -288,6 +340,7 @@ public sealed class NotifyIconWrapper : IDisposable
                 if (canMutateMenu && _serverLocationMenuItem != null)
                 {
                     ClearServerSubItems();
+                    ClearMenuItemImage(_serverLocationMenuItem);
                     _serverLocationMenuItem.Text = menuText;
                 }
                 if (_notifyIcon != null && !forceMenuUpdate)
@@ -323,6 +376,7 @@ public sealed class NotifyIconWrapper : IDisposable
                 if (canMutateMenu && _serverLocationMenuItem != null)
                 {
                     ClearServerSubItems();
+                    SetMenuItemFlagImage(_serverLocationMenuItem, server.Location?.Country);
                     _serverLocationMenuItem.Text = menuText;
                 }
                 if (_notifyIcon != null && !forceMenuUpdate)
@@ -355,6 +409,7 @@ public sealed class NotifyIconWrapper : IDisposable
             if (canMutateMenu && _serverLocationMenuItem != null)
             {
                 ClearServerSubItems();
+                ClearMenuItemImage(_serverLocationMenuItem);
                 for (int i = 0; i < servers.Count; i++)
                 {
                     var captured = servers[i];
@@ -362,6 +417,7 @@ public sealed class NotifyIconWrapper : IDisposable
                         subLabels[i],
                         null,
                         (_, _) => CopyServerSessionDetails(captured));
+                    SetMenuItemFlagImage(subItem, captured.Location?.Country);
                     _serverLocationMenuItem.DropDownItems.Add(subItem);
                 }
                 _serverLocationMenuItem.Text = multiMenuText;
@@ -370,6 +426,30 @@ public sealed class NotifyIconWrapper : IDisposable
             {
                 try { _notifyIcon.Text = multiTooltip; } catch { }
             }
+        }
+    }
+
+    private static void ClearMenuItemImage(WinForms.ToolStripMenuItem item)
+    {
+        if (item.Image != null)
+        {
+            var old = item.Image;
+            item.Image = null;
+            try { old.Dispose(); } catch { }
+        }
+    }
+
+    private static void SetMenuItemFlagImage(WinForms.ToolStripMenuItem item, string? country)
+    {
+        ClearMenuItemImage(item);
+        if (string.IsNullOrWhiteSpace(country)) return;
+
+        byte[]? cachedBytes = FlagImageService.TryGetCachedFlagPngBytes(country);
+        item.Image = FlagImageService.CreateMenuFlagBitmap(country, cachedBytes);
+
+        if (cachedBytes == null && !string.IsNullOrEmpty(FlagImageService.ResolveIsoCode(country)))
+        {
+            _ = FlagImageService.GetFlagPngBytesAsync(country);
         }
     }
 
@@ -382,6 +462,12 @@ public sealed class NotifyIconWrapper : IDisposable
         {
             var oldItem = _serverLocationMenuItem.DropDownItems[0];
             _serverLocationMenuItem.DropDownItems.RemoveAt(0);
+            if (oldItem.Image != null)
+            {
+                var oldImg = oldItem.Image;
+                oldItem.Image = null;
+                try { oldImg.Dispose(); } catch { }
+            }
             try { oldItem.Dispose(); } catch { }
         }
     }
@@ -398,10 +484,15 @@ public sealed class NotifyIconWrapper : IDisposable
     {
         if (session.Location is ServerLocationInfo loc)
         {
-            string flag = RoValraService.FormatFlagEmoji(loc.Country);
-            return includeRegionDetail
-                ? $"{flag} {loc.City}, {loc.Region}, {loc.Country} ({loc.RegionCode})"
-                : $"{flag} {loc.City}, {loc.Country} ({loc.RegionCode})";
+            if (includeRegionDetail)
+            {
+                return $"{loc.City}, {loc.Region}, {loc.Country} ({loc.RegionCode})";
+            }
+
+            string iso = FlagImageService.ResolveIsoCode(loc.Country);
+            return string.IsNullOrEmpty(iso)
+                ? $"{loc.City}, {loc.Country} ({loc.RegionCode})"
+                : $"[{iso}] {loc.City}, {loc.Country} ({loc.RegionCode})";
         }
 
         return includeRegionDetail
@@ -609,6 +700,12 @@ public sealed class NotifyIconWrapper : IDisposable
             }
             catch { }
             _notifyIcon = null;
+        }
+
+        if (_serverLocationMenuItem != null)
+        {
+            ClearServerSubItems();
+            ClearMenuItemImage(_serverLocationMenuItem);
         }
 
         _settingsMenuItem = null;
