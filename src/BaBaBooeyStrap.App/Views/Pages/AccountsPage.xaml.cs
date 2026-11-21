@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
+using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.ViewModels.Sections;
 using BaBaBooeyStrap.App.Views.Dialogs;
@@ -112,10 +114,85 @@ public partial class AccountsPage : Page
         if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
         {
             ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
+            ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
         }
     }
 
-    private void RemoveAccount_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.RemoveCheckedOrSelectedAccounts();
+    private void UpdateCookie_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
+
+        if (ViewModel.AccountManagement.SelectedAccountItem is not AccountItem selected)
+        {
+            ViewModel.StatusMessage = LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForCookieUpdate");
+            return;
+        }
+
+        var dlg = new AddAccountDialog(selected.Username, selected.Notes) { Owner = Window.GetWindow(this) };
+        if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
+        {
+            ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
+            ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
+        }
+    }
+
+    private async void VerifyCookies_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        try
+        {
+            await ViewModel.AccountManagement.VerifyAccountsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("AccountsPage.VerifyCookies", ex);
+            ViewModel.AccountManagement.AppendActivityLog($"Cookie verification failed: {ex.Message}");
+        }
+    }
+
+    private async void VerifySelectedCookie_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel?.AccountManagement.SelectedAccountItem is not AccountItem selected) return;
+        try
+        {
+            await ViewModel.AccountManagement.VerifyAccountsAsync([selected]);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("AccountsPage.VerifySelectedCookie", ex);
+            ViewModel.AccountManagement.AppendActivityLog($"Cookie verification failed: {ex.Message}");
+        }
+    }
+
+    private void RemoveAccount_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
+
+        var candidates = ViewModel.AccountManagement.GetRemovalCandidates();
+        if (candidates.Count == 0)
+        {
+            ViewModel.AccountManagement.RemoveCheckedOrSelectedAccounts();
+            return;
+        }
+
+        string previewNames = string.Join(", ", candidates.Take(5).Select(a => a.Username));
+        if (candidates.Count > 5)
+        {
+            previewNames += $" (+{candidates.Count - 5})";
+        }
+
+        bool confirmed = FluentDialogService.ShowConfirm(
+            LocalizationService.Instance.GetString("Str_Dialog_ConfirmRemoveAccountTitle"),
+            LocalizationService.Instance.Format("Str_Dialog_ConfirmRemoveAccountMessageFormat", candidates.Count, previewNames),
+            confirmText: LocalizationService.Instance.GetString("Str_Common_Remove"),
+            isDestructive: true,
+            owner: Window.GetWindow(this));
+
+        if (confirmed)
+        {
+            ViewModel.AccountManagement.RemoveCheckedOrSelectedAccounts();
+        }
+    }
 
     private void SaveTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.SaveCurrentJoinTarget();
 
@@ -135,14 +212,42 @@ public partial class AccountsPage : Page
         Dispatcher.BeginInvoke(() => ViewModel?.AccountManagement.CommitAccountNotesEdit(item));
     }
 
-    private void AccountsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    private async void AccountsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (AccountsGrid.CurrentColumn is not null &&
-            AccountsGrid.CurrentColumn.IsReadOnly &&
-            ViewModel?.AccountManagement.SelectedAccountItem is not null)
+        if (e.OriginalSource is DependencyObject source && FindVisualParent<CheckBox>(source) != null)
+        {
+            return;
+        }
+
+        if (ViewModel?.AccountManagement.SelectedAccountItem is null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(AccountsGrid.CurrentColumn, SettingsSummaryColumn))
         {
             OpenSettingsForSelectedAccount();
+            return;
         }
+
+        if (AccountsGrid.CurrentColumn is { IsReadOnly: true })
+        {
+            await LaunchSelectedWithConfirmationAsync();
+        }
+    }
+
+    private void AccountsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        bool hasSelection = ViewModel?.AccountManagement.SelectedAccountItem != null;
+        bool notLaunching = ViewModel?.AccountManagement.IsNotLaunching ?? false;
+        bool notVerifying = ViewModel?.AccountManagement.IsNotVerifyingCookies ?? false;
+
+        CtxLaunchAccount.IsEnabled = hasSelection && notLaunching;
+        CtxEditSettings.IsEnabled = hasSelection && notLaunching;
+        CtxUpdateCookie.IsEnabled = hasSelection && notLaunching;
+        CtxVerifyCookie.IsEnabled = hasSelection && notVerifying;
+        CtxApplyAfk.IsEnabled = hasSelection && notLaunching;
+        CtxRemoveAccount.IsEnabled = hasSelection && notLaunching;
     }
 
     private void OpenSettingsForSelectedAccount()
@@ -151,7 +256,7 @@ public partial class AccountsPage : Page
 
         if (ViewModel.AccountManagement.SelectedAccountItem is not AccountItem selected)
         {
-            ViewModel.StatusMessage = Services.LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForSettings");
+            ViewModel.StatusMessage = LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForSettings");
             return;
         }
 
@@ -166,11 +271,20 @@ public partial class AccountsPage : Page
         }
     }
 
-    private async void LaunchSelected_Click(object sender, RoutedEventArgs e)
+    private async void LaunchSelected_Click(object sender, RoutedEventArgs e) =>
+        await LaunchSelectedWithConfirmationAsync();
+
+    private async Task LaunchSelectedWithConfirmationAsync()
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
         try
         {
+            if (ViewModel.AccountManagement.SelectedAccountItem is AccountItem selected &&
+                !ConfirmLaunchIfEnabled(1, selected.Username))
+            {
+                return;
+            }
+
             await ViewModel.AccountManagement.LaunchSelectedFromUiAsync();
         }
         catch (Exception ex)
@@ -182,9 +296,24 @@ public partial class AccountsPage : Page
 
     private async void LaunchChecked_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
         try
         {
+            var checkedAccounts = ViewModel.AccountManagement.GetCheckedAccounts();
+            if (checkedAccounts.Count > 0)
+            {
+                string summary = string.Join(", ", checkedAccounts.Take(5).Select(a => a.Username));
+                if (checkedAccounts.Count > 5)
+                {
+                    summary += $" (+{checkedAccounts.Count - 5})";
+                }
+
+                if (!ConfirmLaunchIfEnabled(checkedAccounts.Count, summary))
+                {
+                    return;
+                }
+            }
+
             await ViewModel.AccountManagement.LaunchCheckedAccountsAsync();
         }
         catch (Exception ex)
@@ -192,5 +321,37 @@ public partial class AccountsPage : Page
             Logger.ExceptionStatic("AccountsPage.LaunchChecked", ex);
             ViewModel.AccountManagement.AppendActivityLog($"Batch launch failed: {ex.Message}");
         }
+    }
+
+    private bool ConfirmLaunchIfEnabled(int accountCount, string accountSummary)
+    {
+        if (ViewModel == null || !ViewModel.LaunchSettings.ConfirmLaunches)
+        {
+            return true;
+        }
+
+        string target = string.IsNullOrWhiteSpace(ViewModel.AccountManagement.LaunchTargetInput)
+            ? LocalizationService.Instance.GetString("Str_Accounts_ConfirmLaunchDefaultTarget")
+            : ViewModel.AccountManagement.LaunchTargetInput.Trim();
+
+        return FluentDialogService.ShowConfirm(
+            LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchTitle"),
+            LocalizationService.Instance.Format("Str_Dialog_ConfirmLaunchAccountsMessageFormat", accountCount, accountSummary, target),
+            confirmText: LocalizationService.Instance.GetString("Str_Common_Launch"),
+            owner: Window.GetWindow(this));
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child != null)
+        {
+            if (child is T match)
+            {
+                return match;
+            }
+            child = VisualTreeHelper.GetParent(child);
+        }
+
+        return null;
     }
 }

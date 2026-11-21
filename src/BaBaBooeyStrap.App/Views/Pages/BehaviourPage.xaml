@@ -12,25 +12,114 @@
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <TextBlock Text="{DynamicResource Str_Behaviour_LauncherHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.CheckForUpdates}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ConfirmLaunches}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ConfirmLaunches}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WpfSoftwareRender}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.WPFSoftwareRender}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DeveloperMode}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.DeveloperMode}" HorizontalAlignment="Right"/></DockPanel>
+                    <TextBlock Text="{DynamicResource Str_Behaviour_LauncherHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.CheckForUpdates}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_ConfirmLaunches}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_ConfirmLaunchesDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.ConfirmLaunches}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_MinimizeToTray}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_MinimizeToTrayDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.MinimizeToTray}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_WpfSoftwareRender}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_WpfSoftwareRenderDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.WPFSoftwareRender}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6,0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_DeveloperMode}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_DeveloperModeDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.DeveloperMode}" VerticalAlignment="Center"/>
+                    </Grid>
                 </StackPanel>
             </Border>
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <TextBlock Text="{DynamicResource Str_Behaviour_IntegrationsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableActivityTracking}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.HideRPCButtons}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowServerDetails}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WindowManipulation}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableWindowManipulation}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_FakeBorderless}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.FakeBorderlessFullscreen}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmaking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableBetterMatchmaking}" HorizontalAlignment="Right"/></DockPanel>
+                    <TextBlock Text="{DynamicResource Str_Behaviour_IntegrationsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableActivityTracking}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.HideRPCButtons}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowServerDetails}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_WindowManipulation}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_WindowManipulationDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.EnableWindowManipulation}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_FakeBorderless}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_FakeBorderlessDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.FakeBorderlessFullscreen}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6,0,2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmaking}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmakingDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.EnableBetterMatchmaking}" VerticalAlignment="Center"/>
+                    </Grid>
                 </StackPanel>
             </Border>
 

@@ -16,6 +16,8 @@ public sealed class FastFlagsViewModel : ViewModelBase
     private bool _disableDpiScaling;
     private bool _manualFullscreen = true;
 
+    internal bool IsLoadingPresets { get; private set; }
+
     public FastFlagsViewModel(Settings settings, FastFlagManager fastFlagManager)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -90,33 +92,41 @@ public sealed class FastFlagsViewModel : ViewModelBase
 
     public void LoadFastFlagPresets()
     {
-        _fastFlagManager.Load();
-        if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferVulkan")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
-            SelectedRenderingMode = RenderingMode.Vulkan;
-        else if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferD3D11")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
-            SelectedRenderingMode = RenderingMode.D3D11;
-        else
-            SelectedRenderingMode = RenderingMode.Default;
-
-        if (int.TryParse(_fastFlagManager.GetFlag("FIntDebugForceMSAASamples")?.ToString(), out int msaa))
+        IsLoadingPresets = true;
+        try
         {
-            SelectedMSAAMode = msaa switch
+            _fastFlagManager.Load();
+            if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferVulkan")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
+                SelectedRenderingMode = RenderingMode.Vulkan;
+            else if (_fastFlagManager.GetFlag("FFlagDebugGraphicsPreferD3D11")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true)
+                SelectedRenderingMode = RenderingMode.D3D11;
+            else
+                SelectedRenderingMode = RenderingMode.Default;
+
+            if (int.TryParse(_fastFlagManager.GetFlag("FIntDebugForceMSAASamples")?.ToString(), out int msaa))
             {
-                1 => MSAAMode.x1,
-                2 => MSAAMode.x2,
-                4 => MSAAMode.x4,
-                _ => MSAAMode.Default
-            };
+                SelectedMSAAMode = msaa switch
+                {
+                    1 => MSAAMode.x1,
+                    2 => MSAAMode.x2,
+                    4 => MSAAMode.x4,
+                    _ => MSAAMode.Default
+                };
+            }
+
+            if (int.TryParse(_fastFlagManager.GetFlag("DFIntDebugFRMQualityLevelOverride")?.ToString(), out int frm))
+                FrmQualityOverride = frm;
+
+            if (int.TryParse(_fastFlagManager.GetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic")?.ToString(), out int lod))
+                MeshLodLevel = lod;
+
+            DisableDpiScaling = _fastFlagManager.GetFlag("DFFlagDisableDPIScale")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true;
+            ManualFullscreen = _fastFlagManager.GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString()?.Equals("False", StringComparison.OrdinalIgnoreCase) == true;
         }
-
-        if (int.TryParse(_fastFlagManager.GetFlag("DFIntDebugFRMQualityLevelOverride")?.ToString(), out int frm))
-            FrmQualityOverride = frm;
-
-        if (int.TryParse(_fastFlagManager.GetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic")?.ToString(), out int lod))
-            MeshLodLevel = lod;
-
-        DisableDpiScaling = _fastFlagManager.GetFlag("DFFlagDisableDPIScale")?.ToString()?.Equals("True", StringComparison.OrdinalIgnoreCase) == true;
-        ManualFullscreen = _fastFlagManager.GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString()?.Equals("False", StringComparison.OrdinalIgnoreCase) == true;
+        finally
+        {
+            IsLoadingPresets = false;
+        }
     }
 
     public void ApplyFastFlagPresets()

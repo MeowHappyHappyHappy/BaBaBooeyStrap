@@ -116,11 +116,13 @@ public partial class App : Application
             Logger.ExceptionStatic("App.OnStartup", ex);
             if (!_isQuietMode)
             {
-                MessageBox.Show(
-                    ex.Message,
-                    LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                try
+                {
+                    FluentDialogService.ShowError(
+                        LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                        ex.Message);
+                }
+                catch { }
             }
             ShutdownApp(1);
         }
@@ -135,11 +137,9 @@ public partial class App : Application
         {
             try
             {
-                MessageBox.Show(
-                    e.Exception.Message,
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    e.Exception.Message);
             }
             catch { }
         }
@@ -273,11 +273,9 @@ public partial class App : Application
         {
             if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    LocalizationService.Instance.GetString("Str_Cli_MissingAccountOrTarget"),
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    LocalizationService.Instance.GetString("Str_Cli_MissingAccountOrTarget"));
             }
             return;
         }
@@ -292,11 +290,9 @@ public partial class App : Application
             Logger.WarnStatic("App.Cli", $"Account not found: '{identifier}'.");
             if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    LocalizationService.Instance.Format("Str_Cli_AccountNotFoundFormat", identifier),
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    LocalizationService.Instance.Format("Str_Cli_AccountNotFoundFormat", identifier));
             }
             return;
         }
@@ -343,11 +339,9 @@ public partial class App : Application
             }
             else if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"),
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"));
             }
         }
         catch (Exception ex)
@@ -355,11 +349,9 @@ public partial class App : Application
             Logger.ExceptionStatic("App.LaunchAccountFromCliAsync", ex);
             if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    ex.Message,
+                FluentDialogService.ShowError(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                    ex.Message);
             }
         }
         finally
@@ -413,6 +405,18 @@ public partial class App : Application
         var settingsManager = _services.SettingsManager;
         var trayWrapper = _services.TrayWrapper;
 
+        if (!launchSettings.QuietFlag.Active && settingsManager.Prop.ConfirmLaunches)
+        {
+            bool confirmed = FluentDialogService.ShowConfirm(
+                LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchTitle"),
+                LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchGenericMessage"),
+                confirmText: LocalizationService.Instance.GetString("Str_Common_Launch"));
+            if (!confirmed)
+            {
+                return;
+            }
+        }
+
         using var cts = new CancellationTokenSource();
         IBootstrapperDialog? dialog = null;
 
@@ -444,11 +448,9 @@ public partial class App : Application
             }
             else if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"),
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"));
             }
         }
         catch (OperationCanceledException)
@@ -462,11 +464,9 @@ public partial class App : Application
             Logger.ExceptionStatic("App", ex);
             if (!launchSettings.QuietFlag.Active)
             {
-                MessageBox.Show(
-                    ex.Message,
+                FluentDialogService.ShowError(
                     LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
+                    ex.Message);
             }
         }
 
@@ -529,13 +529,12 @@ public partial class App : Application
 
         if (!launchSettings.QuietFlag.Active)
         {
-            var confirm = MessageBox.Show(
-                LocalizationService.Instance.GetString("Str_Dialog_UninstallConfirm"),
+            bool confirmed = FluentDialogService.ShowConfirm(
                 LocalizationService.Instance.GetString("Str_Dialog_UninstallTitle"),
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
+                LocalizationService.Instance.GetString("Str_Dialog_UninstallConfirm"),
+                isDestructive: true);
 
-            if (confirm != MessageBoxResult.Yes) return;
+            if (!confirmed) return;
         }
 
         _services.InstallerService.Uninstall(removeDataDirectory: true, scheduleSelfDelete: true);
@@ -567,13 +566,12 @@ public partial class App : Application
             var runningPids = _services.Orchestrator.MultiInstanceController.GetStatus().RunningRobloxPids;
             if (runningPids.Count > 0)
             {
-                var choice = MessageBox.Show(
-                    LocalizationService.Instance.Format("Str_Dialog_ConfirmExitMessageFormat", runningPids.Count),
+                bool confirmed = FluentDialogService.ShowConfirm(
                     LocalizationService.Instance.GetString("Str_Dialog_ConfirmExitTitle"),
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
+                    LocalizationService.Instance.Format("Str_Dialog_ConfirmExitMessageFormat", runningPids.Count),
+                    isDestructive: true);
 
-                if (choice != MessageBoxResult.Yes)
+                if (!confirmed)
                     return;
             }
         }

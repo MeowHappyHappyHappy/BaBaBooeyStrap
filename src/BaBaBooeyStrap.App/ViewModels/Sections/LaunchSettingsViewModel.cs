@@ -27,6 +27,9 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     private string _cdnTestResultKey = "Str_Common_NotTestedYet";
     private object?[] _cdnTestResultArgs = Array.Empty<object?>();
     private bool _forceReinstall;
+    private bool _isTestingCdn;
+    private bool _hasUnsavedGlobalSettings;
+    private bool _isReloadingGlobalSettings;
 
     public LaunchSettingsViewModel(
         Settings settings,
@@ -103,53 +106,139 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
         private set => SetProperty(ref _cdnTestResult, value);
     }
 
+    public bool IsTestingCdn
+    {
+        get => _isTestingCdn;
+        private set
+        {
+            if (SetProperty(ref _isTestingCdn, value))
+            {
+                OnPropertyChanged(nameof(IsNotTestingCdn));
+            }
+        }
+    }
+
+    public bool IsNotTestingCdn => !IsTestingCdn;
+
+    public bool HasUnsavedGlobalSettings
+    {
+        get => _hasUnsavedGlobalSettings;
+        private set => SetProperty(ref _hasUnsavedGlobalSettings, value);
+    }
+
+    internal bool IsReloadingGlobalSettings => _isReloadingGlobalSettings;
+
     // --- Global Settings ---
     public int FramerateCap
     {
         get => _globalSettingsManager.FramerateCap;
-        set { _globalSettingsManager.FramerateCap = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.FramerateCap != value)
+            {
+                _globalSettingsManager.FramerateCap = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public bool ReadOnlyLocked
     {
         get => _globalSettingsManager.ReadOnlyLocked;
-        set { _globalSettingsManager.ReadOnlyLocked = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.ReadOnlyLocked != value)
+            {
+                _globalSettingsManager.ReadOnlyLocked = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public float MouseSensitivity
     {
         get => _globalSettingsManager.MouseSensitivity;
-        set { _globalSettingsManager.MouseSensitivity = value; OnPropertyChanged(); }
+        set
+        {
+            if (Math.Abs(_globalSettingsManager.MouseSensitivity - value) > 0.0001f)
+            {
+                _globalSettingsManager.MouseSensitivity = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public int SavedQualityLevel
     {
         get => _globalSettingsManager.SavedQualityLevel;
-        set { _globalSettingsManager.SavedQualityLevel = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.SavedQualityLevel != value)
+            {
+                _globalSettingsManager.SavedQualityLevel = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public bool VREnabled
     {
         get => _globalSettingsManager.VREnabled;
-        set { _globalSettingsManager.VREnabled = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.VREnabled != value)
+            {
+                _globalSettingsManager.VREnabled = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public float PreferredTransparency
     {
         get => _globalSettingsManager.PreferredTransparency;
-        set { _globalSettingsManager.PreferredTransparency = value; OnPropertyChanged(); }
+        set
+        {
+            if (Math.Abs(_globalSettingsManager.PreferredTransparency - value) > 0.0001f)
+            {
+                _globalSettingsManager.PreferredTransparency = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public bool ReducedMotion
     {
         get => _globalSettingsManager.ReducedMotion;
-        set { _globalSettingsManager.ReducedMotion = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.ReducedMotion != value)
+            {
+                _globalSettingsManager.ReducedMotion = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     public int PreferredTextSize
     {
         get => _globalSettingsManager.PreferredTextSize;
-        set { _globalSettingsManager.PreferredTextSize = value; OnPropertyChanged(); }
+        set
+        {
+            if (_globalSettingsManager.PreferredTextSize != value)
+            {
+                _globalSettingsManager.PreferredTextSize = value;
+                OnPropertyChanged();
+                if (!_isReloadingGlobalSettings) HasUnsavedGlobalSettings = true;
+            }
+        }
     }
 
     // --- Shortcuts & Paths ---
@@ -166,6 +255,9 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
 
     public async Task TestFastestCdnMirrorAsync()
     {
+        if (IsTestingCdn) return;
+
+        IsTestingCdn = true;
         _cdnTestResultKey = "Str_Channel_TestingMirrors";
         _cdnTestResultArgs = Array.Empty<object?>();
         CdnTestResult = LocalizedFormatHelper.Format(_cdnTestResultKey, _cdnTestResultArgs);
@@ -185,10 +277,15 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
             _cdnTestResultArgs = [ex.Message];
             CdnTestResult = LocalizedFormatHelper.Format(_cdnTestResultKey, _cdnTestResultArgs);
         }
+        finally
+        {
+            IsTestingCdn = false;
+        }
     }
 
     public void LoadGlobalSettingsSafe()
     {
+        _isReloadingGlobalSettings = true;
         try
         {
             _globalSettingsManager.Load();
@@ -200,13 +297,19 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
             OnPropertyChanged(nameof(PreferredTransparency));
             OnPropertyChanged(nameof(ReducedMotion));
             OnPropertyChanged(nameof(PreferredTextSize));
+            HasUnsavedGlobalSettings = false;
         }
         catch { }
+        finally
+        {
+            _isReloadingGlobalSettings = false;
+        }
     }
 
     public void SaveGlobalSettings()
     {
         _globalSettingsManager.Save();
+        HasUnsavedGlobalSettings = false;
         _setLocalizedStatus("Str_GlobalSettings_StatusSaved", Array.Empty<object?>());
     }
 

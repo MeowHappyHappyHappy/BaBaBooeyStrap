@@ -10,6 +10,7 @@
       Title="{DynamicResource Str_Appearance_PageTitle}">
     <Page.Resources>
         <conv:HexStringToBrushConverter x:Key="HexToBrush"/>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </Page.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
@@ -40,7 +41,7 @@
                         <TextBlock Text="{DynamicResource Str_Appearance_UseAcrylic}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseAcrylicBackground}" HorizontalAlignment="Right"/>
                     </DockPanel>
-                    <Grid>
+                    <Grid IsEnabled="{Binding WindowIntegrations.UseAcrylicBackground}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
@@ -81,16 +82,30 @@
                         <TextBlock Text="{DynamicResource Str_Appearance_BootstrapperIcon}" VerticalAlignment="Center"/>
                         <ComboBox Grid.Column="1" ItemsSource="{Binding WindowIntegrations.AvailableBootstrapperIcons}" SelectedItem="{Binding WindowIntegrations.SelectedBootstrapperIcon}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
-                    <Grid Margin="0,0,0,8">
+                    <Grid Margin="0,0,0,4" IsEnabled="{Binding WindowIntegrations.IsCustomBootstrapperIconSelected}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Appearance_CustomIcon}" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Column="1" Text="{Binding WindowIntegrations.BootstrapperIconCustomLocation, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                        <ui:Button Grid.Column="2" Content="{DynamicResource Str_Common_Browse}" Click="BrowseBootstrapperIcon_Click"/>
+                        <Image Grid.Column="1"
+                               Width="24"
+                               Height="24"
+                               Margin="0,0,8,0"
+                               VerticalAlignment="Center"
+                               Source="{Binding WindowIntegrations.CustomIconPreviewImage}"
+                               Visibility="{Binding WindowIntegrations.HasCustomIconPreview, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                        <ui:TextBox Grid.Column="2" Text="{Binding WindowIntegrations.BootstrapperIconCustomLocation, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                        <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Browse}" Click="BrowseBootstrapperIcon_Click"/>
                     </Grid>
+                    <TextBlock Text="{Binding WindowIntegrations.CustomIconWarningText}"
+                               Visibility="{Binding WindowIntegrations.HasCustomIconWarning, Converter={StaticResource BoolToVisibilityConverter}}"
+                               Foreground="#FFF59E0B"
+                               FontSize="12"
+                               TextWrapping="Wrap"
+                               Margin="220,0,0,8"/>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>

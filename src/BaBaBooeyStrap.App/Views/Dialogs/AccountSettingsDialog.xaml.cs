@@ -153,12 +153,10 @@ public partial class AccountSettingsDialog : FluentWindow
         {
             if (!int.TryParse(FpsComboBox.Text.Trim(), out var parsedFps) || parsedFps < 0)
             {
-                System.Windows.MessageBox.Show(
-                    this,
-                    LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsMessage"),
+                FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsTitle"),
-                    System.Windows.MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsMessage"),
+                    owner: this);
                 return;
             }
 

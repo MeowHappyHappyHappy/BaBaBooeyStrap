@@ -221,6 +221,136 @@ public sealed class MainWindowSubViewModelsTests : IDisposable
         bindingWarnings.Should().BeEmpty("all XAML bindings across all 9 pages must resolve cleanly against MainWindowViewModel sub-ViewModels");
     }
 
+    [Fact]
+    public void MainWindowViewModel_TracksUnsavedChanges_AndFlushesGlobalSettingsOnSave()
+    {
+        var paths = new PathProvider(_tempDir);
+        paths.EnsureDirectoriesExist();
+        var settingsMgr = new JsonManager<Settings>(paths.SettingsFile);
+
+        var vm = new MainWindowViewModel(settingsMgr.Prop, paths: paths);
+        vm.HasUnsavedChanges.Should().BeFalse();
+        vm.LaunchSettings.HasUnsavedGlobalSettings.Should().BeFalse();
+
+        // Reloading global settings should not trigger dirty tracking
+        vm.LaunchSettings.LoadGlobalSettingsSafe();
+        vm.HasUnsavedChanges.Should().BeFalse();
+
+        // Modifying a global setting marks both flags dirty
+        vm.LaunchSettings.FramerateCap = 144;
+        vm.LaunchSettings.HasUnsavedGlobalSettings.Should().BeTrue();
+        vm.HasUnsavedChanges.Should().BeTrue();
+
+        // SaveSettings flushes both Settings and GlobalSettings and clears dirty state
+        vm.SaveSettings(settingsMgr);
+        vm.HasUnsavedChanges.Should().BeFalse();
+        vm.LaunchSettings.HasUnsavedGlobalSettings.Should().BeFalse();
+        File.Exists(paths.RobloxGlobalSettings).Should().BeTrue();
+
+        // Modifying a general setting marks HasUnsavedChanges again
+        vm.WindowIntegrations.MinimizeToTray = !vm.WindowIntegrations.MinimizeToTray;
+        vm.HasUnsavedChanges.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AccountsViewModel_ToggleSelectAll_OnlyAffectsFilteredItems_AndDisablesReorderDuringSearch()
+    {
+        var paths = new PathProvider(_tempDir);
+        var vm = new MainWindowViewModel(new Settings(), paths: paths);
+
+        vm.AccountManagement.AddOrUpdateAccount(new RobloxAccount { UserId = 1, Username = "AlphaOne", Notes = "Main" });
+        vm.AccountManagement.AddOrUpdateAccount(new RobloxAccount { UserId = 2, Username = "BetaTwo", Notes = "Farm" });
+        vm.AccountManagement.AddOrUpdateAccount(new RobloxAccount { UserId = 3, Username = "AlphaThree", Notes = "Alt" });
+
+        vm.AccountManagement.IsAccountReorderEnabled.Should().BeTrue();
+
+        vm.AccountManagement.AccountSearchText = "Alpha";
+        vm.AccountManagement.IsAccountReorderEnabled.Should().BeFalse();
+
+        vm.AccountManagement.ToggleSelectAllAccounts();
+
+        vm.AccountManagement.AccountItems[0].IsChecked.Should().BeTrue();
+        vm.AccountManagement.AccountItems[1].IsChecked.Should().BeFalse("hidden filtered-out account must not be toggled");
+        vm.AccountManagement.AccountItems[2].IsChecked.Should().BeTrue();
+
+        vm.AccountManagement.AccountSearchText = string.Empty;
+        vm.AccountManagement.IsAccountReorderEnabled.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task AccountsViewModel_VerifyAccountsAsync_UpdatesCookieHealthAndCapsConcurrencyAtThree()
+    {
+        var paths = new PathProvider(_tempDir);
+        var vm = new MainWindowViewModel(new Settings(), paths: paths);
+
+        for (int i = 1; i <= 7; i++)
+        {
+            vm.AccountManagement.AddOrUpdateAccount(new RobloxAccount
+            {
+                UserId = i,
+                Username = $"User{i}",
+                Cookie = i % 2 == 0 ? $"bad-{i}" : $"good-{i}"
+            });
+        }
+
+        int currentInFlight = 0;
+        int maxObservedInFlight = 0;
+        object gate = new();
+
+        var (validCount, invalidCount) = await vm.AccountManagement.VerifyAccountsAsync(
+            verifierOverride: async (cookie, ct) =>
+            {
+                lock (gate)
+                {
+                    currentInFlight++;
+                    if (currentInFlight > maxObservedInFlight)
+                        maxObservedInFlight = currentInFlight;
+                }
+
+                try
+                {
+                    await Task.Delay(35, ct);
+                    return cookie.StartsWith("good-", StringComparison.Ordinal);
+                }
+                finally
+                {
+                    lock (gate)
+                    {
+                        currentInFlight--;
+                    }
+                }
+            });
+
+        maxObservedInFlight.Should().BeLessThanOrEqualTo(3);
+        maxObservedInFlight.Should().BeGreaterThanOrEqualTo(2);
+        validCount.Should().Be(4);
+        invalidCount.Should().Be(3);
+        vm.AccountManagement.AccountItems[0].CookieHealth.Should().Be(AccountCookieHealth.Valid);
+        vm.AccountManagement.AccountItems[1].CookieHealth.Should().Be(AccountCookieHealth.Invalid);
+    }
+
+    [Fact]
+    public void WindowAndIntegrationsViewModel_CustomIconState_TracksSelectionAndMissingFileWarning()
+    {
+        var paths = new PathProvider(_tempDir);
+        var vm = new MainWindowViewModel(new Settings(), paths: paths);
+
+        vm.WindowIntegrations.IsCustomBootstrapperIconSelected.Should().BeFalse();
+        vm.WindowIntegrations.HasCustomIconWarning.Should().BeFalse();
+
+        vm.WindowIntegrations.SelectedBootstrapperIcon = BootstrapperIcon.IconCustom;
+        vm.WindowIntegrations.IsCustomBootstrapperIconSelected.Should().BeTrue();
+
+        vm.WindowIntegrations.BootstrapperIconCustomLocation = Path.Combine(_tempDir, "nonexistent.ico");
+        vm.WindowIntegrations.HasCustomIconWarning.Should().BeTrue();
+        vm.WindowIntegrations.CustomIconWarningText.Should().NotBeNullOrWhiteSpace();
+        vm.WindowIntegrations.HasCustomIconPreview.Should().BeFalse();
+
+        vm.WindowIntegrations.SelectedBootstrapperIcon = BootstrapperIcon.IconBloxstrap;
+        vm.WindowIntegrations.IsCustomBootstrapperIconSelected.Should().BeFalse();
+        vm.WindowIntegrations.HasCustomIconWarning.Should().BeFalse();
+    }
+
     private sealed class BindingWarningListener : TraceListener
     {
         private readonly List<string> _messages;

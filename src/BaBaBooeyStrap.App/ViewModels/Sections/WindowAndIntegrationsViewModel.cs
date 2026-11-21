@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using BaBaBooeyStrap.App.Models;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core;
@@ -18,6 +21,8 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     private string _cleanerStatusText = string.Empty;
     private string? _cleanerStatusKey;
     private object?[] _cleanerStatusArgs = Array.Empty<object?>();
+    private string _customIconWarningText = string.Empty;
+    private ImageSource? _customIconPreviewImage;
 
     public WindowAndIntegrationsViewModel(
         Settings settings,
@@ -29,6 +34,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         _setLocalizedStatus = setLocalizedStatus ?? throw new ArgumentNullException(nameof(setLocalizedStatus));
 
         RefreshCustomThemes();
+        RefreshCustomIconState();
     }
 
     public event EventHandler<Theme>? ThemeChanged;
@@ -132,14 +138,62 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     public BootstrapperIcon SelectedBootstrapperIcon
     {
         get => _settings.BootstrapperIcon;
-        set { _settings.BootstrapperIcon = value; OnPropertyChanged(); }
+        set
+        {
+            if (_settings.BootstrapperIcon != value)
+            {
+                _settings.BootstrapperIcon = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsCustomBootstrapperIconSelected));
+                RefreshCustomIconState();
+            }
+        }
     }
+
+    public bool IsCustomBootstrapperIconSelected => SelectedBootstrapperIcon == BootstrapperIcon.IconCustom;
 
     public string BootstrapperIconCustomLocation
     {
         get => _settings.BootstrapperIconCustomLocation;
-        set { _settings.BootstrapperIconCustomLocation = value; OnPropertyChanged(); }
+        set
+        {
+            string next = value ?? string.Empty;
+            if (!string.Equals(_settings.BootstrapperIconCustomLocation, next, StringComparison.Ordinal))
+            {
+                _settings.BootstrapperIconCustomLocation = next;
+                OnPropertyChanged();
+                RefreshCustomIconState();
+            }
+        }
     }
+
+    public string CustomIconWarningText
+    {
+        get => _customIconWarningText;
+        private set
+        {
+            if (SetProperty(ref _customIconWarningText, value))
+            {
+                OnPropertyChanged(nameof(HasCustomIconWarning));
+            }
+        }
+    }
+
+    public bool HasCustomIconWarning => !string.IsNullOrEmpty(_customIconWarningText);
+
+    public ImageSource? CustomIconPreviewImage
+    {
+        get => _customIconPreviewImage;
+        private set
+        {
+            if (SetProperty(ref _customIconPreviewImage, value))
+            {
+                OnPropertyChanged(nameof(HasCustomIconPreview));
+            }
+        }
+    }
+
+    public bool HasCustomIconPreview => _customIconPreviewImage != null;
 
     public string? SelectedCustomTheme
     {
@@ -265,6 +319,45 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         if (!string.IsNullOrEmpty(_cleanerStatusKey))
         {
             CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
+        }
+
+        RefreshCustomIconState();
+    }
+
+    private void RefreshCustomIconState()
+    {
+        if (!IsCustomBootstrapperIconSelected || string.IsNullOrWhiteSpace(BootstrapperIconCustomLocation))
+        {
+            CustomIconPreviewImage = null;
+            CustomIconWarningText = string.Empty;
+            return;
+        }
+
+        string path = BootstrapperIconCustomLocation.Trim();
+        if (!File.Exists(path))
+        {
+            CustomIconPreviewImage = null;
+            CustomIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconNotFound");
+            return;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 32;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            CustomIconPreviewImage = bitmap;
+            CustomIconWarningText = string.Empty;
+        }
+        catch
+        {
+            CustomIconPreviewImage = null;
+            CustomIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconInvalid");
         }
     }
 

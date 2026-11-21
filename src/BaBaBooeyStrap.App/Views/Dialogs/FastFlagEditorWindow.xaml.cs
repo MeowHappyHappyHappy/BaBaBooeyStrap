@@ -108,12 +108,33 @@ public partial class FastFlagEditorWindow : FluentWindow
 
     private void ClearAll_Click(object sender, RoutedEventArgs e)
     {
+        if (ViewModel.TotalFlagCount > 0)
+        {
+            bool confirmed = FluentDialogService.ShowConfirm(
+                LocalizationService.Instance.GetString("Str_Dialog_ConfirmClearFlagsTitle"),
+                LocalizationService.Instance.Format("Str_Dialog_ConfirmClearFlagsMessageFormat", ViewModel.TotalFlagCount),
+                confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_Clear"),
+                isDestructive: true,
+                owner: this);
+
+            if (!confirmed) return;
+        }
+
         ViewModel.ClearAll();
         ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgCleared"), InfoBarSeverity.Warning);
     }
 
     private void ResetDefaults_Click(object sender, RoutedEventArgs e)
     {
+        bool confirmed = FluentDialogService.ShowConfirm(
+            LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsTitle"),
+            LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsMessage"),
+            confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_ResetDefaults"),
+            isDestructive: true,
+            owner: this);
+
+        if (!confirmed) return;
+
         ViewModel.ResetToDefaults();
         ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgResetDefaults"), InfoBarSeverity.Informational);
     }

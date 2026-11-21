@@ -8,6 +8,9 @@
       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
       TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
       Title="{DynamicResource Str_Channel_PageTitle}">
+    <Page.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+    </Page.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
         <StackPanel>
             <TextBlock Text="{DynamicResource Str_Channel_Header}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
@@ -71,7 +74,18 @@
                                 </TextBlock.Text>
                             </TextBlock>
                         </StackPanel>
-                        <ui:Button Content="{DynamicResource Str_Channel_TestFastestCdn}" Appearance="Primary" Click="TestCdn_Click" HorizontalAlignment="Right"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <ui:ProgressRing Width="18"
+                                             Height="18"
+                                             IsIndeterminate="True"
+                                             Visibility="{Binding LaunchSettings.IsTestingCdn, Converter={StaticResource BoolToVisibilityConverter}}"
+                                             Margin="0,0,10,0"
+                                             VerticalAlignment="Center"/>
+                            <ui:Button Content="{DynamicResource Str_Channel_TestFastestCdn}"
+                                       Appearance="Primary"
+                                       IsEnabled="{Binding LaunchSettings.IsNotTestingCdn}"
+                                       Click="TestCdn_Click"/>
+                        </StackPanel>
                     </DockPanel>
                     <ItemsControl ItemsSource="{Binding LaunchSettings.GlobalMirrors}" Margin="0,4,0,8">
                         <ItemsControl.ItemTemplate>

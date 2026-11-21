@@ -90,11 +90,10 @@ public partial class MainWindow : FluentWindow
 
     protected override void OnClosing(CancelEventArgs e)
     {
-        PersistWindowBounds();
-        ViewModel.SaveSettings(_settingsManager);
-
         if (!_allowRealClose && _trayWrapper != null && ViewModel.WindowIntegrations.MinimizeToTray)
         {
+            PersistWindowBounds();
+            ViewModel.SaveSettings(_settingsManager);
             e.Cancel = true;
             Hide();
             _trayWrapper.MinimizeToTray();
@@ -106,6 +105,36 @@ public partial class MainWindow : FluentWindow
                     LocalizationService.Instance.GetString("Str_Tray_MinimizedMessage"));
             }
             return;
+        }
+
+        if (!_allowRealClose && ViewModel.HasUnsavedChanges)
+        {
+            var choice = FluentDialogService.ShowSaveDiscardCancel(
+                LocalizationService.Instance.GetString("Str_Dialog_UnsavedTitle"),
+                LocalizationService.Instance.GetString("Str_Dialog_UnsavedMessage"),
+                owner: this);
+
+            if (choice == Dialogs.FluentDialogResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (choice == Dialogs.FluentDialogResult.Primary)
+            {
+                ViewModel.SaveSettings(_settingsManager);
+            }
+        }
+
+        PersistWindowBounds();
+        if (!_allowRealClose && !ViewModel.HasUnsavedChanges && _stateManager != null)
+        {
+            try
+            {
+                ViewModel.AccountManagement.PersistLastTargetState();
+                _stateManager.Save();
+            }
+            catch { }
         }
 
         ViewModel.AccountManagement.CancelActiveLaunch();

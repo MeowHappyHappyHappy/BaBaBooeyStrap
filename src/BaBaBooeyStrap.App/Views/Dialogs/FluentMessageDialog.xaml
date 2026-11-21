@@ -1,0 +1,75 @@
+<ui:FluentWindow x:Class="BaBaBooeyStrap.App.Views.Dialogs.FluentMessageDialog"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Width="440"
+                 MaxWidth="520"
+                 SizeToContent="Height"
+                 ResizeMode="NoResize"
+                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar x:Name="DialogTitleBar"
+                     Grid.Row="0"
+                     ShowMaximize="False"
+                     ShowMinimize="False" />
+
+        <Grid Grid.Row="1" Margin="20,12,20,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <ui:SymbolIcon x:Name="SeverityIcon"
+                           Grid.Column="0"
+                           Symbol="Info24"
+                           FontSize="28"
+                           VerticalAlignment="Top"
+                           Margin="0,2,14,0" />
+
+            <ScrollViewer Grid.Column="1"
+                          VerticalScrollBarVisibility="Auto"
+                          MaxHeight="260">
+                <TextBlock x:Name="MessageTextBlock"
+                           FontSize="13.5"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorPrimaryBrush}" />
+            </ScrollViewer>
+        </Grid>
+
+        <Border Grid.Row="2"
+                Padding="20,12"
+                BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button x:Name="PrimaryButton"
+                           Appearance="Primary"
+                           IsDefault="True"
+                           MinWidth="88"
+                           Margin="0,0,8,0"
+                           Click="PrimaryButton_Click" />
+                <ui:Button x:Name="SecondaryButton"
+                           Appearance="Secondary"
+                           MinWidth="88"
+                           Margin="0,0,8,0"
+                           Visibility="Collapsed"
+                           Click="SecondaryButton_Click" />
+                <ui:Button x:Name="CancelButton"
+                           Appearance="Secondary"
+                           IsCancel="True"
+                           MinWidth="88"
+                           Visibility="Collapsed"
+                           Click="CancelButton_Click" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels.Sections;
 using BaBaBooeyStrap.Bootstrapper.FastFlags;
@@ -21,6 +22,8 @@ public class MainWindowViewModel : ViewModelBase
     private string _statusMessage = LocalizationService.Instance.GetString("Str_Common_Ready");
     private string _statusMessageKey = "Str_Common_Ready";
     private object?[] _statusMessageArgs = Array.Empty<object?>();
+    private bool _hasUnsavedChanges;
+    private bool _isSuppressingDirtyTracking;
 
     public MainWindowViewModel(
         Settings settings,
@@ -70,6 +73,11 @@ public class MainWindowViewModel : ViewModelBase
 
         WindowIntegrations = new WindowAndIntegrationsViewModel(_settings, resolvedPaths, SetLocalizedStatus);
 
+        LaunchSettings.PropertyChanged += OnLaunchSettingsPropertyChanged;
+        FastFlags.PropertyChanged += OnFastFlagsPropertyChanged;
+        WindowIntegrations.PropertyChanged += OnWindowIntegrationsPropertyChanged;
+        AccountManagement.PropertyChanged += OnAccountManagementPropertyChanged;
+
         _languageChangedHandler = (_, _) => RefreshLocalizedProperties();
         LocalizationService.Instance.LanguageChanged += _languageChangedHandler;
     }
@@ -93,26 +101,110 @@ public class MainWindowViewModel : ViewModelBase
         set => SetProperty(ref _statusMessage, value);
     }
 
+    public bool HasUnsavedChanges
+    {
+        get => _hasUnsavedChanges;
+        private set => SetProperty(ref _hasUnsavedChanges, value);
+    }
+
     public void SaveSettings(IJsonManager<Settings> manager)
     {
         ArgumentNullException.ThrowIfNull(manager);
         FastFlags.ApplyFastFlagPresets();
+        if (LaunchSettings.HasUnsavedGlobalSettings)
+        {
+            try
+            {
+                LaunchSettings.SaveGlobalSettings();
+            }
+            catch
+            {
+                // Keep general settings persistence resilient even if Roblox settings path is locked
+            }
+        }
+
         manager.Save();
         if (_stateManager != null)
         {
             AccountManagement.PersistLastTargetState();
             _stateManager.Save();
         }
+
+        HasUnsavedChanges = false;
         SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
     }
 
     public void RefreshLocalizedProperties()
     {
-        StatusMessage = LocalizedFormatHelper.Format(_statusMessageKey, _statusMessageArgs);
-        LaunchSettings.RefreshLocalizedProperties();
-        Mods.RefreshLocalizedProperties();
-        AccountManagement.RefreshLocalizedProperties();
-        WindowIntegrations.RefreshLocalizedProperties();
+        _isSuppressingDirtyTracking = true;
+        try
+        {
+            StatusMessage = LocalizedFormatHelper.Format(_statusMessageKey, _statusMessageArgs);
+            LaunchSettings.RefreshLocalizedProperties();
+            Mods.RefreshLocalizedProperties();
+            AccountManagement.RefreshLocalizedProperties();
+            WindowIntegrations.RefreshLocalizedProperties();
+        }
+        finally
+        {
+            _isSuppressingDirtyTracking = false;
+        }
+    }
+
+    private void OnLaunchSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_isSuppressingDirtyTracking || LaunchSettings.IsReloadingGlobalSettings) return;
+        switch (e.PropertyName)
+        {
+            case nameof(LaunchSettingsViewModel.CdnTestResult):
+            case nameof(LaunchSettingsViewModel.IsTestingCdn):
+            case nameof(LaunchSettingsViewModel.IsNotTestingCdn):
+            case nameof(LaunchSettingsViewModel.InstalledPlayerVersion):
+                return;
+            case nameof(LaunchSettingsViewModel.HasUnsavedGlobalSettings):
+                if (LaunchSettings.HasUnsavedGlobalSettings)
+                {
+                    HasUnsavedChanges = true;
+                }
+                return;
+            default:
+                HasUnsavedChanges = true;
+                return;
+        }
+    }
+
+    private void OnFastFlagsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_isSuppressingDirtyTracking || FastFlags.IsLoadingPresets) return;
+        HasUnsavedChanges = true;
+    }
+
+    private void OnWindowIntegrationsPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_isSuppressingDirtyTracking) return;
+        switch (e.PropertyName)
+        {
+            case nameof(WindowAndIntegrationsViewModel.CleanerStatusText):
+            case nameof(WindowAndIntegrationsViewModel.PreviewTheme):
+            case nameof(WindowAndIntegrationsViewModel.IsCustomBootstrapperIconSelected):
+            case nameof(WindowAndIntegrationsViewModel.CustomIconWarningText):
+            case nameof(WindowAndIntegrationsViewModel.HasCustomIconWarning):
+            case nameof(WindowAndIntegrationsViewModel.CustomIconPreviewImage):
+            case nameof(WindowAndIntegrationsViewModel.HasCustomIconPreview):
+                return;
+            default:
+                HasUnsavedChanges = true;
+                return;
+        }
+    }
+
+    private void OnAccountManagementPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_isSuppressingDirtyTracking) return;
+        if (e.PropertyName is nameof(AccountsViewModel.MultiInstanceEnabled) or nameof(AccountsViewModel.MultiInstanceLaunchDelayMs))
+        {
+            HasUnsavedChanges = true;
+        }
     }
 
     internal void DetachLocalization()

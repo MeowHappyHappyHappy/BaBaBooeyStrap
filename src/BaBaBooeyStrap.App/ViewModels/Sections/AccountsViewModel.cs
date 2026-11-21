@@ -58,6 +58,7 @@ public sealed class AccountsViewModel : ViewModelBase
     private string _protocolToolTip = string.Empty;
     private string _protocolIndicatorHex = HexMuted;
     private bool _isLaunching;
+    private bool _isVerifyingCookies;
     private CancellationTokenSource? _launchCts;
     private string? _lastLoggedMutexState;
     private string? _lastLoggedMutexError;
@@ -248,6 +249,7 @@ public sealed class AccountsViewModel : ViewModelBase
             if (SetProperty(ref _accountSearchText, value ?? string.Empty))
             {
                 FilteredAccountItems.Refresh();
+                OnPropertyChanged(nameof(IsAccountReorderEnabled));
             }
         }
     }
@@ -389,12 +391,28 @@ public sealed class AccountsViewModel : ViewModelBase
             {
                 OnPropertyChanged(nameof(IsNotLaunching));
                 OnPropertyChanged(nameof(CanCancelLaunch));
+                OnPropertyChanged(nameof(IsAccountReorderEnabled));
             }
         }
     }
 
     public bool IsNotLaunching => !IsLaunching;
+    public bool IsAccountReorderEnabled => IsNotLaunching && string.IsNullOrWhiteSpace(AccountSearchText);
     public bool CanCancelLaunch => IsLaunching && _launchCts != null;
+
+    public bool IsVerifyingCookies
+    {
+        get => _isVerifyingCookies;
+        private set
+        {
+            if (SetProperty(ref _isVerifyingCookies, value))
+            {
+                OnPropertyChanged(nameof(IsNotVerifyingCookies));
+            }
+        }
+    }
+
+    public bool IsNotVerifyingCookies => !IsVerifyingCookies;
     public string ActivityLogText => _activityLogBuilder.ToString();
 
     public void PersistLastTargetState()
@@ -724,15 +742,25 @@ public sealed class AccountsViewModel : ViewModelBase
         _setLocalizedStatus("Str_Accounts_StatusRemoved", [name]);
     }
 
+    public IReadOnlyList<AccountItem> GetCheckedAccounts() =>
+        AccountItems.Where(a => a.IsChecked).ToList();
+
+    public IReadOnlyList<AccountItem> GetRemovalCandidates()
+    {
+        var checkedItems = AccountItems.Where(a => a.IsChecked).ToList();
+        if (checkedItems.Count > 0)
+        {
+            return checkedItems;
+        }
+
+        return SelectedAccountItem != null ? [SelectedAccountItem] : Array.Empty<AccountItem>();
+    }
+
     public int RemoveCheckedOrSelectedAccounts()
     {
         if (IsLaunching) return 0;
 
-        var toRemove = AccountItems.Where(a => a.IsChecked).ToList();
-        if (toRemove.Count == 0 && SelectedAccountItem != null)
-        {
-            toRemove.Add(SelectedAccountItem);
-        }
+        var toRemove = GetRemovalCandidates().ToList();
 
         if (toRemove.Count == 0)
         {
@@ -770,13 +798,135 @@ public sealed class AccountsViewModel : ViewModelBase
 
     public void ToggleSelectAllAccounts()
     {
-        if (AccountItems.Count == 0) return;
+        var visibleItems = FilteredAccountItems.Cast<AccountItem>().ToList();
+        if (visibleItems.Count == 0) return;
 
-        bool allChecked = AccountItems.All(a => a.IsChecked);
-        foreach (var item in AccountItems)
+        bool allChecked = visibleItems.All(a => a.IsChecked);
+        foreach (var item in visibleItems)
         {
             item.IsChecked = !allChecked;
         }
+    }
+
+    public async Task<(int ValidCount, int InvalidCount)> VerifyAccountsAsync(
+        IReadOnlyList<AccountItem>? targets = null,
+        Func<string, CancellationToken, Task<bool>>? verifierOverride = null,
+        CancellationToken ct = default)
+    {
+        if (IsVerifyingCookies) return (0, 0);
+
+        List<AccountItem> targetList;
+        if (targets != null)
+        {
+            targetList = targets.ToList();
+        }
+        else
+        {
+            var checkedItems = AccountItems.Where(a => a.IsChecked).ToList();
+            targetList = checkedItems.Count > 0
+                ? checkedItems
+                : FilteredAccountItems.Cast<AccountItem>().ToList();
+        }
+
+        if (targetList.Count == 0)
+        {
+            _setLocalizedStatus("Str_Accounts_StatusNoAccountsToVerify", Array.Empty<object?>());
+            return (0, 0);
+        }
+
+        IsVerifyingCookies = true;
+        _setLocalizedStatus("Str_Accounts_StatusVerifyingCookiesFormat", [targetList.Count]);
+        foreach (var item in targetList)
+        {
+            item.SetCookieHealth(AccountCookieHealth.Verifying);
+        }
+
+        int validCount = 0;
+        int invalidCount = 0;
+        object storeLock = new();
+        using var semaphore = new SemaphoreSlim(3, 3);
+        using var authService = verifierOverride == null ? new RobloxAuthService() : null;
+
+        try
+        {
+            var tasks = targetList.Select(async item =>
+            {
+                await semaphore.WaitAsync(ct);
+                try
+                {
+                    string cookie = item.Account.Cookie;
+                    if (string.IsNullOrWhiteSpace(cookie))
+                    {
+                        item.SetCookieHealth(
+                            AccountCookieHealth.Invalid,
+                            LocalizationService.Instance.GetString("Str_Accounts_CookieEmptyDetail"));
+                        Interlocked.Increment(ref invalidCount);
+                        return;
+                    }
+
+                    if (verifierOverride != null)
+                    {
+                        bool ok = await verifierOverride(cookie, ct);
+                        if (ok)
+                        {
+                            item.SetCookieHealth(AccountCookieHealth.Valid);
+                            Interlocked.Increment(ref validCount);
+                        }
+                        else
+                        {
+                            item.SetCookieHealth(AccountCookieHealth.Invalid);
+                            Interlocked.Increment(ref invalidCount);
+                        }
+                    }
+                    else
+                    {
+                        var user = await authService!.GetAuthenticatedUserAsync(cookie, ct);
+                        item.Account.UserId = user.Id;
+                        item.Account.Username = user.Name;
+                        item.Account.DisplayName = user.DisplayName;
+                        lock (storeLock)
+                        {
+                            _accountStore?.Upsert(item.Account);
+                        }
+                        item.Refresh();
+                        item.SetCookieHealth(AccountCookieHealth.Valid, $"{user.DisplayName} (@{user.Name})");
+                        Interlocked.Increment(ref validCount);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    item.SetCookieHealth(AccountCookieHealth.Unknown);
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    item.SetCookieHealth(AccountCookieHealth.Invalid, ex.Message);
+                    Interlocked.Increment(ref invalidCount);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks);
+
+            _setLocalizedStatus("Str_Accounts_StatusVerifiedCookiesFormat", [validCount, invalidCount]);
+            AppendActivityLog(LocalizationService.Instance.Format(
+                "Str_Accounts_LogVerifiedCookiesFormat",
+                validCount,
+                invalidCount));
+        }
+        catch (OperationCanceledException)
+        {
+            _setLocalizedStatus("Str_Accounts_StatusVerifyCancelled", Array.Empty<object?>());
+        }
+        finally
+        {
+            IsVerifyingCookies = false;
+        }
+
+        return (validCount, invalidCount);
     }
 
     public bool MoveSelectedAccount(int delta)
@@ -1229,6 +1379,7 @@ public sealed class AccountsViewModel : ViewModelBase
                     {
                         _accountStore?.Upsert(item.Account);
                         item.Refresh();
+                        item.SetCookieHealth(AccountCookieHealth.Valid);
                         successCount++;
                         launchSucceeded = true;
 
@@ -1253,6 +1404,10 @@ public sealed class AccountsViewModel : ViewModelBase
                 catch (RobloxApiException ex)
                 {
                     string detail = $"{ex.StatusCode}: {ex.Message}";
+                    if (ex.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                    {
+                        item.SetCookieHealth(AccountCookieHealth.Invalid, detail);
+                    }
                     lastResult = new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, ex.Message);
                     AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, detail));
                 }

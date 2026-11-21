@@ -15,14 +15,28 @@
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <DockPanel Margin="0,0,0,10">
-                        <TextBlock Text="{DynamicResource Str_FastFlags_EnableManager}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.UseFastFlagManager}" HorizontalAlignment="Right"/>
-                    </DockPanel>
-                    <DockPanel>
-                        <TextBlock Text="{DynamicResource Str_FastFlags_DisableAppPatch}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.UseDisableAppPatch}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_EnableManager}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_EnableManagerDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.UseFastFlagManager}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_DisableAppPatch}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_DisableAppPatchDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.UseDisableAppPatch}" VerticalAlignment="Center"/>
+                    </Grid>
                 </StackPanel>
             </Border>
 
@@ -53,28 +67,48 @@
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource Str_FastFlags_FrmQuality}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline"/>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_FrmQuality}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_FrmQualityDesc}" FontSize="11.5" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
                     </Grid>
 
-                    <Grid Margin="0,0,0,10">
+                    <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{DynamicResource Str_FastFlags_MeshLod}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline"/>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_MeshLod}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_MeshLodDesc}" FontSize="11.5" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline" VerticalAlignment="Center"/>
                     </Grid>
 
-                    <DockPanel Margin="0,4,0,8">
-                        <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScaling}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.DisableDpiScaling}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScaling}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScalingDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.DisableDpiScaling}" VerticalAlignment="Center"/>
+                    </Grid>
 
-                    <DockPanel Margin="0,0,0,12">
-                        <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreen}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.ManualFullscreen}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreen}"/>
+                            <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreenDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding FastFlags.ManualFullscreen}" VerticalAlignment="Center"/>
+                    </Grid>
 
                     <ui:Button Content="{DynamicResource Str_FastFlags_ApplyPresets}" Appearance="Secondary" Click="ApplyPresets_Click" HorizontalAlignment="Right"/>
                 </StackPanel>

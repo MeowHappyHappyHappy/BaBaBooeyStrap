@@ -10,9 +10,23 @@ public partial class AddAccountDialog : FluentWindow
 {
     public RobloxAccount? CreatedAccount { get; private set; }
 
-    public AddAccountDialog()
+    public AddAccountDialog(string? existingUsername = null, string? existingNotes = null)
     {
         InitializeComponent();
+
+        if (!string.IsNullOrWhiteSpace(existingUsername))
+        {
+            string updateTitle = LocalizationService.Instance.Format("Str_AddAccount_UpdateTitleFormat", existingUsername);
+            Title = updateTitle;
+            DialogTitleBar.Title = updateTitle;
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingNotes))
+        {
+            NotesBox.Text = existingNotes;
+        }
+
+        Loaded += (_, _) => CookieBox.Focus();
     }
 
     private async void VerifyAdd_Click(object sender, RoutedEventArgs e)
@@ -25,6 +39,7 @@ public partial class AddAccountDialog : FluentWindow
         }
 
         VerifyAddButton.IsEnabled = false;
+        VerifyProgressRing.Visibility = Visibility.Visible;
         StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_VerifyingStatus");
 
         try
@@ -46,6 +61,7 @@ public partial class AddAccountDialog : FluentWindow
         }
         catch (Exception ex)
         {
+            VerifyProgressRing.Visibility = Visibility.Collapsed;
             StatusText.Text = LocalizationService.Instance.Format("Str_AddAccount_FailedFormat", ex.Message);
             VerifyAddButton.IsEnabled = true;
         }

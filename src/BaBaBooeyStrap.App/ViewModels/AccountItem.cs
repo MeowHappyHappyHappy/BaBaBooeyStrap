@@ -3,13 +3,28 @@ using BaBaBooeyStrap.Core.Models;
 
 namespace BaBaBooeyStrap.App.ViewModels;
 
+public enum AccountCookieHealth
+{
+    Unknown,
+    Verifying,
+    Valid,
+    Invalid
+}
+
 /// <summary>
 /// Presentation wrapper for <see cref="RobloxAccount"/> that supports selection, inline note editing,
 /// localized setting summaries, and never exposes the raw session cookie to UI bindings.
 /// </summary>
 public sealed class AccountItem : ViewModelBase
 {
+    private const string HexUnknown = "#FF9CA3AF";
+    private const string HexVerifying = "#FF3B82F6";
+    private const string HexValid = "#FF10B981";
+    private const string HexInvalid = "#FFEF4444";
+
     private bool _isChecked;
+    private AccountCookieHealth _cookieHealth = AccountCookieHealth.Unknown;
+    private string? _cookieHealthDetail;
 
     public AccountItem(RobloxAccount account)
     {
@@ -69,6 +84,76 @@ public sealed class AccountItem : ViewModelBase
         set => SetProperty(ref _isChecked, value);
     }
 
+    public AccountCookieHealth CookieHealth
+    {
+        get => _cookieHealth;
+        private set
+        {
+            if (SetProperty(ref _cookieHealth, value))
+            {
+                OnPropertyChanged(nameof(CookieStatusText));
+                OnPropertyChanged(nameof(CookieStatusColorHex));
+                OnPropertyChanged(nameof(CookieStatusToolTip));
+            }
+        }
+    }
+
+    public string? CookieHealthDetail
+    {
+        get => _cookieHealthDetail;
+        private set
+        {
+            if (SetProperty(ref _cookieHealthDetail, value))
+            {
+                OnPropertyChanged(nameof(CookieStatusToolTip));
+            }
+        }
+    }
+
+    public string CookieStatusText
+    {
+        get
+        {
+            var loc = LocalizationService.Instance;
+            return _cookieHealth switch
+            {
+                AccountCookieHealth.Verifying => loc.GetString("Str_Accounts_CookieVerifying"),
+                AccountCookieHealth.Valid => loc.GetString("Str_Accounts_CookieValid"),
+                AccountCookieHealth.Invalid => loc.GetString("Str_Accounts_CookieInvalid"),
+                _ => loc.GetString("Str_Accounts_CookieUnknown")
+            };
+        }
+    }
+
+    public string CookieStatusColorHex => _cookieHealth switch
+    {
+        AccountCookieHealth.Verifying => HexVerifying,
+        AccountCookieHealth.Valid => HexValid,
+        AccountCookieHealth.Invalid => HexInvalid,
+        _ => HexUnknown
+    };
+
+    public string CookieStatusToolTip =>
+        !string.IsNullOrWhiteSpace(_cookieHealthDetail)
+            ? _cookieHealthDetail
+            : CookieStatusText;
+
+    public void SetCookieHealth(AccountCookieHealth health, string? detail = null)
+    {
+        _cookieHealthDetail = detail;
+        OnPropertyChanged(nameof(CookieHealthDetail));
+
+        if (_cookieHealth != health)
+        {
+            _cookieHealth = health;
+            OnPropertyChanged(nameof(CookieHealth));
+        }
+
+        OnPropertyChanged(nameof(CookieStatusText));
+        OnPropertyChanged(nameof(CookieStatusColorHex));
+        OnPropertyChanged(nameof(CookieStatusToolTip));
+    }
+
     public void UpdateAccount(RobloxAccount updated)
     {
         Account = updated ?? throw new ArgumentNullException(nameof(updated));
@@ -83,5 +168,8 @@ public sealed class AccountItem : ViewModelBase
         OnPropertyChanged(nameof(Notes));
         OnPropertyChanged(nameof(SettingsSummary));
         OnPropertyChanged(nameof(LastLaunchedDisplay));
+        OnPropertyChanged(nameof(CookieStatusText));
+        OnPropertyChanged(nameof(CookieStatusColorHex));
+        OnPropertyChanged(nameof(CookieStatusToolTip));
     }
 }

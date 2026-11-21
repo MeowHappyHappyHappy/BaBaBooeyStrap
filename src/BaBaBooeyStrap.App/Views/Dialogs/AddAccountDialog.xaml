@@ -3,35 +3,72 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="{DynamicResource Str_AddAccount_Title}"
-                 Width="500"
-                 Height="320"
+                 Width="520"
+                 SizeToContent="Height"
                  Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                  WindowStartupLocation="CenterOwner"
                  ResizeMode="NoResize"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
-    <Grid Margin="20">
+    <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <ui:TitleBar Grid.Row="0" Title="{DynamicResource Str_AddAccount_Title}"/>
+        <ui:TitleBar x:Name="DialogTitleBar"
+                     Grid.Row="0"
+                     Title="{DynamicResource Str_AddAccount_Title}"
+                     ShowMaximize="False"
+                     ShowMinimize="False" />
 
-        <StackPanel Grid.Row="1" Margin="0,12,0,12">
-            <TextBlock Text="{DynamicResource Str_AddAccount_CookieLabel}" FontWeight="SemiBold" Margin="0,0,0,4"/>
-            <ui:PasswordBox x:Name="CookieBox" Margin="0,0,0,10"/>
+        <StackPanel Grid.Row="1" Margin="20,10,20,14">
+            <TextBlock Text="{DynamicResource Str_AddAccount_CookieLabel}" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <ui:PasswordBox x:Name="CookieBox" Margin="0,0,0,6" />
+            <TextBlock Text="{DynamicResource Str_AddAccount_CookieHint}"
+                       FontSize="12"
+                       Opacity="0.72"
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,12" />
 
-            <TextBlock Text="{DynamicResource Str_AddAccount_NotesLabel}" FontWeight="SemiBold" Margin="0,0,0,4"/>
-            <ui:TextBox x:Name="NotesBox" PlaceholderText="{DynamicResource Str_AddAccount_NotesPlaceholder}" Margin="0,0,0,10"/>
+            <TextBlock Text="{DynamicResource Str_AddAccount_NotesLabel}" FontWeight="SemiBold" Margin="0,0,0,4" />
+            <ui:TextBox x:Name="NotesBox" PlaceholderText="{DynamicResource Str_AddAccount_NotesPlaceholder}" Margin="0,0,0,12" />
 
-            <TextBlock x:Name="StatusText" Text="{DynamicResource Str_AddAccount_InitialStatus}" Opacity="0.75" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:ProgressRing x:Name="VerifyProgressRing"
+                                 Width="18"
+                                 Height="18"
+                                 IsIndeterminate="True"
+                                 Visibility="Collapsed"
+                                 Margin="0,0,8,0"
+                                 VerticalAlignment="Center" />
+                <TextBlock x:Name="StatusText"
+                           Text="{DynamicResource Str_AddAccount_InitialStatus}"
+                           Opacity="0.8"
+                           TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+            </StackPanel>
         </StackPanel>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
-            <ui:Button Content="{DynamicResource Str_Common_Cancel}" Click="Cancel_Click" Margin="0,0,8,0"/>
-            <ui:Button x:Name="VerifyAddButton" Content="{DynamicResource Str_AddAccount_VerifyAndSave}" Appearance="Primary" Click="VerifyAdd_Click"/>
-        </StackPanel>
+        <Border Grid.Row="2"
+                Padding="20,12"
+                BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="{DynamicResource Str_Common_Cancel}"
+                           IsCancel="True"
+                           Click="Cancel_Click"
+                           MinWidth="88"
+                           Margin="0,0,8,0" />
+                <ui:Button x:Name="VerifyAddButton"
+                           Content="{DynamicResource Str_AddAccount_VerifyAndSave}"
+                           Appearance="Primary"
+                           IsDefault="True"
+                           MinWidth="110"
+                           Click="VerifyAdd_Click" />
+            </StackPanel>
+        </Border>
     </Grid>
 </ui:FluentWindow>

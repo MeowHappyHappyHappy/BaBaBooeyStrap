@@ -3,6 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:pages="clr-namespace:BaBaBooeyStrap.App.Views.Pages"
+                 xmlns:conv="clr-namespace:BaBaBooeyStrap.App.Converters"
                  Title="{DynamicResource Str_MainWindow_Title}"
                  Width="1120"
                  Height="740"
@@ -11,6 +12,9 @@
                  Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -47,8 +51,21 @@
                 Background="{DynamicResource ApplicationBackgroundBrush}">
             <DockPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding AccountManagement.MultiInstanceStatusText}" FontWeight="SemiBold" Margin="0,0,16,0"/>
-                    <TextBlock Text="{Binding StatusMessage}" Opacity="0.75"/>
+                    <TextBlock Text="{Binding AccountManagement.MultiInstanceStatusText}" FontWeight="SemiBold" Margin="0,0,16,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding StatusMessage}" Opacity="0.75" VerticalAlignment="Center"/>
+                    <Border Visibility="{Binding HasUnsavedChanges, Converter={StaticResource BoolToVisibilityConverter}}"
+                            CornerRadius="10"
+                            Padding="8,2"
+                            Margin="12,0,0,0"
+                            VerticalAlignment="Center"
+                            Background="#33F59E0B"
+                            BorderBrush="#FFF59E0B"
+                            BorderThickness="1">
+                        <TextBlock Text="{DynamicResource Str_MainWindow_UnsavedChanges}"
+                                   FontSize="11.5"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FFF59E0B"/>
+                    </Border>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
