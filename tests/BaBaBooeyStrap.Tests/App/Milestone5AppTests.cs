@@ -164,16 +164,16 @@ public sealed class Milestone5AppTests : IDisposable
             "Accounts", "FastFlags", "Mods", "Appearance", "Behaviour",
             "Channel", "Global Settings", "Shortcuts", "About");
 
-        vm.Accounts.Should().BeEmpty();
+        vm.AccountManagement.Accounts.Should().BeEmpty();
 
         Theme? changedTo = null;
-        vm.ThemeChanged += (_, t) => changedTo = t;
-        vm.CurrentTheme = Theme.Dark;
+        vm.WindowIntegrations.ThemeChanged += (_, t) => changedTo = t;
+        vm.WindowIntegrations.CurrentTheme = Theme.Dark;
         changedTo.Should().Be(Theme.Dark);
         settings.Theme.Should().Be(Theme.Dark);
 
-        vm.UseAcrylicBackground = true;
-        vm.AcrylicBackgroundOpacity = 200;
+        vm.WindowIntegrations.UseAcrylicBackground = true;
+        vm.WindowIntegrations.AcrylicBackgroundOpacity = 200;
         settings.UseAcrylicBackground.Should().BeTrue();
         settings.AcrylicBackgroundOpacity.Should().Be(200);
 
@@ -439,14 +439,14 @@ public sealed class Milestone5AppTests : IDisposable
                 page2.Arrange(new System.Windows.Rect(0, 0, 1120, 740));
                 page2.UpdateLayout();
 
-                vm.IsFollowUserTargetMode = true;
+                vm.AccountManagement.IsFollowUserTargetMode = true;
                 page2.UpdateLayout();
-                vm.IsGameServerTargetMode = true;
+                vm.AccountManagement.IsGameServerTargetMode = true;
                 page2.UpdateLayout();
-                vm.TargetModeSelectedIndex = 1;
-                vm.IsFollowUserTargetMode.Should().BeTrue();
-                vm.TargetModeSelectedIndex = 0;
-                vm.IsGameServerTargetMode.Should().BeTrue();
+                vm.AccountManagement.TargetModeSelectedIndex = 1;
+                vm.AccountManagement.IsFollowUserTargetMode.Should().BeTrue();
+                vm.AccountManagement.TargetModeSelectedIndex = 0;
+                vm.AccountManagement.IsGameServerTargetMode.Should().BeTrue();
             }
             catch (Exception ex)
             {

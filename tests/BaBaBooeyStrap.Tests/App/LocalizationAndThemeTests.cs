@@ -145,20 +145,20 @@ public sealed partial class LocalizationAndThemeTests : IDisposable
                 "Accounts", "FastFlags", "Mods", "Appearance", "Behaviour",
                 "Channel", "Global Settings", "Shortcuts", "About");
 
-            vm.AvailableLanguages.Should().Contain(new[]
+            vm.WindowIntegrations.AvailableLanguages.Should().Contain(new[]
             {
                 AppLanguage.Auto,
                 AppLanguage.TraditionalChinese,
                 AppLanguage.English
             });
 
-            vm.CurrentLanguage = AppLanguage.TraditionalChinese;
+            vm.WindowIntegrations.CurrentLanguage = AppLanguage.TraditionalChinese;
 
             settings.Language.Should().Be(AppLanguage.TraditionalChinese);
             LocalizationService.Instance.CurrentLanguageTag.Should().Be(LocalizationService.TraditionalChineseTag);
             vm.StatusMessage.Should().Be("就緒");
-            vm.CdnTestResult.Should().Be("尚未測試");
-            vm.MultiInstanceStatusText.Should().StartWith("多開狀態：");
+            vm.LaunchSettings.CdnTestResult.Should().Be("尚未測試");
+            vm.AccountManagement.MultiInstanceStatusText.Should().StartWith("多開狀態：");
             vm.NavigationTabs.Should().Equal(
                 "Accounts", "FastFlags", "Mods", "Appearance", "Behaviour",
                 "Channel", "Global Settings", "Shortcuts", "About");

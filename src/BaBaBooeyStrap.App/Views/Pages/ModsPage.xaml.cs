@@ -32,11 +32,11 @@ public partial class ModsPage : Page
         var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Mods_FontFileFilter") };
         if (ofd.ShowDialog() == true)
         {
-            ViewModel.ApplyCustomFont(ofd.FileName);
+            ViewModel.Mods.ApplyCustomFont(ofd.FileName);
         }
     }
 
-    private void ResetFont_Click(object sender, RoutedEventArgs e) => ViewModel?.ResetCustomFont();
+    private void ResetFont_Click(object sender, RoutedEventArgs e) => ViewModel?.Mods.ResetCustomFont();
 
     private void ChooseSound_Click(object sender, RoutedEventArgs e)
     {
@@ -44,9 +44,9 @@ public partial class ModsPage : Page
         var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Mods_OggFileFilter") };
         if (ofd.ShowDialog() == true)
         {
-            ViewModel.ApplyCustomDeathSound(ofd.FileName);
+            ViewModel.Mods.ApplyCustomDeathSound(ofd.FileName);
         }
     }
 
-    private void ResetSound_Click(object sender, RoutedEventArgs e) => ViewModel?.ResetDeathSound();
+    private void ResetSound_Click(object sender, RoutedEventArgs e) => ViewModel?.Mods.ResetDeathSound();
 }

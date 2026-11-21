@@ -19,11 +19,11 @@
                         <TextBlock.Text>
                             <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_About_VersionFormat">
                                 <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                <Binding Path="AppVersion"/>
+                                <Binding Path="LaunchSettings.AppVersion"/>
                             </MultiBinding>
                         </TextBlock.Text>
                     </TextBlock>
-                    <TextBlock Text="{Binding RuntimeInfo}" Opacity="0.7" FontSize="12.5" Margin="0,0,0,14"/>
+                    <TextBlock Text="{Binding LaunchSettings.RuntimeInfo}" Opacity="0.7" FontSize="12.5" Margin="0,0,0,14"/>
 
                     <TextBlock Text="{DynamicResource Str_About_Description}"
                                TextWrapping="Wrap" Margin="0,0,0,16"/>

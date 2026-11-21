@@ -16,6 +16,6 @@ public partial class ChannelPage : Page
     private async void TestCdn_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
-        await ViewModel.TestFastestCdnMirrorAsync();
+        await ViewModel.LaunchSettings.TestFastestCdnMirrorAsync();
     }
 }

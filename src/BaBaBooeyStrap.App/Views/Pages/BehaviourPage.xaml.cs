@@ -13,5 +13,5 @@ public partial class BehaviourPage : Page
         InitializeComponent();
     }
 
-    private void CleanNow_Click(object sender, RoutedEventArgs e) => ViewModel?.RunCleanerNow();
+    private void CleanNow_Click(object sender, RoutedEventArgs e) => ViewModel?.WindowIntegrations.RunCleanerNow();
 }

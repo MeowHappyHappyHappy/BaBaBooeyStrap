@@ -17,7 +17,7 @@
                         <TextBlock.Text>
                             <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Mods_ActiveFilesFormat">
                                 <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                <Binding Path="ActiveModFileCount"/>
+                                <Binding Path="Mods.ActiveModFileCount"/>
                             </MultiBinding>
                         </TextBlock.Text>
                     </TextBlock>
@@ -30,7 +30,7 @@
                 <DockPanel>
                     <StackPanel>
                         <TextBlock Text="{DynamicResource Str_Mods_CustomFontHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding CurrentFontStatus}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{Binding Mods.CurrentFontStatus}" Opacity="0.75" FontSize="12.5"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <ui:Button Content="{DynamicResource Str_Mods_SelectFont}" Click="ChooseFont_Click" Margin="0,0,8,0"/>
@@ -46,7 +46,7 @@
                         <TextBlock Text="{DynamicResource Str_Mods_CursorPresetHeader}" FontSize="15" FontWeight="SemiBold"/>
                         <TextBlock Text="{DynamicResource Str_Mods_CursorPresetDesc}" Opacity="0.75" FontSize="12.5"/>
                     </StackPanel>
-                    <ComboBox x:Name="CursorCombo" Width="180" SelectedItem="{Binding SelectedCursorPreset}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}" HorizontalAlignment="Right"/>
+                    <ComboBox x:Name="CursorCombo" Width="180" SelectedItem="{Binding Mods.SelectedCursorPreset}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}" HorizontalAlignment="Right"/>
                 </DockPanel>
             </Border>
 
@@ -55,7 +55,7 @@
                 <DockPanel>
                     <StackPanel>
                         <TextBlock Text="{DynamicResource Str_Mods_DeathSoundHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding CustomDeathSoundStatusText}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{Binding Mods.CustomDeathSoundStatusText}" Opacity="0.75" FontSize="12.5"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <ui:Button Content="{DynamicResource Str_Mods_SelectOgg}" Click="ChooseSound_Click" Margin="0,0,8,0"/>
@@ -71,7 +71,7 @@
                         <TextBlock Text="{DynamicResource Str_Mods_AvatarBgHeader}" FontSize="15" FontWeight="SemiBold"/>
                         <TextBlock Text="{DynamicResource Str_Mods_AvatarBgDesc}" Opacity="0.75" FontSize="12.5"/>
                     </StackPanel>
-                    <ui:ToggleSwitch IsChecked="{Binding OldAvatarBackgroundEnabled}" HorizontalAlignment="Right"/>
+                    <ui:ToggleSwitch IsChecked="{Binding Mods.OldAvatarBackgroundEnabled}" HorizontalAlignment="Right"/>
                 </DockPanel>
             </Border>
         </StackPanel>

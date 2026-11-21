@@ -24,7 +24,7 @@ public partial class AppearancePage : Page
         var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Appearance_IconFileFilter") };
         if (ofd.ShowDialog() == true)
         {
-            ViewModel.BootstrapperIconCustomLocation = ofd.FileName;
+            ViewModel.WindowIntegrations.BootstrapperIconCustomLocation = ofd.FileName;
         }
     }
 
@@ -32,7 +32,7 @@ public partial class AppearancePage : Page
     {
         Directory.CreateDirectory(Paths.CustomThemes);
         Process.Start(new ProcessStartInfo("explorer.exe", Paths.CustomThemes) { UseShellExecute = true });
-        ViewModel?.RefreshCustomThemes();
+        ViewModel?.WindowIntegrations.RefreshCustomThemes();
     }
 
     private void PreviewDialog_Click(object sender, RoutedEventArgs e)

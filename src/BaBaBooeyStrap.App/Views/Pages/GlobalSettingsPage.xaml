@@ -25,7 +25,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_GlobalSettings_FramerateCap}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FramerateCap, Mode=TwoWay}" Minimum="0" Maximum="1000" SpinButtonPlacementMode="Inline" Margin="0,0,8,0"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding LaunchSettings.FramerateCap, Mode=TwoWay}" Minimum="0" Maximum="1000" SpinButtonPlacementMode="Inline" Margin="0,0,8,0"/>
                         <StackPanel Grid.Column="2" Orientation="Horizontal">
                             <ui:Button Content="60" Tag="60" Click="FpsPreset_Click" Margin="0,0,4,0"/>
                             <ui:Button Content="144" Tag="144" Click="FpsPreset_Click" Margin="0,0,4,0"/>
@@ -36,29 +36,29 @@
 
                     <DockPanel Margin="0,4,0,10">
                         <TextBlock Text="{DynamicResource Str_GlobalSettings_ReadOnlyLock}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding ReadOnlyLocked}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ReadOnlyLocked}" HorizontalAlignment="Right"/>
                     </DockPanel>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_GlobalSettings_MouseSensitivity}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding MouseSensitivity, Mode=TwoWay}" Minimum="0.01" Maximum="20" SmallChange="0.1"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding LaunchSettings.MouseSensitivity, Mode=TwoWay}" Minimum="0.01" Maximum="20" SmallChange="0.1"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_GlobalSettings_QualityLevel}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding SavedQualityLevel, Mode=TwoWay}" Minimum="1" Maximum="10" SpinButtonPlacementMode="Inline"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding LaunchSettings.SavedQualityLevel, Mode=TwoWay}" Minimum="1" Maximum="10" SpinButtonPlacementMode="Inline"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_GlobalSettings_TextSize}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding PreferredTextSize, Mode=TwoWay}" Minimum="1" Maximum="4" SpinButtonPlacementMode="Inline"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding LaunchSettings.PreferredTextSize, Mode=TwoWay}" Minimum="1" Maximum="4" SpinButtonPlacementMode="Inline"/>
                     </Grid>
 
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_VrEnabled}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding VREnabled}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_ReducedMotion}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding ReducedMotion}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_VrEnabled}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.VREnabled}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_ReducedMotion}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ReducedMotion}" HorizontalAlignment="Right"/></DockPanel>
                 </StackPanel>
             </Border>
         </StackPanel>

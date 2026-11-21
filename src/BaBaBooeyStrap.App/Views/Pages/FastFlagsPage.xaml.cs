@@ -20,16 +20,16 @@ public partial class FastFlagsPage : Page
     private void OpenEditor_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
-        var editorVm = ViewModel.CreateFastFlagEditorViewModel();
+        var editorVm = ViewModel.FastFlags.CreateFastFlagEditorViewModel();
         var dlg = new FastFlagEditorWindow(editorVm) { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true)
         {
-            ViewModel.LoadFastFlagPresets();
+            ViewModel.FastFlags.LoadFastFlagPresets();
         }
     }
 
     private void ApplyPresets_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel?.ApplyFastFlagPresets();
+        ViewModel?.FastFlags.ApplyFastFlagPresets();
     }
 }

@@ -47,7 +47,7 @@
                 Background="{DynamicResource ApplicationBackgroundBrush}">
             <DockPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding MultiInstanceStatusText}" FontWeight="SemiBold" Margin="0,0,16,0"/>
+                    <TextBlock Text="{Binding AccountManagement.MultiInstanceStatusText}" FontWeight="SemiBold" Margin="0,0,16,0"/>
                     <TextBlock Text="{Binding StatusMessage}" Opacity="0.75"/>
                 </StackPanel>
 

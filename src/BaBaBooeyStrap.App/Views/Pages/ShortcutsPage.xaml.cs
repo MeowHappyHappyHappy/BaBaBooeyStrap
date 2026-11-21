@@ -15,16 +15,16 @@ public partial class ShortcutsPage : Page
         InitializeComponent();
     }
 
-    private void CreateDesktop_Click(object sender, RoutedEventArgs e) => ViewModel?.CreateDesktopShortcut();
-    private void CreateStartMenu_Click(object sender, RoutedEventArgs e) => ViewModel?.CreateStartMenuShortcuts();
-    private void RegisterPlayer_Click(object sender, RoutedEventArgs e) => ViewModel?.RegisterPlayerProtocols();
-    private void RegisterStudio_Click(object sender, RoutedEventArgs e) => ViewModel?.RegisterStudioProtocols();
-    private void RemoveStartup_Click(object sender, RoutedEventArgs e) => ViewModel?.RemoveRobloxStartup();
-    private void UnregisterAll_Click(object sender, RoutedEventArgs e) => ViewModel?.UnregisterAllProtocols();
+    private void CreateDesktop_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.CreateDesktopShortcut();
+    private void CreateStartMenu_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.CreateStartMenuShortcuts();
+    private void RegisterPlayer_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.RegisterPlayerProtocols();
+    private void RegisterStudio_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.RegisterStudioProtocols();
+    private void RemoveStartup_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.RemoveRobloxStartup();
+    private void UnregisterAll_Click(object sender, RoutedEventArgs e) => ViewModel?.LaunchSettings.UnregisterAllProtocols();
 
-    private void OpenBase_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.BasePath);
-    private void OpenVersions_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.VersionsPath);
-    private void OpenLogs_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.LogsPath);
+    private void OpenBase_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.LaunchSettings.BasePath);
+    private void OpenVersions_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.LaunchSettings.VersionsPath);
+    private void OpenLogs_Click(object sender, RoutedEventArgs e) => OpenFolder(ViewModel?.LaunchSettings.LogsPath);
 
     private static void OpenFolder(string? path)
     {

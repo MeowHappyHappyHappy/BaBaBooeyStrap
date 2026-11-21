@@ -274,26 +274,26 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             paths,
             joinTargetStore: targetStore);
 
-        vm.IsGameServerTargetMode.Should().BeTrue();
-        vm.IsJobIdInputVisible.Should().BeTrue();
+        vm.AccountManagement.IsGameServerTargetMode.Should().BeTrue();
+        vm.AccountManagement.IsJobIdInputVisible.Should().BeTrue();
 
-        vm.IsFollowUserTargetMode = true;
-        vm.IsGameServerTargetMode.Should().BeFalse();
-        vm.IsJobIdInputVisible.Should().BeFalse();
+        vm.AccountManagement.IsFollowUserTargetMode = true;
+        vm.AccountManagement.IsGameServerTargetMode.Should().BeFalse();
+        vm.AccountManagement.IsJobIdInputVisible.Should().BeFalse();
 
-        vm.TargetName = "Follow My Friend";
-        vm.LaunchTargetInput = "FriendWithJob";
-        vm.SaveCurrentJoinTarget().Should().BeTrue();
-        vm.SavedTargets.Should().ContainSingle(t => t.Name == "Follow My Friend" && t.TargetInput == "@FriendWithJob");
+        vm.AccountManagement.TargetName = "Follow My Friend";
+        vm.AccountManagement.LaunchTargetInput = "FriendWithJob";
+        vm.AccountManagement.SaveCurrentJoinTarget().Should().BeTrue();
+        vm.AccountManagement.SavedTargets.Should().ContainSingle(t => t.Name == "Follow My Friend" && t.TargetInput == "@FriendWithJob");
 
         // Switch back to game server mode, then select saved friend target -> auto-switches to FollowUser mode
-        vm.IsGameServerTargetMode = true;
-        vm.SelectedSavedTarget = null;
-        vm.SelectedSavedTarget = vm.SavedTargets[0];
-        vm.IsFollowUserTargetMode.Should().BeTrue();
+        vm.AccountManagement.IsGameServerTargetMode = true;
+        vm.AccountManagement.SelectedSavedTarget = null;
+        vm.AccountManagement.SelectedSavedTarget = vm.AccountManagement.SavedTargets[0];
+        vm.AccountManagement.IsFollowUserTargetMode.Should().BeTrue();
 
-        vm.AccountItems[0].IsChecked = true;
-        int launchedCount = await vm.LaunchCheckedAccountsAsync();
+        vm.AccountManagement.AccountItems[0].IsChecked = true;
+        int launchedCount = await vm.AccountManagement.LaunchCheckedAccountsAsync();
         launchedCount.Should().Be(1);
     }
 
@@ -408,18 +408,18 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             launcher,
             paths);
 
-        vm.LaunchTargetInput = "1818";
-        vm.SelectedAccountItem = vm.AccountItems[0];
-        vm.SelectedAccount.Should().BeSameAs(vm.AccountItems[0].Account);
+        vm.AccountManagement.LaunchTargetInput = "1818";
+        vm.AccountManagement.SelectedAccountItem = vm.AccountManagement.AccountItems[0];
+        vm.AccountManagement.SelectedAccount.Should().BeSameAs(vm.AccountManagement.AccountItems[0].Account);
 
-        var result = await vm.LaunchSelectedAccountAsync();
+        var result = await vm.AccountManagement.LaunchSelectedAccountAsync();
 
         result.Should().NotBeNull();
         result!.Success.Should().BeTrue();
-        vm.SelectedAccountItem.Should().NotBeNull();
-        vm.SelectedAccountItem!.Username.Should().Be("PlayerOne");
-        vm.SelectedAccount.Should().NotBeNull();
-        vm.SelectedAccount!.LastLaunchedAt.Should().NotBeNull();
+        vm.AccountManagement.SelectedAccountItem.Should().NotBeNull();
+        vm.AccountManagement.SelectedAccountItem!.Username.Should().Be("PlayerOne");
+        vm.AccountManagement.SelectedAccount.Should().NotBeNull();
+        vm.AccountManagement.SelectedAccount!.LastLaunchedAt.Should().NotBeNull();
         launcher.LaunchedUsernames.Should().Equal("PlayerOne");
     }
 
@@ -484,16 +484,14 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             supervisor,
             launcher,
             paths,
-            globalSettingsManager: settingsManager)
-        {
-            LaunchTargetInput = "https://www.roblox.com/games/1818/Classic",
-            WindowWaitTimeout = TimeSpan.FromSeconds(2)
-        };
+            globalSettingsManager: settingsManager);
+        vm.AccountManagement.LaunchTargetInput = "https://www.roblox.com/games/1818/Classic";
+        vm.AccountManagement.WindowWaitTimeout = TimeSpan.FromSeconds(2);
 
-        vm.ToggleSelectAllAccounts();
-        vm.AccountItems.Should().OnlyContain(i => i.IsChecked);
+        vm.AccountManagement.ToggleSelectAllAccounts();
+        vm.AccountManagement.AccountItems.Should().OnlyContain(i => i.IsChecked);
 
-        int count = await vm.LaunchCheckedAccountsAsync();
+        int count = await vm.AccountManagement.LaunchCheckedAccountsAsync();
 
         count.Should().Be(3);
         observedFpsDuringLaunch.Should().Equal(
@@ -519,17 +517,15 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             supervisor,
             failingLauncher,
             paths,
-            globalSettingsManager: settingsManager)
-        {
-            LaunchTargetInput = "1818",
-            WindowWaitTimeout = TimeSpan.FromSeconds(2)
-        };
-        vm2.ToggleSelectAllAccounts();
-        int partialSuccess = await vm2.LaunchCheckedAccountsAsync();
+            globalSettingsManager: settingsManager);
+        vm2.AccountManagement.LaunchTargetInput = "1818";
+        vm2.AccountManagement.WindowWaitTimeout = TimeSpan.FromSeconds(2);
+        vm2.AccountManagement.ToggleSelectAllAccounts();
+        int partialSuccess = await vm2.AccountManagement.LaunchCheckedAccountsAsync();
 
         partialSuccess.Should().Be(2);
         failingLauncher.LaunchedUsernames.Should().Equal("Acc1_AFK", "Acc3_Fps144");
-        vm2.ActivityLogText.Should().Contain("Acc2_Default");
+        vm2.AccountManagement.ActivityLogText.Should().Contain("Acc2_Default");
         File.ReadAllText(xmlPath).Should().Be(baselineXml);
 
         // Blocked mutex prevents any launcher call
@@ -542,16 +538,14 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             supervisor,
             blockedLauncher,
             paths,
-            globalSettingsManager: settingsManager)
-        {
-            LaunchTargetInput = "1818"
-        };
-        vmBlocked.ToggleSelectAllAccounts();
-        int blockedCount = await vmBlocked.LaunchCheckedAccountsAsync();
+            globalSettingsManager: settingsManager);
+        vmBlocked.AccountManagement.LaunchTargetInput = "1818";
+        vmBlocked.AccountManagement.ToggleSelectAllAccounts();
+        int blockedCount = await vmBlocked.AccountManagement.LaunchCheckedAccountsAsync();
 
         blockedCount.Should().Be(0);
         blockedLauncher.LaunchedUsernames.Should().BeEmpty();
-        vmBlocked.ActivityLogText.Should().Contain("ROBLOX_singletonMutex");
+        vmBlocked.AccountManagement.ActivityLogText.Should().Contain("ROBLOX_singletonMutex");
 
         // Cancellation stops remaining launches and restores XML backup
         MainWindowViewModel? vmCancel = null;
@@ -559,7 +553,7 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
         {
             if (acc.Username == "Acc1_AFK")
             {
-                vmCancel!.CancelActiveLaunch();
+                vmCancel!.AccountManagement.CancelActiveLaunch();
             }
         });
         vmCancel = new MainWindowViewModel(
@@ -569,13 +563,11 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
             supervisor,
             cancelLauncher,
             paths,
-            globalSettingsManager: settingsManager)
-        {
-            LaunchTargetInput = "1818",
-            WindowWaitTimeout = TimeSpan.FromSeconds(2)
-        };
-        vmCancel.ToggleSelectAllAccounts();
-        int cancelledCount = await vmCancel.LaunchCheckedAccountsAsync();
+            globalSettingsManager: settingsManager);
+        vmCancel.AccountManagement.LaunchTargetInput = "1818";
+        vmCancel.AccountManagement.WindowWaitTimeout = TimeSpan.FromSeconds(2);
+        vmCancel.AccountManagement.ToggleSelectAllAccounts();
+        int cancelledCount = await vmCancel.AccountManagement.LaunchCheckedAccountsAsync();
 
         cancelledCount.Should().Be(1);
         cancelLauncher.LaunchedUsernames.Should().Equal("Acc1_AFK");
@@ -597,39 +589,39 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
 
         var a1 = new RobloxAccount { UserId = 1001, Username = "AlphaUser", Notes = "Main" };
         var a2 = new RobloxAccount { UserId = 1002, Username = "BetaFarmer", Notes = "Alt" };
-        vm.AddOrUpdateAccount(a1);
-        vm.AddOrUpdateAccount(a2);
+        vm.AccountManagement.AddOrUpdateAccount(a1);
+        vm.AccountManagement.AddOrUpdateAccount(a2);
 
-        vm.AccountItems.Should().HaveCount(2);
-        vm.AccountCountText.Should().Be("(2)");
+        vm.AccountManagement.AccountItems.Should().HaveCount(2);
+        vm.AccountManagement.AccountCountText.Should().Be("(2)");
 
         // Filter search
-        vm.AccountSearchText = "Farmer";
-        vm.FilteredAccountItems.Cast<AccountItem>().Should().ContainSingle(i => i.Username == "BetaFarmer");
-        vm.AccountSearchText = string.Empty;
-        vm.FilteredAccountItems.Cast<AccountItem>().Should().HaveCount(2);
+        vm.AccountManagement.AccountSearchText = "Farmer";
+        vm.AccountManagement.FilteredAccountItems.Cast<AccountItem>().Should().ContainSingle(i => i.Username == "BetaFarmer");
+        vm.AccountManagement.AccountSearchText = string.Empty;
+        vm.AccountManagement.FilteredAccountItems.Cast<AccountItem>().Should().HaveCount(2);
 
         // Move up/down + persist
-        vm.SelectedAccountItem = vm.AccountItems[1];
-        vm.MoveSelectedAccount(-1).Should().BeTrue();
-        vm.AccountItems[0].Username.Should().Be("BetaFarmer");
+        vm.AccountManagement.SelectedAccountItem = vm.AccountManagement.AccountItems[1];
+        vm.AccountManagement.MoveSelectedAccount(-1).Should().BeTrue();
+        vm.AccountManagement.AccountItems[0].Username.Should().Be("BetaFarmer");
         store.LoadAll()[0].Username.Should().Be("BetaFarmer");
 
         // Batch AFK preset
-        vm.AccountItems[0].IsChecked = true;
-        vm.ApplyBatchAfkPreset().Should().Be(1);
-        vm.AccountItems[0].Account.RobloxSettings.Should().NotBeNull();
-        vm.AccountItems[0].Account.RobloxSettings!.FramerateCap.Should().Be(30);
+        vm.AccountManagement.AccountItems[0].IsChecked = true;
+        vm.AccountManagement.ApplyBatchAfkPreset().Should().Be(1);
+        vm.AccountManagement.AccountItems[0].Account.RobloxSettings.Should().NotBeNull();
+        vm.AccountManagement.AccountItems[0].Account.RobloxSettings!.FramerateCap.Should().Be(30);
 
         // Saved Join Targets CRUD
-        vm.TargetName = "Boss Farm";
-        vm.LaunchTargetInput = "2753915549";
-        vm.LaunchJobId = "job-boss";
-        vm.SaveCurrentJoinTarget().Should().BeTrue();
-        vm.SavedTargets.Should().ContainSingle(t => t.Name == "Boss Farm" && t.JobId == "job-boss");
+        vm.AccountManagement.TargetName = "Boss Farm";
+        vm.AccountManagement.LaunchTargetInput = "2753915549";
+        vm.AccountManagement.LaunchJobId = "job-boss";
+        vm.AccountManagement.SaveCurrentJoinTarget().Should().BeTrue();
+        vm.AccountManagement.SavedTargets.Should().ContainSingle(t => t.Name == "Boss Farm" && t.JobId == "job-boss");
 
-        vm.DeleteSelectedJoinTarget().Should().BeTrue();
-        vm.SavedTargets.Should().BeEmpty();
+        vm.AccountManagement.DeleteSelectedJoinTarget().Should().BeTrue();
+        vm.AccountManagement.SavedTargets.Should().BeEmpty();
 
         // MultiRoblox import without duplicating existing UserId
         string mrDir = Path.Combine(_tempDir, "MultiRobloxImport");
@@ -641,17 +633,17 @@ public sealed class MultiRobloxIntegrationTests : IDisposable
         var mrTargetStore = new JoinTargetStore(Path.Combine(mrDir, "targets.json"));
         mrTargetStore.Upsert(new SavedJoinTarget { Name = "Imported VIP", TargetInput = "https://www.roblox.com/share?code=mr123&type=Server" });
 
-        var (importedAccs, importedTargets) = vm.ImportFromMultiRoblox(mrDir);
+        var (importedAccs, importedTargets) = vm.AccountManagement.ImportFromMultiRoblox(mrDir);
         importedAccs.Should().Be(1);
         importedTargets.Should().Be(1);
-        vm.AccountItems.Should().HaveCount(3);
-        vm.AccountItems.Should().Contain(i => i.Username == "GammaImported");
-        vm.SavedTargets.Should().ContainSingle(t => t.Name == "Imported VIP");
+        vm.AccountManagement.AccountItems.Should().HaveCount(3);
+        vm.AccountManagement.AccountItems.Should().Contain(i => i.Username == "GammaImported");
+        vm.AccountManagement.SavedTargets.Should().ContainSingle(t => t.Name == "Imported VIP");
 
         // Remove checked
-        foreach (var item in vm.AccountItems) item.IsChecked = item.UserId == 1003;
-        vm.RemoveCheckedOrSelectedAccounts().Should().Be(1);
-        vm.AccountItems.Should().HaveCount(2);
+        foreach (var item in vm.AccountManagement.AccountItems) item.IsChecked = item.UserId == 1003;
+        vm.AccountManagement.RemoveCheckedOrSelectedAccounts().Should().Be(1);
+        vm.AccountManagement.AccountItems.Should().HaveCount(2);
     }
 
     [Fact]

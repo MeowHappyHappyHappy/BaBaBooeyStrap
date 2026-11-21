@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.ViewModels;
+using BaBaBooeyStrap.App.ViewModels.Sections;
 using BaBaBooeyStrap.App.Views.Dialogs;
 using BaBaBooeyStrap.Core.Logging;
 
@@ -11,7 +12,7 @@ namespace BaBaBooeyStrap.App.Views.Pages;
 public partial class AccountsPage : Page
 {
     private readonly DispatcherTimer _statusTimer;
-    private MainWindowViewModel? _subscribedViewModel;
+    private AccountsViewModel? _subscribedViewModel;
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;
 
@@ -25,7 +26,7 @@ public partial class AccountsPage : Page
         };
         _statusTimer.Tick += (_, _) =>
         {
-            ViewModel?.RefreshMultiInstanceStatus();
+            ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
         };
 
         Loaded += OnLoaded;
@@ -35,9 +36,9 @@ public partial class AccountsPage : Page
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        AttachViewModelEvents(ViewModel);
-        ViewModel?.RefreshProtocolStatus();
-        ViewModel?.RefreshMultiInstanceStatus();
+        AttachViewModelEvents(ViewModel?.AccountManagement);
+        ViewModel?.AccountManagement.RefreshProtocolStatus();
+        ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
         _statusTimer.Start();
         LogTextBox.ScrollToEnd();
     }
@@ -52,11 +53,11 @@ public partial class AccountsPage : Page
     {
         if (IsLoaded)
         {
-            AttachViewModelEvents(ViewModel);
+            AttachViewModelEvents(ViewModel?.AccountManagement);
         }
     }
 
-    private void AttachViewModelEvents(MainWindowViewModel? next)
+    private void AttachViewModelEvents(AccountsViewModel? next)
     {
         if (ReferenceEquals(_subscribedViewModel, next))
         {
@@ -88,21 +89,21 @@ public partial class AccountsPage : Page
 
     private void RefreshStatus_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel?.RefreshProtocolStatus();
-        ViewModel?.RefreshMultiInstanceStatus();
+        ViewModel?.AccountManagement.RefreshProtocolStatus();
+        ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
     }
 
-    private void ImportMultiRoblox_Click(object sender, RoutedEventArgs e) => ViewModel?.ImportFromMultiRoblox();
+    private void ImportMultiRoblox_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ImportFromMultiRoblox();
 
-    private void MoveUp_Click(object sender, RoutedEventArgs e) => ViewModel?.MoveSelectedAccount(-1);
+    private void MoveUp_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.MoveSelectedAccount(-1);
 
-    private void MoveDown_Click(object sender, RoutedEventArgs e) => ViewModel?.MoveSelectedAccount(1);
+    private void MoveDown_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.MoveSelectedAccount(1);
 
-    private void BatchAfkPreset_Click(object sender, RoutedEventArgs e) => ViewModel?.ApplyBatchAfkPreset();
+    private void BatchAfkPreset_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ApplyBatchAfkPreset();
 
     private void EditSettings_Click(object sender, RoutedEventArgs e) => OpenSettingsForSelectedAccount();
 
-    private void SelectAll_Click(object sender, RoutedEventArgs e) => ViewModel?.ToggleSelectAllAccounts();
+    private void SelectAll_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ToggleSelectAllAccounts();
 
     private void AddAccount_Click(object sender, RoutedEventArgs e)
     {
@@ -110,19 +111,19 @@ public partial class AccountsPage : Page
         var dlg = new AddAccountDialog { Owner = Window.GetWindow(this) };
         if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
         {
-            ViewModel.AddOrUpdateAccount(dlg.CreatedAccount);
+            ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
         }
     }
 
-    private void RemoveAccount_Click(object sender, RoutedEventArgs e) => ViewModel?.RemoveCheckedOrSelectedAccounts();
+    private void RemoveAccount_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.RemoveCheckedOrSelectedAccounts();
 
-    private void SaveTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.SaveCurrentJoinTarget();
+    private void SaveTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.SaveCurrentJoinTarget();
 
-    private void DeleteTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.DeleteSelectedJoinTarget();
+    private void DeleteTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.DeleteSelectedJoinTarget();
 
-    private void ClearLog_Click(object sender, RoutedEventArgs e) => ViewModel?.ClearActivityLog();
+    private void ClearLog_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ClearActivityLog();
 
-    private void CancelLaunch_Click(object sender, RoutedEventArgs e) => ViewModel?.CancelActiveLaunch();
+    private void CancelLaunch_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.CancelActiveLaunch();
 
     private void AccountsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
@@ -131,14 +132,14 @@ public partial class AccountsPage : Page
             return;
         }
 
-        Dispatcher.BeginInvoke(() => ViewModel?.CommitAccountNotesEdit(item));
+        Dispatcher.BeginInvoke(() => ViewModel?.AccountManagement.CommitAccountNotesEdit(item));
     }
 
     private void AccountsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (AccountsGrid.CurrentColumn is not null &&
             AccountsGrid.CurrentColumn.IsReadOnly &&
-            ViewModel?.SelectedAccountItem is not null)
+            ViewModel?.AccountManagement.SelectedAccountItem is not null)
         {
             OpenSettingsForSelectedAccount();
         }
@@ -146,9 +147,9 @@ public partial class AccountsPage : Page
 
     private void OpenSettingsForSelectedAccount()
     {
-        if (ViewModel == null || ViewModel.IsLaunching) return;
+        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
 
-        if (ViewModel.SelectedAccountItem is not AccountItem selected)
+        if (ViewModel.AccountManagement.SelectedAccountItem is not AccountItem selected)
         {
             ViewModel.StatusMessage = Services.LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForSettings");
             return;
@@ -161,7 +162,7 @@ public partial class AccountsPage : Page
 
         if (dlg.ShowDialog() == true)
         {
-            ViewModel.UpdateAccountSettings(selected, dlg.ResultProfile);
+            ViewModel.AccountManagement.UpdateAccountSettings(selected, dlg.ResultProfile);
         }
     }
 
@@ -170,12 +171,12 @@ public partial class AccountsPage : Page
         if (ViewModel == null) return;
         try
         {
-            await ViewModel.LaunchSelectedFromUiAsync();
+            await ViewModel.AccountManagement.LaunchSelectedFromUiAsync();
         }
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.LaunchSelected", ex);
-            ViewModel.AppendActivityLog($"Launch failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog($"Launch failed: {ex.Message}");
         }
     }
 
@@ -184,12 +185,12 @@ public partial class AccountsPage : Page
         if (ViewModel == null) return;
         try
         {
-            await ViewModel.LaunchCheckedAccountsAsync();
+            await ViewModel.AccountManagement.LaunchCheckedAccountsAsync();
         }
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.LaunchChecked", ex);
-            ViewModel.AppendActivityLog($"Batch launch failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog($"Batch launch failed: {ex.Message}");
         }
     }
 }

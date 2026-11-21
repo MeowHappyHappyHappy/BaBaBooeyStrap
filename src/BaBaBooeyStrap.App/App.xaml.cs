@@ -187,7 +187,7 @@ public partial class App : Application
         if (launchSettings.HoldFlag.Active)
         {
             orchestrator?.MultiInstanceController.Enable();
-            _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
+            _mainWindow?.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
             trayWrapper?.RefreshMultiInstanceMenuStatus();
             if (!launchSettings.QuietFlag.Active)
             {
@@ -227,7 +227,7 @@ public partial class App : Application
             if (forwarded.HoldFlag.Active)
             {
                 _services?.Orchestrator?.MultiInstanceController.Enable();
-                _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
+                _mainWindow?.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
                 _services?.TrayWrapper?.RefreshMultiInstanceMenuStatus();
                 if (forwarded.MenuFlag.Active)
                 {
@@ -329,7 +329,7 @@ public partial class App : Application
             if (result.Success)
             {
                 accountStore.Upsert(account);
-                _mainWindow?.ViewModel.ReloadAccounts();
+                _mainWindow?.ViewModel.AccountManagement.ReloadAccounts();
                 trayWrapper?.ShowBalloonNotification(
                     LocalizationService.Instance.GetString("Str_Tray_LaunchedTitle"),
                     result.ProcessId.HasValue
@@ -401,8 +401,8 @@ public partial class App : Application
         if (_mainWindow.WindowState == System.Windows.WindowState.Minimized)
             _mainWindow.WindowState = System.Windows.WindowState.Normal;
         _mainWindow.Activate();
-        _mainWindow.ViewModel.RefreshMultiInstanceStatus();
-        _mainWindow.ViewModel.RefreshProtocolStatus();
+        _mainWindow.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
+        _mainWindow.ViewModel.AccountManagement.RefreshProtocolStatus();
     }
 
     private async Task LaunchPlayerFromTrayOrSettingsAsync(LaunchSettings launchSettings)
@@ -557,7 +557,7 @@ public partial class App : Application
         else
             orchestrator.MultiInstanceController.Disable();
 
-        _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
+        _mainWindow?.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
     }
 
     private void HandleTrayExitRequested()

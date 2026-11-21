@@ -40,7 +40,7 @@
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <CheckBox Content="{DynamicResource Str_Accounts_MinimizeToTray}"
-                                  IsChecked="{Binding MinimizeToTray, Mode=TwoWay}"
+                                  IsChecked="{Binding WindowIntegrations.MinimizeToTray, Mode=TwoWay}"
                                   Margin="0,0,10,0"
                                   VerticalAlignment="Center"/>
 
@@ -52,14 +52,14 @@
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
-                                ToolTip="{Binding ProtocolToolTip}">
+                                ToolTip="{Binding AccountManagement.ProtocolToolTip}">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8"
                                          Height="8"
                                          Margin="0,0,6,0"
                                          VerticalAlignment="Center"
-                                         Fill="{Binding ProtocolIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
-                                <TextBlock Text="{Binding ProtocolStatusText}" FontSize="12" VerticalAlignment="Center"/>
+                                         Fill="{Binding AccountManagement.ProtocolIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                <TextBlock Text="{Binding AccountManagement.ProtocolStatusText}" FontSize="12" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
 
@@ -71,8 +71,8 @@
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
-                                ToolTip="{Binding RunningPidsToolTip}">
-                            <TextBlock Text="{Binding RunningPidsText}" FontSize="12" VerticalAlignment="Center"/>
+                                ToolTip="{Binding AccountManagement.RunningPidsToolTip}">
+                            <TextBlock Text="{Binding AccountManagement.RunningPidsText}" FontSize="12" VerticalAlignment="Center"/>
                         </Border>
 
                         <!-- Live Mutex Status Badge -->
@@ -83,14 +83,14 @@
                                 Background="{DynamicResource ControlFillColorDefaultBrush}"
                                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                                 BorderThickness="1"
-                                ToolTip="{Binding MutexToolTip}">
+                                ToolTip="{Binding AccountManagement.MutexToolTip}">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="8"
                                          Height="8"
                                          Margin="0,0,6,0"
                                          VerticalAlignment="Center"
-                                         Fill="{Binding MutexIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
-                                <TextBlock Text="{Binding MutexBadgeText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                         Fill="{Binding AccountManagement.MutexIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                <TextBlock Text="{Binding AccountManagement.MutexBadgeText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Border>
 
@@ -101,7 +101,7 @@
                                        FontWeight="SemiBold"
                                        VerticalAlignment="Center"
                                        Margin="0,0,8,0"/>
-                            <ui:ToggleSwitch IsChecked="{Binding MultiInstanceEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch IsChecked="{Binding AccountManagement.MultiInstanceEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
                         </StackPanel>
                     </StackPanel>
                 </Grid>
@@ -113,7 +113,7 @@
                                    FontSize="12"
                                    VerticalAlignment="Center"
                                    Margin="0,0,8,0"/>
-                        <ui:NumberBox Value="{Binding MultiInstanceLaunchDelayMs, Mode=TwoWay}"
+                        <ui:NumberBox Value="{Binding AccountManagement.MultiInstanceLaunchDelayMs, Mode=TwoWay}"
                                       Minimum="500"
                                       Maximum="10000"
                                       SpinButtonPlacementMode="Inline"
@@ -123,7 +123,7 @@
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <ui:Button Content="{DynamicResource Str_Accounts_ImportMultiRoblox}"
                                    ToolTip="{DynamicResource Str_Accounts_ImportMultiRobloxTip}"
-                                   IsEnabled="{Binding IsNotLaunching}"
+                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                    Margin="0,0,8,0"
                                    Click="ImportMultiRoblox_Click"/>
                         <ui:Button Content="{DynamicResource Str_Accounts_RefreshStatus}"
@@ -164,30 +164,30 @@
 
                         <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                             <TextBlock Text="{DynamicResource Str_Accounts_SavedAccountsHeader}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding AccountCountText}" FontSize="13" Opacity="0.75" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding AccountManagement.AccountCountText}" FontSize="13" Opacity="0.75" Margin="6,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
 
                         <StackPanel Grid.Column="1" Orientation="Horizontal">
                             <ui:Button Content="↑"
                                        ToolTip="{DynamicResource Str_Accounts_MoveUpTip}"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Margin="0,0,4,0"
                                        Click="MoveUp_Click"/>
                             <ui:Button Content="↓"
                                        ToolTip="{DynamicResource Str_Accounts_MoveDownTip}"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Margin="0,0,6,0"
                                        Click="MoveDown_Click"/>
                             <ui:Button Content="{DynamicResource Str_Accounts_BatchAfkPreset}"
                                        ToolTip="{DynamicResource Str_Accounts_BatchAfkPresetTip}"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Margin="0,0,6,0"
                                        Click="BatchAfkPreset_Click"/>
                             <ui:Button Content="{DynamicResource Str_Accounts_EditSettings}"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Margin="0,0,6,0"
                                        Click="EditSettings_Click"/>
@@ -197,13 +197,13 @@
                                        Click="SelectAll_Click"/>
                             <ui:Button Content="{DynamicResource Str_Accounts_AddAccount}"
                                        Appearance="Primary"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Margin="0,0,6,0"
                                        Click="AddAccount_Click"/>
                             <ui:Button Content="{DynamicResource Str_Accounts_RemoveSelected}"
                                        Appearance="Danger"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Padding="8,4"
                                        Click="RemoveAccount_Click"/>
                         </StackPanel>
@@ -212,14 +212,14 @@
                     <!-- Search Bar -->
                     <ui:TextBox Grid.Row="1"
                                 PlaceholderText="{DynamicResource Str_Accounts_SearchPlaceholder}"
-                                Text="{Binding AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Text="{Binding AccountManagement.AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Margin="0,0,0,8"/>
 
                     <!-- Accounts Grid -->
                     <ui:DataGrid x:Name="AccountsGrid"
                                  Grid.Row="2"
-                                 ItemsSource="{Binding FilteredAccountItems}"
-                                 SelectedItem="{Binding SelectedAccountItem, Mode=TwoWay}"
+                                 ItemsSource="{Binding AccountManagement.FilteredAccountItems}"
+                                 SelectedItem="{Binding AccountManagement.SelectedAccountItem, Mode=TwoWay}"
                                  AutoGenerateColumns="False"
                                  CanUserAddRows="False"
                                  IsReadOnly="False"
@@ -305,14 +305,14 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <ComboBox Grid.Column="0"
-                                      ItemsSource="{Binding SavedTargets}"
-                                      SelectedItem="{Binding SelectedSavedTarget, Mode=TwoWay}"
+                                      ItemsSource="{Binding AccountManagement.SavedTargets}"
+                                      SelectedItem="{Binding AccountManagement.SelectedSavedTarget, Mode=TwoWay}"
                                       DisplayMemberPath="Name"
                                       Margin="0,0,6,0"/>
                             <ui:Button Grid.Column="1"
                                        Content="{DynamicResource Str_Accounts_DeleteTarget}"
                                        Appearance="Danger"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Click="DeleteTarget_Click"/>
                         </Grid>
 
@@ -325,53 +325,53 @@
                             </Grid.ColumnDefinitions>
                             <ui:TextBox Grid.Column="0"
                                         PlaceholderText="{DynamicResource Str_Accounts_TargetNamePlaceholder}"
-                                        Text="{Binding TargetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Text="{Binding AccountManagement.TargetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         Margin="0,0,6,0"/>
                             <ui:Button Grid.Column="1"
                                        Content="{DynamicResource Str_Accounts_SaveTarget}"
-                                       IsEnabled="{Binding IsNotLaunching}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                        Click="SaveTarget_Click"/>
                         </Grid>
 
                         <!-- Target Mode Selector -->
                         <TextBlock Text="{DynamicResource Str_Accounts_TargetModeLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <ComboBox SelectedIndex="{Binding TargetModeSelectedIndex, Mode=TwoWay}"
-                                  IsEnabled="{Binding IsNotLaunching}"
+                        <ComboBox SelectedIndex="{Binding AccountManagement.TargetModeSelectedIndex, Mode=TwoWay}"
+                                  IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                   Margin="0,0,0,8">
                             <ComboBoxItem Content="{DynamicResource Str_Accounts_TargetModeServer}"/>
                             <ComboBoxItem Content="{DynamicResource Str_Accounts_TargetModeFollowUser}"/>
                         </ComboBox>
 
                         <!-- Target Input -->
-                        <TextBlock Text="{Binding TargetInputLabelText}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <ui:TextBox PlaceholderText="{Binding TargetInputPlaceholderText}"
-                                    Text="{Binding LaunchTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                        <TextBlock Text="{Binding AccountManagement.TargetInputLabelText}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                        <ui:TextBox PlaceholderText="{Binding AccountManagement.TargetInputPlaceholderText}"
+                                    Text="{Binding AccountManagement.LaunchTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Margin="0,0,0,8"/>
 
                         <!-- Optional JobId -->
-                        <StackPanel Visibility="{Binding IsJobIdInputVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                        <StackPanel Visibility="{Binding AccountManagement.IsJobIdInputVisible, Converter={StaticResource BoolToVisibilityConverter}}">
                             <TextBlock Text="{DynamicResource Str_Accounts_JobIdLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
                             <ui:TextBox PlaceholderText="{DynamicResource Str_Accounts_JobIdPlaceholder}"
-                                        Text="{Binding LaunchJobId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Text="{Binding AccountManagement.LaunchJobId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                         Margin="0,0,0,8"/>
                         </StackPanel>
 
                         <ui:Button Content="{DynamicResource Str_Accounts_LaunchSelected}"
                                    Appearance="Secondary"
                                    HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding IsNotLaunching}"
+                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                    Margin="0,4,0,8"
                                    Click="LaunchSelected_Click"/>
                         <ui:Button Content="{DynamicResource Str_Accounts_LaunchChecked}"
                                    Appearance="Primary"
                                    HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding IsNotLaunching}"
+                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
                                    Margin="0,0,0,8"
                                    Click="LaunchChecked_Click"/>
                         <ui:Button Content="{DynamicResource Str_Accounts_CancelLaunch}"
                                    Appearance="Danger"
                                    HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding CanCancelLaunch}"
+                                   IsEnabled="{Binding AccountManagement.CanCancelLaunch}"
                                    Click="CancelLaunch_Click"/>
                     </StackPanel>
                 </Border>
@@ -417,7 +417,7 @@
 
                 <TextBox x:Name="LogTextBox"
                          Grid.Row="1"
-                         Text="{Binding ActivityLogText, Mode=OneWay}"
+                         Text="{Binding AccountManagement.ActivityLogText, Mode=OneWay}"
                          IsReadOnly="True"
                          AcceptsReturn="True"
                          TextWrapping="Wrap"

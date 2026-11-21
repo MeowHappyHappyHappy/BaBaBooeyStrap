@@ -41,7 +41,7 @@
                         <TextBlock.Text>
                             <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_BaseFormat">
                                 <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                <Binding Path="BasePath"/>
+                                <Binding Path="LaunchSettings.BasePath"/>
                             </MultiBinding>
                         </TextBlock.Text>
                     </TextBlock>
@@ -49,7 +49,7 @@
                         <TextBlock.Text>
                             <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_VersionsFormat">
                                 <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                <Binding Path="VersionsPath"/>
+                                <Binding Path="LaunchSettings.VersionsPath"/>
                             </MultiBinding>
                         </TextBlock.Text>
                     </TextBlock>
@@ -57,7 +57,7 @@
                         <TextBlock.Text>
                             <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_LogsFormat">
                                 <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                <Binding Path="LogsPath"/>
+                                <Binding Path="LaunchSettings.LogsPath"/>
                             </MultiBinding>
                         </TextBlock.Text>
                     </TextBlock>

@@ -17,11 +17,11 @@
                 <StackPanel>
                     <DockPanel Margin="0,0,0,10">
                         <TextBlock Text="{DynamicResource Str_FastFlags_EnableManager}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding UseFastFlagManager}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.UseFastFlagManager}" HorizontalAlignment="Right"/>
                     </DockPanel>
                     <DockPanel>
                         <TextBlock Text="{DynamicResource Str_FastFlags_DisableAppPatch}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding UseDisableAppPatch}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.UseDisableAppPatch}" HorizontalAlignment="Right"/>
                     </DockPanel>
                 </StackPanel>
             </Border>
@@ -36,7 +36,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_FastFlags_RenderingApi}" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="RenderingCombo" Grid.Column="1" SelectedItem="{Binding SelectedRenderingMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox x:Name="RenderingCombo" Grid.Column="1" SelectedItem="{Binding FastFlags.SelectedRenderingMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
@@ -45,7 +45,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_FastFlags_Msaa}" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="MsaaCombo" Grid.Column="1" SelectedItem="{Binding SelectedMSAAMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox x:Name="MsaaCombo" Grid.Column="1" SelectedItem="{Binding FastFlags.SelectedMSAAMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
@@ -54,7 +54,7 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_FastFlags_FrmQuality}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline"/>
                     </Grid>
 
                     <Grid Margin="0,0,0,10">
@@ -63,17 +63,17 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_FastFlags_MeshLod}" VerticalAlignment="Center"/>
-                        <ui:NumberBox Grid.Column="1" Value="{Binding MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FastFlags.MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline"/>
                     </Grid>
 
                     <DockPanel Margin="0,4,0,8">
                         <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScaling}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding DisableDpiScaling}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.DisableDpiScaling}" HorizontalAlignment="Right"/>
                     </DockPanel>
 
                     <DockPanel Margin="0,0,0,12">
                         <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreen}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding ManualFullscreen}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding FastFlags.ManualFullscreen}" HorizontalAlignment="Right"/>
                     </DockPanel>
 
                     <ui:Button Content="{DynamicResource Str_FastFlags_ApplyPresets}" Appearance="Secondary" Click="ApplyPresets_Click" HorizontalAlignment="Right"/>

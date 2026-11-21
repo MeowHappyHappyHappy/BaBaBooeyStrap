@@ -19,40 +19,40 @@
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_ChannelName}" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Column="1" Text="{Binding Channel, UpdateSourceTrigger=PropertyChanged}"/>
+                        <ui:TextBox Grid.Column="1" Text="{Binding LaunchSettings.Channel, UpdateSourceTrigger=PropertyChanged}"/>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_ChangeMode}" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableChannelChangeModes}" SelectedItem="{Binding SelectedChannelChangeMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding LaunchSettings.AvailableChannelChangeModes}" SelectedItem="{Binding LaunchSettings.SelectedChannelChangeMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_DistributorType}" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableDistributorTypes}" SelectedItem="{Binding SelectedDistributorType}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding LaunchSettings.AvailableDistributorTypes}" SelectedItem="{Binding LaunchSettings.SelectedDistributorType}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_WebEnvironment}" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableWebEnvironments}" SelectedItem="{Binding SelectedWebEnvironment}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding LaunchSettings.AvailableWebEnvironments}" SelectedItem="{Binding LaunchSettings.SelectedWebEnvironment}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_RobloxDomain}" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Column="1" Text="{Binding RobloxDomain, UpdateSourceTrigger=PropertyChanged}"/>
+                        <ui:TextBox Grid.Column="1" Text="{Binding LaunchSettings.RobloxDomain, UpdateSourceTrigger=PropertyChanged}"/>
                     </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Channel_LocaleOverride}" VerticalAlignment="Center"/>
-                        <ui:TextBox Grid.Column="1" Text="{Binding Locale, UpdateSourceTrigger=PropertyChanged}"/>
+                        <ui:TextBox Grid.Column="1" Text="{Binding LaunchSettings.Locale, UpdateSourceTrigger=PropertyChanged}"/>
                     </Grid>
                     <DockPanel Margin="0,4">
                         <TextBlock Text="{DynamicResource Str_Channel_ForceRobloxLanguage}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding ForceRobloxLanguage}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ForceRobloxLanguage}" HorizontalAlignment="Right"/>
                     </DockPanel>
                     <DockPanel Margin="0,4">
                         <TextBlock Text="{DynamicResource Str_Channel_ForceReinstall}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding ForceReinstall}" HorizontalAlignment="Right"/>
+                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ForceReinstall}" HorizontalAlignment="Right"/>
                     </DockPanel>
                 </StackPanel>
             </Border>
@@ -66,21 +66,21 @@
                                 <TextBlock.Text>
                                     <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Channel_InstalledPlayerFormat">
                                         <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
-                                        <Binding Path="InstalledPlayerVersion"/>
+                                        <Binding Path="LaunchSettings.InstalledPlayerVersion"/>
                                     </MultiBinding>
                                 </TextBlock.Text>
                             </TextBlock>
                         </StackPanel>
                         <ui:Button Content="{DynamicResource Str_Channel_TestFastestCdn}" Appearance="Primary" Click="TestCdn_Click" HorizontalAlignment="Right"/>
                     </DockPanel>
-                    <ItemsControl ItemsSource="{Binding GlobalMirrors}" Margin="0,4,0,8">
+                    <ItemsControl ItemsSource="{Binding LaunchSettings.GlobalMirrors}" Margin="0,4,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <TextBlock Text="{Binding}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,1"/>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Text="{Binding CdnTestResult}" FontWeight="SemiBold" Opacity="0.85"/>
+                    <TextBlock Text="{Binding LaunchSettings.CdnTestResult}" FontWeight="SemiBold" Opacity="0.85"/>
                 </StackPanel>
             </Border>
         </StackPanel>

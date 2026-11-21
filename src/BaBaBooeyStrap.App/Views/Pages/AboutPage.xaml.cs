@@ -18,7 +18,7 @@ public partial class AboutPage : Page
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
-        Directory.CreateDirectory(ViewModel.LogsPath);
-        Process.Start(new ProcessStartInfo("explorer.exe", ViewModel.LogsPath) { UseShellExecute = true });
+        Directory.CreateDirectory(ViewModel.LaunchSettings.LogsPath);
+        Process.Start(new ProcessStartInfo("explorer.exe", ViewModel.LaunchSettings.LogsPath) { UseShellExecute = true });
     }
 }

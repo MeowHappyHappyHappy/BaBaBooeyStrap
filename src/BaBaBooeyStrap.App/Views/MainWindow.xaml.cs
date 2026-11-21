@@ -40,22 +40,22 @@ public partial class MainWindow : FluentWindow
         InitializeComponent();
 
         RestoreWindowBounds();
-        ApplyTheme(ViewModel.CurrentTheme);
+        ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
         UpdateBackdrop();
 
-        ViewModel.ThemeChanged += (_, theme) => ApplyTheme(theme);
-        ViewModel.PropertyChanged += (_, args) =>
+        ViewModel.WindowIntegrations.ThemeChanged += (_, theme) => ApplyTheme(theme);
+        ViewModel.WindowIntegrations.PropertyChanged += (_, args) =>
         {
-            if (args.PropertyName == nameof(MainWindowViewModel.UseAcrylicBackground))
+            if (args.PropertyName == nameof(ViewModels.Sections.WindowAndIntegrationsViewModel.UseAcrylicBackground))
             {
                 UpdateBackdrop();
-                ApplyTheme(ViewModel.CurrentTheme);
+                ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
             }
         };
 
         Loaded += (_, _) =>
         {
-            ApplyTheme(ViewModel.CurrentTheme);
+            ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
             _trayWrapper?.AttachWindow(this);
             if (!_initialNavigated)
             {
@@ -67,7 +67,7 @@ public partial class MainWindow : FluentWindow
         StateChanged += (_, _) =>
         {
             if (WindowState == System.Windows.WindowState.Minimized &&
-                ViewModel.MinimizeToTray &&
+                ViewModel.WindowIntegrations.MinimizeToTray &&
                 _trayWrapper != null)
             {
                 Hide();
@@ -93,7 +93,7 @@ public partial class MainWindow : FluentWindow
         PersistWindowBounds();
         ViewModel.SaveSettings(_settingsManager);
 
-        if (!_allowRealClose && _trayWrapper != null && ViewModel.MinimizeToTray)
+        if (!_allowRealClose && _trayWrapper != null && ViewModel.WindowIntegrations.MinimizeToTray)
         {
             e.Cancel = true;
             Hide();
@@ -108,7 +108,7 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        ViewModel.CancelActiveLaunch();
+        ViewModel.AccountManagement.CancelActiveLaunch();
         base.OnClosing(e);
     }
 
@@ -182,5 +182,5 @@ public partial class MainWindow : FluentWindow
     }
 
     private WindowBackdropType UpdateBackdropType() =>
-        ViewModel.UseAcrylicBackground ? WindowBackdropType.Acrylic : WindowBackdropType.Mica;
+        ViewModel.WindowIntegrations.UseAcrylicBackground ? WindowBackdropType.Acrylic : WindowBackdropType.Mica;
 }

@@ -13,24 +13,24 @@
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="{DynamicResource Str_Behaviour_LauncherHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding CheckForUpdates}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ConfirmLaunches}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding ConfirmLaunches}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WpfSoftwareRender}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WPFSoftwareRender}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DeveloperMode}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding DeveloperMode}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.CheckForUpdates}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ConfirmLaunches}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ConfirmLaunches}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WpfSoftwareRender}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.WPFSoftwareRender}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DeveloperMode}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.DeveloperMode}" HorizontalAlignment="Right"/></DockPanel>
                 </StackPanel>
             </Border>
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="{DynamicResource Str_Behaviour_IntegrationsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding EnableActivityTracking}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding UseDiscordRichPresence}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding HideRPCButtons}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding ShowServerDetails}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WindowManipulation}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding EnableWindowManipulation}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_FakeBorderless}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding FakeBorderlessFullscreen}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmaking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding EnableBetterMatchmaking}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableActivityTracking}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.HideRPCButtons}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowServerDetails}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_WindowManipulation}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableWindowManipulation}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_FakeBorderless}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.FakeBorderlessFullscreen}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmaking}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableBetterMatchmaking}" HorizontalAlignment="Right"/></DockPanel>
                 </StackPanel>
             </Border>
 
@@ -46,16 +46,16 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{DynamicResource Str_Behaviour_RetentionPolicy}" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Column="1" ItemsSource="{Binding AvailableCleanerOptions}" SelectedItem="{Binding SelectedCleanerOption}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                        <ComboBox Grid.Column="1" ItemsSource="{Binding WindowIntegrations.AvailableCleanerOptions}" SelectedItem="{Binding WindowIntegrations.SelectedCleanerOption}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
                     <WrapPanel>
-                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxCache}" IsChecked="{Binding CleanRobloxCache}" Margin="0,0,16,6"/>
-                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxStudioCache}" IsChecked="{Binding CleanRobloxStudioCache}" Margin="0,0,16,6"/>
-                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxLogs}" IsChecked="{Binding CleanRobloxLogs}" Margin="0,0,16,6"/>
-                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanBaBaBooeyStrapLogs}" IsChecked="{Binding CleanBaBaBooeyStrapLogs}" Margin="0,0,16,6"/>
-                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanCrashDumps}" IsChecked="{Binding CleanRobloxCrashDumps}" Margin="0,0,16,6"/>
+                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxCache}" IsChecked="{Binding WindowIntegrations.CleanRobloxCache}" Margin="0,0,16,6"/>
+                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxStudioCache}" IsChecked="{Binding WindowIntegrations.CleanRobloxStudioCache}" Margin="0,0,16,6"/>
+                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanRobloxLogs}" IsChecked="{Binding WindowIntegrations.CleanRobloxLogs}" Margin="0,0,16,6"/>
+                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanBaBaBooeyStrapLogs}" IsChecked="{Binding WindowIntegrations.CleanBaBaBooeyStrapLogs}" Margin="0,0,16,6"/>
+                        <CheckBox Content="{DynamicResource Str_Behaviour_CleanCrashDumps}" IsChecked="{Binding WindowIntegrations.CleanRobloxCrashDumps}" Margin="0,0,16,6"/>
                     </WrapPanel>
-                    <TextBlock Text="{Binding CleanerStatusText}" Opacity="0.75" Margin="0,6,0,0"/>
+                    <TextBlock Text="{Binding WindowIntegrations.CleanerStatusText}" Opacity="0.75" Margin="0,6,0,0"/>
                 </StackPanel>
             </Border>
         </StackPanel>
