@@ -1,46 +1,11 @@
-using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using BaBaBooeyStrap.Core.Logging;
 
 namespace BaBaBooeyStrap.Integrations.Watcher;
 
-public sealed partial class ActivityWatcher : IActivityWatcher
+public sealed class ActivityWatcher : IActivityWatcher
 {
-    [GeneratedRegex(@"^(?<ts>\d{4}-\d{2}-\d{2}T[\d:.]+Z),", RegexOptions.Compiled)]
-    private static partial Regex HeaderTimestampRegex();
-
-    [GeneratedRegex(@"!\s*Joining game '(?<jobId>[0-9a-fA-F\-]{36}|[^']+)'\s+place\s+(?<placeId>\d+)\s+at\s+(?<serverIp>[0-9.]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex JoinGameRegex();
-
-    [GeneratedRegex(@"universeid:(?<universeId>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex UniverseIdRegex();
-
-    [GeneratedRegex(@"userid:(?<userId>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex UserIdRegex();
-
-    [GeneratedRegex(@"referral_page:(?<referral>[^,\s]+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex ReferralRegex();
-
-    [GeneratedRegex(@"JoinTypeId(?:%22|"")?(?:%3a|:)(?<joinTypeId>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex TeleportJoinTypeRegex();
-
-    [GeneratedRegex(@"UDMUX Address\s*=\s*(?<udmuxIp>[0-9.]+),\s*Port\s*=\s*(?<udmuxPort>\d+)(?:\s*\|\s*RCC Server Address\s*=\s*(?<rccIp>[0-9.]+),\s*Port\s*=\s*(?<rccPort>\d+))?", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex UdmuxRegex();
-
-    [GeneratedRegex(@"serverId:\s*(?<serverIp>[0-9.]+)\|(?<serverPort>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex ServerIdRegex();
-
-    [GeneratedRegex(@"Server Prefix:.+_(?<timestamp>\d{8}T\d{6}Z)_RCC_[0-9a-zA-Z]+", RegexOptions.Compiled)]
-    private static partial Regex ServerPrefixRegex();
-
-    [GeneratedRegex(@"\[BloxstrapRPC\]\s*(?<json>\{.*\})\s*$", RegexOptions.Compiled)]
-    private static partial Regex BloxstrapRpcRegex();
-
-    [GeneratedRegex(@"Time to disconnect replication data:(?:\s*(?<val>[\d.]+))?", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
-    private static partial Regex DisconnectRegex();
-
     private readonly ILogger _logger;
     private readonly ActivityWatcherOptions _options;
     private readonly object _stateLock = new();
@@ -502,16 +467,13 @@ public sealed partial class ActivityWatcher : IActivityWatcher
 
         LogLineRead?.Invoke(this, line);
 
-        DateTime timestamp = ParseLineTimestamp(line);
+        DateTime timestamp = RobloxLogLineParser.ParseTimestamp(line);
 
         // 1. Teleport tracking
-        if (line.Contains("doTeleport: joinScriptUrl", StringComparison.OrdinalIgnoreCase))
+        if (RobloxLogLineParser.TryParseTeleport(line, out bool isReserved))
         {
             _teleportPending = true;
-            var joinTypeMatch = TeleportJoinTypeRegex().Match(line);
-            if (joinTypeMatch.Success &&
-                int.TryParse(joinTypeMatch.Groups["joinTypeId"].Value, out int joinTypeId) &&
-                (joinTypeId == 4 || joinTypeId == 6))
+            if (isReserved)
             {
                 _reservedTeleportMarker = true;
             }
@@ -519,8 +481,7 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 2. ! Joining game '<jobId>' place <placeId> at <serverIp>
-        var joinMatch = JoinGameRegex().Match(line);
-        if (joinMatch.Success)
+        if (RobloxLogLineParser.TryParseJoinGame(line, out string jobId, out string placeId, out string joinServerIp))
         {
             lock (_stateLock)
             {
@@ -528,9 +489,9 @@ public sealed partial class ActivityWatcher : IActivityWatcher
                 {
                     _pendingJoin = new ActivitySessionData
                     {
-                        JobId = joinMatch.Groups["jobId"].Value,
-                        PlaceId = joinMatch.Groups["placeId"].Value,
-                        ServerIp = joinMatch.Groups["serverIp"].Value,
+                        JobId = jobId,
+                        PlaceId = placeId,
+                        ServerIp = joinServerIp,
                         IsTeleport = _teleportPending,
                         ServerType = _reservedTeleportMarker ? ServerType.Reserved : ServerType.Public
                     };
@@ -542,35 +503,26 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 3. game_join_loadtime / universeid / userid / referral_page
-        if (line.Contains("game_join_loadtime", StringComparison.OrdinalIgnoreCase) ||
-            line.Contains("universeid:", StringComparison.OrdinalIgnoreCase))
+        if (RobloxLogLineParser.TryParseJoinMetadata(line, out string? universeId, out string? userId, out bool isPrivateServer))
         {
             lock (_stateLock)
             {
                 var target = _pendingJoin ?? _currentActivity;
                 if (target != null)
                 {
-                    var univMatch = UniverseIdRegex().Match(line);
-                    if (univMatch.Success)
+                    if (universeId != null)
                     {
-                        target.UniverseId = univMatch.Groups["universeId"].Value;
+                        target.UniverseId = universeId;
                     }
 
-                    var userMatch = UserIdRegex().Match(line);
-                    if (userMatch.Success)
+                    if (userId != null)
                     {
-                        target.UserId = userMatch.Groups["userId"].Value;
+                        target.UserId = userId;
                     }
 
-                    var refMatch = ReferralRegex().Match(line);
-                    if (refMatch.Success && target.ServerType != ServerType.Reserved)
+                    if (isPrivateServer && target.ServerType != ServerType.Reserved)
                     {
-                        string referral = refMatch.Groups["referral"].Value;
-                        if (referral.Contains("RequestPrivateGame", StringComparison.OrdinalIgnoreCase) ||
-                            referral.Contains("GameDetailPageJSHybridEvent", StringComparison.OrdinalIgnoreCase))
-                        {
-                            target.ServerType = ServerType.Private;
-                        }
+                        target.ServerType = ServerType.Private;
                     }
                 }
             }
@@ -578,61 +530,50 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 4. UDMUX Address = <udmuxIp>, Port = <udmuxPort> | RCC Server Address = <rccIp>, Port = <rccPort>
-        var udmuxMatch = UdmuxRegex().Match(line);
-        if (udmuxMatch.Success)
+        if (RobloxLogLineParser.TryParseUdmux(line, out string rccIp, out string udmuxIp, out int? udmuxPort))
         {
             lock (_stateLock)
             {
-                if (_pendingJoin != null)
+                if (_pendingJoin != null &&
+                    (string.IsNullOrEmpty(rccIp) || string.Equals(rccIp, _pendingJoin.ServerIp, StringComparison.Ordinal)))
                 {
-                    string rccIp = udmuxMatch.Groups["rccIp"].Value;
-                    if (string.IsNullOrEmpty(rccIp) ||
-                        string.Equals(rccIp, _pendingJoin.ServerIp, StringComparison.Ordinal))
+                    _pendingJoin.ServerIp = udmuxIp;
+                    if (udmuxPort.HasValue)
                     {
-                        _pendingJoin.ServerIp = udmuxMatch.Groups["udmuxIp"].Value;
-                        if (int.TryParse(udmuxMatch.Groups["udmuxPort"].Value, out int udmuxPort))
-                        {
-                            _pendingJoin.ServerPort = udmuxPort;
-                        }
-                        _pendingJoin.IsUdmux = true;
+                        _pendingJoin.ServerPort = udmuxPort.Value;
                     }
+                    _pendingJoin.IsUdmux = true;
                 }
             }
             return;
         }
 
         // 5. serverId: <ip>|<port> -> Emit GameJoined
-        var serverMatch = ServerIdRegex().Match(line);
-        if (serverMatch.Success)
+        if (RobloxLogLineParser.TryParseServerId(line, out string serverIp, out int? serverPort))
         {
             GameJoinEventArgs? joinArgs = null;
             lock (_stateLock)
             {
-                if (_pendingJoin != null)
+                if (_pendingJoin != null && string.Equals(serverIp, _pendingJoin.ServerIp, StringComparison.Ordinal))
                 {
-                    string serverIp = serverMatch.Groups["serverIp"].Value;
-                    if (string.Equals(serverIp, _pendingJoin.ServerIp, StringComparison.Ordinal))
+                    if (_pendingJoin.ServerPort == 0 && serverPort.HasValue)
                     {
-                        if (_pendingJoin.ServerPort == 0 &&
-                            int.TryParse(serverMatch.Groups["serverPort"].Value, out int serverPort))
-                        {
-                            _pendingJoin.ServerPort = serverPort;
-                        }
-
-                        _pendingJoin.TimeJoined = timestamp;
-                        _currentActivity = _pendingJoin;
-                        _pendingJoin = null;
-                        _inGame = true;
-
-                        joinArgs = new GameJoinEventArgs(
-                            _currentActivity.PlaceId,
-                            _currentActivity.UniverseId,
-                            _currentActivity.JobId,
-                            _currentActivity.ServerIp,
-                            _currentActivity.ServerPort,
-                            _currentActivity.IsUdmux,
-                            timestamp);
+                        _pendingJoin.ServerPort = serverPort.Value;
                     }
+
+                    _pendingJoin.TimeJoined = timestamp;
+                    _currentActivity = _pendingJoin;
+                    _pendingJoin = null;
+                    _inGame = true;
+
+                    joinArgs = new GameJoinEventArgs(
+                        _currentActivity.PlaceId,
+                        _currentActivity.UniverseId,
+                        _currentActivity.JobId,
+                        _currentActivity.ServerIp,
+                        _currentActivity.ServerPort,
+                        _currentActivity.IsUdmux,
+                        timestamp);
                 }
             }
 
@@ -644,14 +585,7 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 6. Server Prefix (uptime timestamp)
-        var prefixMatch = ServerPrefixRegex().Match(line);
-        if (prefixMatch.Success &&
-            DateTime.TryParseExact(
-                prefixMatch.Groups["timestamp"].Value,
-                "yyyyMMdd'T'HHmmss'Z'",
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out DateTime serverStart))
+        if (RobloxLogLineParser.TryParseServerPrefixTimestamp(line, out DateTime serverStart))
         {
             lock (_stateLock)
             {
@@ -669,15 +603,14 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 7. [BloxstrapRPC] JSON
-        var rpcMatch = BloxstrapRpcRegex().Match(line);
-        if (rpcMatch.Success)
+        if (RobloxLogLineParser.TryExtractBloxstrapRpcJson(line, out string rpcJson))
         {
-            HandleBloxstrapRpc(rpcMatch.Groups["json"].Value, timestamp);
+            HandleBloxstrapRpc(rpcJson, timestamp);
             return;
         }
 
         // 8. Time to disconnect replication data: -> GameLeft
-        if (DisconnectRegex().IsMatch(line))
+        if (RobloxLogLineParser.IsDisconnectLine(line))
         {
             GameLeaveEventArgs? leaveArgs = null;
             lock (_stateLock)
@@ -705,7 +638,7 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         // 9. leaveUGCGameInternal -> AppClosed (+ cancel incomplete join)
-        if (line.Contains("leaveUGCGameInternal", StringComparison.OrdinalIgnoreCase))
+        if (RobloxLogLineParser.IsAppCloseLine(line))
         {
             lock (_stateLock)
             {
@@ -726,23 +659,16 @@ public sealed partial class ActivityWatcher : IActivityWatcher
             return;
         }
 
-        BloxstrapRpcMessage? parsed;
-        try
+        if (!RobloxLogLineParser.TryParseBloxstrapRpcMessage(rawJson, out var parsed, out var parseError))
         {
-            parsed = JsonSerializer.Deserialize<BloxstrapRpcMessage>(rawJson);
-        }
-        catch (JsonException ex)
-        {
-            _logger.Debug("ActivityWatcher", $"Ignoring malformed BloxstrapRPC JSON: {ex.Message}");
+            if (parseError != null)
+            {
+                _logger.Debug("ActivityWatcher", $"Ignoring malformed BloxstrapRPC JSON: {parseError}");
+            }
             return;
         }
 
-        if (parsed == null || string.IsNullOrWhiteSpace(parsed.Command))
-        {
-            return;
-        }
-
-        if (string.Equals(parsed.Command, "SetLaunchData", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(parsed!.Command, "SetLaunchData", StringComparison.OrdinalIgnoreCase))
         {
             if (parsed.Data is not { ValueKind: JsonValueKind.String } dataElem)
             {
@@ -765,23 +691,7 @@ public sealed partial class ActivityWatcher : IActivityWatcher
         }
 
         _lastRpcTimeUtc = nowUtc;
-        BloxstrapRpcReceived?.Invoke(this, new BloxstrapRpcEventArgs(parsed.Command, rawJson, timestamp));
-    }
-
-    private static DateTime ParseLineTimestamp(string line)
-    {
-        var match = HeaderTimestampRegex().Match(line);
-        if (match.Success &&
-            DateTime.TryParse(
-                match.Groups["ts"].Value,
-                CultureInfo.InvariantCulture,
-                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
-                out DateTime parsed))
-        {
-            return parsed;
-        }
-
-        return DateTime.UtcNow;
+        BloxstrapRpcReceived?.Invoke(this, new BloxstrapRpcEventArgs(parsed.Command!, rawJson, timestamp));
     }
 
     public void Dispose()

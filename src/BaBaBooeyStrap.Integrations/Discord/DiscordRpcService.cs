@@ -1,32 +1,16 @@
-using System.Buffers.Binary;
 using System.IO.Pipes;
-using System.Text;
-using System.Text.Encodings.Web;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using BaBaBooeyStrap.Core.Logging;
 
 namespace BaBaBooeyStrap.Integrations.Discord;
 
 public sealed class DiscordRpcService : IDiscordRpcService
 {
-    public const int MaxFrameLength = 65536;
-    public const uint OpcodeHandshake = 0;
-    public const uint OpcodeFrame = 1;
-    public const uint OpcodeClose = 2;
-    public const uint OpcodePing = 3;
-    public const uint OpcodePong = 4;
-
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    private static readonly JsonSerializerOptions ClearJsonOptions = new()
-    {
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-    };
+    public const int MaxFrameLength = DiscordIpcProtocol.MaxFrameLength;
+    public const uint OpcodeHandshake = DiscordIpcProtocol.OpcodeHandshake;
+    public const uint OpcodeFrame = DiscordIpcProtocol.OpcodeFrame;
+    public const uint OpcodeClose = DiscordIpcProtocol.OpcodeClose;
+    public const uint OpcodePing = DiscordIpcProtocol.OpcodePing;
+    public const uint OpcodePong = DiscordIpcProtocol.OpcodePong;
 
     private readonly DiscordRpcOptions _options;
     private readonly ILogger _logger;
@@ -116,18 +100,11 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
                     await candidate.ConnectAsync(connectCts.Token).ConfigureAwait(false);
 
-                    // Send Opcode 0 Handshake
-                    string handshakeJson = JsonSerializer.Serialize(new
-                    {
-                        v = 1,
-                        client_id = _options.ClientId
-                    }, JsonOptions);
+                    string handshakeJson = DiscordIpcProtocol.BuildHandshakeJson(_options.ClientId);
+                    await DiscordIpcProtocol.WriteFrameAsync(candidate, OpcodeHandshake, handshakeJson, connectCts.Token).ConfigureAwait(false);
 
-                    await WriteFrameAsync(candidate, OpcodeHandshake, handshakeJson, connectCts.Token).ConfigureAwait(false);
-
-                    // Read Opcode 1 READY response
-                    var (respOpcode, respJson) = await ReadFrameAsync(candidate, connectCts.Token).ConfigureAwait(false);
-                    if (respOpcode == OpcodeFrame && IsReadyDispatch(respJson))
+                    var (respOpcode, respJson) = await DiscordIpcProtocol.ReadFrameAsync(candidate, connectCts.Token).ConfigureAwait(false);
+                    if (respOpcode == OpcodeFrame && DiscordIpcProtocol.IsReadyDispatch(respJson))
                     {
                         ActivatePipe(candidate);
                         candidate = null;
@@ -202,18 +179,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
             _lastActivity = null;
         }
 
-        var payload = new
-        {
-            cmd = "SET_ACTIVITY",
-            args = new
-            {
-                pid = Environment.ProcessId,
-                activity = (object?)null
-            },
-            nonce = Guid.NewGuid().ToString()
-        };
-
-        string json = JsonSerializer.Serialize(payload, ClearJsonOptions);
+        string json = DiscordIpcProtocol.BuildClearActivityJson(Environment.ProcessId);
         await SendFrameSafeAsync(OpcodeFrame, json, ct).ConfigureAwait(false);
     }
 
@@ -250,13 +216,13 @@ public sealed class DiscordRpcService : IDiscordRpcService
         {
             try
             {
-                string closeJson = JsonSerializer.Serialize(new { code = 1000, message = "Normal closure" }, JsonOptions);
+                string closeJson = DiscordIpcProtocol.BuildCloseJson();
                 if (_writeLock.Wait(200))
                 {
                     try
                     {
                         using var closeCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
-                        WriteFrameAsync(pipeToClose, OpcodeClose, closeJson, closeCts.Token).GetAwaiter().GetResult();
+                        DiscordIpcProtocol.WriteFrameAsync(pipeToClose, OpcodeClose, closeJson, closeCts.Token).GetAwaiter().GetResult();
                     }
                     finally
                     {
@@ -281,207 +247,20 @@ public sealed class DiscordRpcService : IDiscordRpcService
         string placeId,
         string? jobId = null,
         string? accessCode = null,
-        string? launchData = null)
-    {
-        if (string.IsNullOrWhiteSpace(placeId)) return string.Empty;
+        string? launchData = null) =>
+        DiscordIpcProtocol.BuildRobloxDeepLink(placeId, jobId, accessCode, launchData);
 
-        var sb = new StringBuilder($"roblox://experiences/start?placeId={Uri.EscapeDataString(placeId)}");
-        if (!string.IsNullOrWhiteSpace(accessCode))
-        {
-            sb.Append($"&accessCode={Uri.EscapeDataString(accessCode)}");
-        }
-        else if (!string.IsNullOrWhiteSpace(jobId))
-        {
-            sb.Append($"&gameInstanceId={Uri.EscapeDataString(jobId)}");
-        }
+    public static string FormatPresenceText(string? text, bool padSingleChar = false) =>
+        DiscordIpcProtocol.FormatPresenceText(text, padSingleChar);
 
-        if (!string.IsNullOrWhiteSpace(launchData))
-        {
-            string trimmed = launchData.Length > 200 ? launchData[..200] : launchData;
-            sb.Append($"&launchData={Uri.EscapeDataString(trimmed)}");
-        }
+    public string BuildSetActivityJson(DiscordActivity activity) =>
+        DiscordIpcProtocol.BuildSetActivityJson(activity, _options, Environment.ProcessId);
 
-        return sb.ToString();
-    }
+    public static Task WriteFrameAsync(Stream stream, uint opcode, string json, CancellationToken ct) =>
+        DiscordIpcProtocol.WriteFrameAsync(stream, opcode, json, ct);
 
-    public static string FormatPresenceText(string? text, bool padSingleChar = false)
-    {
-        if (string.IsNullOrEmpty(text)) return string.Empty;
-
-        string result = text.Length > 128 ? text[..128] : text;
-        if (Encoding.UTF8.GetByteCount(result) > 128)
-        {
-            // Trim safely at rune boundary to stay <= 128 UTF-8 bytes
-            var sb = new StringBuilder();
-            int byteCount = 0;
-            foreach (Rune rune in result.EnumerateRunes())
-            {
-                int runeBytes = rune.Utf8SequenceLength;
-                if (byteCount + runeBytes > 128) break;
-                sb.Append(rune.ToString());
-                byteCount += runeBytes;
-            }
-            result = sb.ToString();
-        }
-
-        if (padSingleChar && result.Length == 1)
-        {
-            result += "\u2800\u2800";
-        }
-
-        return result;
-    }
-
-    public string BuildSetActivityJson(DiscordActivity activity)
-    {
-        string details = FormatPresenceText(activity.Details, padSingleChar: true);
-        string state = FormatPresenceText(activity.State, padSingleChar: true);
-
-        object? timestamps = activity.StartTimestamps.HasValue
-            ? new { start = activity.StartTimestamps.Value }
-            : null;
-
-        string? largeImage = string.IsNullOrWhiteSpace(activity.LargeImageKey) ? null : TruncateUtf8(activity.LargeImageKey, 512);
-        string? largeText = string.IsNullOrWhiteSpace(activity.LargeImageText) ? null : FormatPresenceText(activity.LargeImageText, padSingleChar: true);
-        string? smallImage = string.IsNullOrWhiteSpace(activity.SmallImageKey) ? null : TruncateUtf8(activity.SmallImageKey, 512);
-        string? smallText = string.IsNullOrWhiteSpace(activity.SmallImageText) ? null : FormatPresenceText(activity.SmallImageText, padSingleChar: true);
-
-        bool hasAssets = largeImage != null || largeText != null || smallImage != null || smallText != null;
-
-        object? assets = hasAssets
-            ? new
-            {
-                large_image = largeImage,
-                large_text = largeText,
-                small_image = smallImage,
-                small_text = smallText
-            }
-            : null;
-
-        List<object>? buttons = null;
-        if (!_options.HideButtons && !string.IsNullOrWhiteSpace(activity.DeepLinkUrl))
-        {
-            string safeDeepLink = TruncateUtf8(activity.DeepLinkUrl, 2048);
-            if (!string.IsNullOrEmpty(safeDeepLink))
-            {
-                buttons = new List<object>
-                {
-                    new { label = "Join server", url = safeDeepLink }
-                };
-
-                if (!string.IsNullOrWhiteSpace(_options.GamePageUrl))
-                {
-                    string safeGamePageUrl = TruncateUtf8(_options.GamePageUrl, 2048);
-                    if (!string.IsNullOrEmpty(safeGamePageUrl))
-                    {
-                        buttons.Add(new { label = "See game page", url = safeGamePageUrl });
-                    }
-                }
-            }
-        }
-
-        // Discord enforces mutual exclusion between buttons and secrets
-        object? secrets = (buttons == null || buttons.Count == 0) && !string.IsNullOrWhiteSpace(activity.JoinSecret)
-            ? new { join = TruncateUtf8(activity.JoinSecret, 512) }
-            : null;
-
-        string SerializeEnvelope(object? currentAssets, List<object>? currentButtons, object? currentSecrets)
-        {
-            var activityBody = new
-            {
-                details = string.IsNullOrEmpty(details) ? null : details,
-                state = string.IsNullOrEmpty(state) ? null : state,
-                status_display_type = (int)_options.StatusDisplayType,
-                timestamps,
-                assets = currentAssets,
-                buttons = currentButtons,
-                secrets = currentSecrets
-            };
-
-            var envelope = new
-            {
-                cmd = "SET_ACTIVITY",
-                args = new
-                {
-                    pid = Environment.ProcessId,
-                    activity = activityBody
-                },
-                nonce = Guid.NewGuid().ToString()
-            };
-
-            return JsonSerializer.Serialize(envelope, JsonOptions);
-        }
-
-        string json = SerializeEnvelope(assets, buttons, secrets);
-        if (Encoding.UTF8.GetByteCount(json) > MaxFrameLength)
-        {
-            json = SerializeEnvelope(assets, null, null);
-        }
-        if (Encoding.UTF8.GetByteCount(json) > MaxFrameLength)
-        {
-            json = SerializeEnvelope(null, null, null);
-        }
-        return json;
-    }
-
-    private static string TruncateUtf8(string value, int maxBytes)
-    {
-        if (string.IsNullOrEmpty(value) || Encoding.UTF8.GetByteCount(value) <= maxBytes)
-        {
-            return value;
-        }
-
-        var sb = new StringBuilder();
-        int byteCount = 0;
-        foreach (Rune rune in value.EnumerateRunes())
-        {
-            int runeBytes = rune.Utf8SequenceLength;
-            if (byteCount + runeBytes > maxBytes) break;
-            sb.Append(rune.ToString());
-            byteCount += runeBytes;
-        }
-        return sb.ToString();
-    }
-
-    public static async Task WriteFrameAsync(Stream stream, uint opcode, string json, CancellationToken ct)
-    {
-        byte[] payload = Encoding.UTF8.GetBytes(json);
-        if (payload.Length > MaxFrameLength)
-        {
-            throw new InvalidDataException($"Discord IPC frame exceeds maximum size ({payload.Length} > {MaxFrameLength}).");
-        }
-
-        byte[] frame = new byte[8 + payload.Length];
-        BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(0, 4), opcode);
-        BinaryPrimitives.WriteInt32LittleEndian(frame.AsSpan(4, 4), payload.Length);
-        payload.CopyTo(frame, 8);
-
-        await stream.WriteAsync(frame, ct).ConfigureAwait(false);
-        await stream.FlushAsync(ct).ConfigureAwait(false);
-    }
-
-    public static async Task<(uint Opcode, string Json)> ReadFrameAsync(Stream stream, CancellationToken ct)
-    {
-        byte[] header = new byte[8];
-        await stream.ReadExactlyAsync(header.AsMemory(0, 8), ct).ConfigureAwait(false);
-
-        uint opcode = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0, 4));
-        int length = BinaryPrimitives.ReadInt32LittleEndian(header.AsSpan(4, 4));
-
-        if (length < 0 || length > MaxFrameLength)
-        {
-            throw new InvalidDataException($"Invalid Discord IPC frame length: {length}");
-        }
-
-        if (length == 0)
-        {
-            return (opcode, string.Empty);
-        }
-
-        byte[] payload = new byte[length];
-        await stream.ReadExactlyAsync(payload.AsMemory(0, length), ct).ConfigureAwait(false);
-        return (opcode, Encoding.UTF8.GetString(payload));
-    }
+    public static Task<(uint Opcode, string Json)> ReadFrameAsync(Stream stream, CancellationToken ct) =>
+        DiscordIpcProtocol.ReadFrameAsync(stream, ct);
 
     private string[] GetCandidatePipeNames()
     {
@@ -496,22 +275,6 @@ public sealed class DiscordRpcService : IDiscordRpcService
             list.Add($"{_options.PipeNamePrefix}-{i}");
         }
         return list.ToArray();
-    }
-
-    private static bool IsReadyDispatch(string json)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return false;
-            if (!doc.RootElement.TryGetProperty("evt", out var evtProp)) return false;
-            if (evtProp.ValueKind != JsonValueKind.String) return false;
-            return string.Equals(evtProp.GetString(), "READY", StringComparison.OrdinalIgnoreCase);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
     }
 
     private void ActivatePipe(NamedPipeClientStream pipe)
@@ -568,7 +331,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
                 return;
             }
 
-            await WriteFrameAsync(pipe, opcode, json, ct).ConfigureAwait(false);
+            await DiscordIpcProtocol.WriteFrameAsync(pipe, opcode, json, ct).ConfigureAwait(false);
         }
         catch (InvalidDataException ex)
         {
@@ -591,7 +354,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
         {
             while (!ct.IsCancellationRequested && pipe.IsConnected)
             {
-                var (opcode, json) = await ReadFrameAsync(pipe, ct).ConfigureAwait(false);
+                var (opcode, json) = await DiscordIpcProtocol.ReadFrameAsync(pipe, ct).ConfigureAwait(false);
 
                 if (opcode == OpcodePing)
                 {
