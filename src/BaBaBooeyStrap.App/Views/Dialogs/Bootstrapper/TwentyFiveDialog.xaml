@@ -1,0 +1,42 @@
+<Window x:Class="BaBaBooeyStrap.App.Views.Dialogs.Bootstrapper.TwentyFiveDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{Binding Title}"
+        Width="420"
+        Height="230"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="#FFF4F4F4"
+        Foreground="#FF191919">
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" HorizontalAlignment="Center" Margin="0,4,0,14">
+            <Image Source="{Binding IconSource}" Width="52" Height="52" Margin="0,0,0,8"/>
+            <TextBlock Text="{Binding Message}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" VerticalAlignment="Center">
+            <ProgressBar Value="{Binding ProgressValue}"
+                         Maximum="{Binding ProgressMaximum}"
+                         IsIndeterminate="{Binding IsIndeterminate}"
+                         Height="18"
+                         Foreground="#FF00A2FF"
+                         Background="#FFE0E0E0"/>
+            <TextBlock Text="{Binding PackageProgressText}" FontSize="11" Foreground="#FF666666" HorizontalAlignment="Center" Margin="0,6,0,0"/>
+        </StackPanel>
+
+        <Button Grid.Row="2"
+                Content="{DynamicResource Str_Bootstrapper_Cancel}"
+                Command="{Binding CancelCommand}"
+                IsEnabled="{Binding CancelEnabled}"
+                HorizontalAlignment="Center"
+                Width="96"
+                Height="26"
+                Margin="0,8,0,0"/>
+    </Grid>
+</Window>

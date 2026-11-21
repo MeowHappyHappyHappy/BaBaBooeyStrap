@@ -1,0 +1,79 @@
+<Page x:Class="BaBaBooeyStrap.App.Views.Pages.ModsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:conv="clr-namespace:BaBaBooeyStrap.App.Converters"
+      xmlns:services="clr-namespace:BaBaBooeyStrap.App.Services"
+      Style="{DynamicResource AppPageStyle}"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="{DynamicResource Str_Mods_PageTitle}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
+        <StackPanel>
+            <DockPanel Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Mods_Header}" FontSize="24" FontWeight="SemiBold"/>
+                    <TextBlock Opacity="0.75">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Mods_ActiveFilesFormat">
+                                <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
+                                <Binding Path="ActiveModFileCount"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                </StackPanel>
+                <ui:Button Content="{DynamicResource Str_Mods_OpenFolder}" Click="OpenModsFolder_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </DockPanel>
+
+            <!-- Custom Font -->
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <DockPanel>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Mods_CustomFontHeader}" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding CurrentFontStatus}" Opacity="0.75" FontSize="12.5"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <ui:Button Content="{DynamicResource Str_Mods_SelectFont}" Click="ChooseFont_Click" Margin="0,0,8,0"/>
+                        <ui:Button Content="{DynamicResource Str_Common_Reset}" Click="ResetFont_Click"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- Cursor Preset -->
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <DockPanel>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Mods_CursorPresetHeader}" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock Text="{DynamicResource Str_Mods_CursorPresetDesc}" Opacity="0.75" FontSize="12.5"/>
+                    </StackPanel>
+                    <ComboBox x:Name="CursorCombo" Width="180" SelectedItem="{Binding SelectedCursorPreset}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}" HorizontalAlignment="Right"/>
+                </DockPanel>
+            </Border>
+
+            <!-- Death Sound -->
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <DockPanel>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Mods_DeathSoundHeader}" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding CustomDeathSoundStatusText}" Opacity="0.75" FontSize="12.5"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <ui:Button Content="{DynamicResource Str_Mods_SelectOgg}" Click="ChooseSound_Click" Margin="0,0,8,0"/>
+                        <ui:Button Content="{DynamicResource Str_Common_Reset}" Click="ResetSound_Click"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- Avatar Background -->
+            <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <DockPanel>
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_Mods_AvatarBgHeader}" FontSize="15" FontWeight="SemiBold"/>
+                        <TextBlock Text="{DynamicResource Str_Mods_AvatarBgDesc}" Opacity="0.75" FontSize="12.5"/>
+                    </StackPanel>
+                    <ui:ToggleSwitch IsChecked="{Binding OldAvatarBackgroundEnabled}" HorizontalAlignment="Right"/>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

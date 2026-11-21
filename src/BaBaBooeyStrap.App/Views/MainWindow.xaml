@@ -1,0 +1,62 @@
+<ui:FluentWindow x:Class="BaBaBooeyStrap.App.Views.MainWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:pages="clr-namespace:BaBaBooeyStrap.App.Views.Pages"
+                 Title="{DynamicResource Str_MainWindow_Title}"
+                 Width="1120"
+                 Height="740"
+                 MinWidth="920"
+                 MinHeight="600"
+                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="{DynamicResource Str_MainWindow_Title}"/>
+
+        <ui:NavigationView x:Name="RootNavigation"
+                           Grid.Row="1"
+                           PaneDisplayMode="Left"
+                           IsBackButtonVisible="Collapsed"
+                           IsPaneToggleVisible="True"
+                           Navigated="RootNavigation_Navigated">
+            <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Accounts}" Tag="Accounts" Icon="{ui:SymbolIcon People24}" TargetPageType="{x:Type pages:AccountsPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_FastFlags}" Tag="FastFlags" Icon="{ui:SymbolIcon Flag24}" TargetPageType="{x:Type pages:FastFlagsPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Mods}" Tag="Mods" Icon="{ui:SymbolIcon PuzzlePiece24}" TargetPageType="{x:Type pages:ModsPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Appearance}" Tag="Appearance" Icon="{ui:SymbolIcon PaintBrush24}" TargetPageType="{x:Type pages:AppearancePage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Behaviour}" Tag="Behaviour" Icon="{ui:SymbolIcon Settings24}" TargetPageType="{x:Type pages:BehaviourPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Channel}" Tag="Channel" Icon="{ui:SymbolIcon Globe24}" TargetPageType="{x:Type pages:ChannelPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_GlobalSettings}" Tag="Global Settings" Icon="{ui:SymbolIcon Options24}" TargetPageType="{x:Type pages:GlobalSettingsPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_Shortcuts}" Tag="Shortcuts" Icon="{ui:SymbolIcon Link24}" TargetPageType="{x:Type pages:ShortcutsPage}"/>
+                <ui:NavigationViewItem Content="{DynamicResource Str_Nav_About}" Tag="About" Icon="{ui:SymbolIcon Info24}" TargetPageType="{x:Type pages:AboutPage}"/>
+            </ui:NavigationView.MenuItems>
+        </ui:NavigationView>
+
+        <!-- Bottom Action Bar -->
+        <Border Grid.Row="2"
+                Padding="16,10"
+                BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                Background="{DynamicResource ApplicationBackgroundBrush}">
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding MultiInstanceStatusText}" FontWeight="SemiBold" Margin="0,0,16,0"/>
+                    <TextBlock Text="{Binding StatusMessage}" Opacity="0.75"/>
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button Content="{DynamicResource Str_MainWindow_Save}" Click="Save_Click" Margin="0,0,8,0" MinWidth="90"/>
+                    <ui:Button Content="{DynamicResource Str_MainWindow_SaveAndLaunch}" Appearance="Primary" Click="SaveAndLaunch_Click" Margin="0,0,8,0" MinWidth="120"/>
+                    <ui:Button Content="{DynamicResource Str_MainWindow_Close}" Click="Close_Click" MinWidth="80"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

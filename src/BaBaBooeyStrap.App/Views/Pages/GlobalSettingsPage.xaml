@@ -1,0 +1,66 @@
+<Page x:Class="BaBaBooeyStrap.App.Views.Pages.GlobalSettingsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Style="{DynamicResource AppPageStyle}"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="{DynamicResource Str_GlobalSettings_PageTitle}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
+        <StackPanel>
+            <DockPanel Margin="0,0,0,16">
+                <TextBlock Text="{DynamicResource Str_GlobalSettings_Header}" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button Content="{DynamicResource Str_Common_Reload}" Click="Reload_Click" Margin="0,0,8,0"/>
+                    <ui:Button Content="{DynamicResource Str_GlobalSettings_ApplyToDisk}" Appearance="Primary" Click="Apply_Click"/>
+                </StackPanel>
+            </DockPanel>
+
+            <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="160"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_GlobalSettings_FramerateCap}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FramerateCap, Mode=TwoWay}" Minimum="0" Maximum="1000" SpinButtonPlacementMode="Inline" Margin="0,0,8,0"/>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <ui:Button Content="60" Tag="60" Click="FpsPreset_Click" Margin="0,0,4,0"/>
+                            <ui:Button Content="144" Tag="144" Click="FpsPreset_Click" Margin="0,0,4,0"/>
+                            <ui:Button Content="240" Tag="240" Click="FpsPreset_Click" Margin="0,0,4,0"/>
+                            <ui:Button Content="999" Tag="999" Click="FpsPreset_Click"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <DockPanel Margin="0,4,0,10">
+                        <TextBlock Text="{DynamicResource Str_GlobalSettings_ReadOnlyLock}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding ReadOnlyLocked}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_GlobalSettings_MouseSensitivity}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding MouseSensitivity, Mode=TwoWay}" Minimum="0.01" Maximum="20" SmallChange="0.1"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_GlobalSettings_QualityLevel}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding SavedQualityLevel, Mode=TwoWay}" Minimum="1" Maximum="10" SpinButtonPlacementMode="Inline"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_GlobalSettings_TextSize}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding PreferredTextSize, Mode=TwoWay}" Minimum="1" Maximum="4" SpinButtonPlacementMode="Inline"/>
+                    </Grid>
+
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_VrEnabled}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding VREnabled}" HorizontalAlignment="Right"/></DockPanel>
+                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_ReducedMotion}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding ReducedMotion}" HorizontalAlignment="Right"/></DockPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

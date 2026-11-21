@@ -1,0 +1,84 @@
+<Page x:Class="BaBaBooeyStrap.App.Views.Pages.FastFlagsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      Style="{DynamicResource AppPageStyle}"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="{DynamicResource Str_FastFlags_PageTitle}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
+        <StackPanel>
+            <DockPanel Margin="0,0,0,16">
+                <TextBlock Text="{DynamicResource Str_FastFlags_Header}" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <ui:Button Content="{DynamicResource Str_FastFlags_OpenEditor}" Appearance="Primary" Click="OpenEditor_Click" HorizontalAlignment="Right"/>
+            </DockPanel>
+
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,10">
+                        <TextBlock Text="{DynamicResource Str_FastFlags_EnableManager}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding UseFastFlagManager}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel>
+                        <TextBlock Text="{DynamicResource Str_FastFlags_DisableAppPatch}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding UseDisableAppPatch}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                </StackPanel>
+            </Border>
+
+            <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_FastFlags_EnginePresetsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_FastFlags_RenderingApi}" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="RenderingCombo" Grid.Column="1" SelectedItem="{Binding SelectedRenderingMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_FastFlags_Msaa}" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="MsaaCombo" Grid.Column="1" SelectedItem="{Binding SelectedMSAAMode}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_FastFlags_FrmQuality}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding FrmQualityOverride, Mode=TwoWay}" Minimum="1" Maximum="21" SpinButtonPlacementMode="Inline"/>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_FastFlags_MeshLod}" VerticalAlignment="Center"/>
+                        <ui:NumberBox Grid.Column="1" Value="{Binding MeshLodLevel, Mode=TwoWay}" Minimum="0" Maximum="3" SpinButtonPlacementMode="Inline"/>
+                    </Grid>
+
+                    <DockPanel Margin="0,4,0,8">
+                        <TextBlock Text="{DynamicResource Str_FastFlags_DisableDpiScaling}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding DisableDpiScaling}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+
+                    <DockPanel Margin="0,0,0,12">
+                        <TextBlock Text="{DynamicResource Str_FastFlags_ManualFullscreen}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding ManualFullscreen}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+
+                    <ui:Button Content="{DynamicResource Str_FastFlags_ApplyPresets}" Appearance="Secondary" Click="ApplyPresets_Click" HorizontalAlignment="Right"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

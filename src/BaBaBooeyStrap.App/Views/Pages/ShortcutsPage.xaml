@@ -1,0 +1,73 @@
+<Page x:Class="BaBaBooeyStrap.App.Views.Pages.ShortcutsPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+      xmlns:conv="clr-namespace:BaBaBooeyStrap.App.Converters"
+      xmlns:services="clr-namespace:BaBaBooeyStrap.App.Services"
+      Style="{DynamicResource AppPageStyle}"
+      Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+      Title="{DynamicResource Str_Shortcuts_PageTitle}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
+        <StackPanel>
+            <TextBlock Text="{DynamicResource Str_Shortcuts_Header}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
+
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Shortcuts_WindowsShortcutsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <WrapPanel>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_CreateDesktop}" Click="CreateDesktop_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_CreateStartMenu}" Click="CreateStartMenu_Click" Margin="0,0,8,8"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Shortcuts_ProtocolsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <WrapPanel>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_RegisterPlayer}" Appearance="Primary" Click="RegisterPlayer_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_RegisterStudio}" Click="RegisterStudio_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_RemoveStartup}" Click="RemoveStartup_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_UnregisterAll}" Click="UnregisterAll_Click" Margin="0,0,8,8"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Shortcuts_FoldersHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                    <TextBlock Margin="0,0,0,4">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_BaseFormat">
+                                <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
+                                <Binding Path="BasePath"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                    <TextBlock Margin="0,0,0,4">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_VersionsFormat">
+                                <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
+                                <Binding Path="VersionsPath"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                    <TextBlock Margin="0,0,0,10">
+                        <TextBlock.Text>
+                            <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Shortcuts_LogsFormat">
+                                <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
+                                <Binding Path="LogsPath"/>
+                            </MultiBinding>
+                        </TextBlock.Text>
+                    </TextBlock>
+                    <WrapPanel>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_OpenBase}" Click="OpenBase_Click" Margin="0,0,8,0"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_OpenVersions}" Click="OpenVersions_Click" Margin="0,0,8,0"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_OpenLogs}" Click="OpenLogs_Click"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

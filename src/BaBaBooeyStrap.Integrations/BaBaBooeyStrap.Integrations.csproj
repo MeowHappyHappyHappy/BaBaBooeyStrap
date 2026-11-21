@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>BaBaBooeyStrap.Integrations</RootNamespace>
+    <AssemblyName>BaBaBooeyStrap.Integrations</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BaBaBooeyStrap.Core\BaBaBooeyStrap.Core.csproj" />
+    <ProjectReference Include="..\BaBaBooeyStrap.Bootstrapper\BaBaBooeyStrap.Bootstrapper.csproj" />
+  </ItemGroup>
+
+</Project>

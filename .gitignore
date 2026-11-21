@@ -1,0 +1,34 @@
+## Visual Studio / .NET
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+msbuild.log
+*.binlog
+*.log
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+*.rsuser
+*.cache
+
+## Test Results
+TestResults/
+[Tt]est[Rr]esult*/
+coverage*.xml
+*.trx
+
+## Artifacts
+publish/
+dist/
+*.nupkg
+*.snupkg
+
+## BaBaBooeyStrap runtime data
+accounts.dat
+*.tmp
+*.bak
