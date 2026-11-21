@@ -5,34 +5,21 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using BaBaBooeyStrap.App.DependencyInjection;
 using BaBaBooeyStrap.App.Services;
-using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.Views;
 using BaBaBooeyStrap.App.Views.Dialogs;
-using BaBaBooeyStrap.Bootstrapper.Settings;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Launch;
 using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
-using BaBaBooeyStrap.Core.Storage;
-using BaBaBooeyStrap.Integrations.Discord;
-using BaBaBooeyStrap.Integrations.Watcher;
-using BaBaBooeyStrap.Integrations.Window;
-using Wpf.Ui.Appearance;
 
 namespace BaBaBooeyStrap.App;
 
 public partial class App : Application
 {
-    private SingleInstanceIpc? _ipc;
-    private JsonManager<Settings>? _settingsManager;
-    private JsonManager<State>? _stateManager;
-    private JsonManager<RobloxState>? _robloxStateManager;
-    private DpapiAccountStore? _accountStore;
-    private JoinTargetStore? _joinTargetStore;
-    private BootstrapperOrchestrator? _orchestrator;
-    private NotifyIconWrapper? _trayWrapper;
+    private AppServices? _services;
     private MainWindow? _mainWindow;
     private bool _isQuietMode;
     private bool _isShuttingDown;
@@ -46,31 +33,18 @@ public partial class App : Application
 
         try
         {
-            Paths.Initialize();
-            Paths.EnsureDirectoriesExist();
-            Logger.InitializeStatic();
+            _services = AppServiceConfiguration.CreateCoreServices(initializeGlobalEnvironment: true);
+            var appSettings = _services.SettingsManager.Prop;
 
-            _settingsManager = new JsonManager<Settings>(Paths.SettingsFile);
-            _settingsManager.Load(alertFailure: false);
-
-            _stateManager = new JsonManager<State>(Paths.StateFile);
-            _stateManager.Load(alertFailure: false);
-
-            _robloxStateManager = new JsonManager<RobloxState>(Paths.RobloxStateFile);
-            _robloxStateManager.Load(alertFailure: false);
-
-            _accountStore = new DpapiAccountStore(Paths.AccountsFile);
-            _joinTargetStore = new JoinTargetStore(Paths.TargetsFile);
-
-            if (_settingsManager.Prop.WPFSoftwareRender)
+            if (appSettings.WPFSoftwareRender)
             {
                 RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
             }
 
-            LocalizationService.Instance.ApplyLanguage(_settingsManager.Prop.Language);
+            LocalizationService.Instance.ApplyLanguage(appSettings.Language);
             ThemeService.ApplyTheme(
-                _settingsManager.Prop.Theme,
-                _settingsManager.Prop.UseAcrylicBackground
+                appSettings.Theme,
+                appSettings.UseAcrylicBackground
                     ? Wpf.Ui.Controls.WindowBackdropType.Acrylic
                     : Wpf.Ui.Controls.WindowBackdropType.Mica);
 
@@ -93,52 +67,46 @@ public partial class App : Application
             }
 
             // 2. Single-instance App Mutex + Named Pipe forwarding
-            _ipc = new SingleInstanceIpc();
-            if (!_ipc.TryAcquirePrimary())
+            var ipc = AppServiceConfiguration.CreateSingleInstanceIpc();
+            _services.Ipc = ipc;
+            if (!ipc.TryAcquirePrimary())
             {
-                await _ipc.SendArgumentsToPrimaryAsync(e.Args);
+                await ipc.SendArgumentsToPrimaryAsync(e.Args);
                 ShutdownApp(0);
                 return;
             }
 
-            _ipc.ArgumentsReceived += (_, forwardedArgs) =>
+            ipc.ArgumentsReceived += (_, forwardedArgs) =>
             {
                 Dispatcher.InvokeAsync(() => HandleForwardedCliArgs(forwardedArgs));
             };
-            _ipc.StartPipeServer();
+            ipc.StartPipeServer();
 
             // 3. Initialize core orchestrator & Multi-Instance engine
-            _orchestrator = new BootstrapperOrchestrator(
-                Paths.Current,
-                _settingsManager,
-                _stateManager,
-                _robloxStateManager);
-
-            if (_settingsManager.Prop.MultiInstanceEnabled && !launchSettings.NoHoldFlag.Active)
+            var orchestrator = AppServiceConfiguration.CreateBootstrapperOrchestrator(_services);
+            if (appSettings.MultiInstanceEnabled && !launchSettings.NoHoldFlag.Active)
             {
-                _orchestrator.MultiInstanceController.Enable();
+                orchestrator.MultiInstanceController.Enable();
             }
 
             // 4. Initialize System Tray Keep-Alive
-            _trayWrapper = new NotifyIconWrapper(
-                headlessMode: false,
+            var trayWrapper = AppServiceConfiguration.CreateNotifyIconWrapper(
+                _services,
                 onOpenSettings: ShowMainWindow,
                 onLaunchRoblox: () => _ = LaunchPlayerFromTrayOrSettingsAsync(new LaunchSettings()),
-                getMultiInstanceStatus: () => _orchestrator.MultiInstanceController.GetStatus(),
                 onToggleMultiInstance: ToggleMultiInstanceFromTray,
-                onExitRequested: HandleTrayExitRequested,
-                getActiveServers: () => _orchestrator.GetActiveServers());
+                onExitRequested: HandleTrayExitRequested);
 
-            _orchestrator.ActiveServersChanged += (_, _) => _trayWrapper?.RefreshServerLocationStatus();
-            _orchestrator.ServerLocationResolved += (_, info) =>
+            orchestrator.ActiveServersChanged += (_, _) => _services?.TrayWrapper?.RefreshServerLocationStatus();
+            orchestrator.ServerLocationResolved += (_, info) =>
             {
                 var (title, message) = NotifyIconWrapper.FormatServerJoinNotification(info);
-                _trayWrapper?.ShowBalloonNotification(title, message, 5000);
+                _services?.TrayWrapper?.ShowBalloonNotification(title, message, 5000);
             };
 
-            _trayWrapper.Initialize(
-                _settingsManager.Prop.BootstrapperIcon,
-                _settingsManager.Prop.BootstrapperIconCustomLocation);
+            trayWrapper.Initialize(
+                appSettings.BootstrapperIcon,
+                appSettings.BootstrapperIconCustomLocation);
 
             // 5. Route initial CLI command
             await RouteCliCommandAsync(launchSettings);
@@ -185,19 +153,25 @@ public partial class App : Application
 
     private async Task RouteCliCommandAsync(LaunchSettings launchSettings)
     {
-        var installer = new InstallerService(Paths.Current, _stateManager);
+        if (_services == null) return;
+
+        var installer = _services.InstallerService;
+        var settingsManager = _services.SettingsManager;
+        var stateManager = _services.StateManager;
+        var orchestrator = _services.Orchestrator;
+        var trayWrapper = _services.TrayWrapper;
 
         if (launchSettings.InstallFlag.Active)
         {
             installer.Install();
-            _trayWrapper?.ShowBalloonNotification(
+            trayWrapper?.ShowBalloonNotification(
                 LocalizationService.Instance.GetString("Str_Tray_InstalledTitle"),
                 LocalizationService.Instance.GetString("Str_Tray_InstalledMessage"));
             if (!launchSettings.QuietFlag.Active && launchSettings.RobloxLaunchMode == LaunchMode.None)
             {
                 ShowMainWindow();
             }
-            else if (launchSettings.QuietFlag.Active && !_settingsManager!.Prop.MultiInstanceEnabled)
+            else if (launchSettings.QuietFlag.Active && !settingsManager.Prop.MultiInstanceEnabled)
             {
                 ShutdownApp(0);
             }
@@ -205,19 +179,19 @@ public partial class App : Application
         }
 
         if (!launchSettings.QuietFlag.Active &&
-            (string.IsNullOrWhiteSpace(_stateManager!.Prop.InstallLocation) || !installer.IsInstalledHere()))
+            (string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) || !installer.IsInstalledHere()))
         {
             installer.Install(createDesktopShortcut: false, createStartMenuShortcuts: true, registerProtocols: true);
         }
 
         if (launchSettings.HoldFlag.Active)
         {
-            _orchestrator?.MultiInstanceController.Enable();
+            orchestrator?.MultiInstanceController.Enable();
             _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
-            _trayWrapper?.RefreshMultiInstanceMenuStatus();
+            trayWrapper?.RefreshMultiInstanceMenuStatus();
             if (!launchSettings.QuietFlag.Active)
             {
-                _trayWrapper?.ShowBalloonNotification(
+                trayWrapper?.ShowBalloonNotification(
                     LocalizationService.Instance.GetString("Str_Tray_HoldTitle"),
                     LocalizationService.Instance.GetString("Str_Tray_HoldMessage"));
             }
@@ -252,9 +226,9 @@ public partial class App : Application
             var forwarded = new LaunchSettings(args);
             if (forwarded.HoldFlag.Active)
             {
-                _orchestrator?.MultiInstanceController.Enable();
+                _services?.Orchestrator?.MultiInstanceController.Enable();
                 _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
-                _trayWrapper?.RefreshMultiInstanceMenuStatus();
+                _services?.TrayWrapper?.RefreshMultiInstanceMenuStatus();
                 if (forwarded.MenuFlag.Active)
                 {
                     ShowMainWindow();
@@ -285,7 +259,13 @@ public partial class App : Application
 
     private async Task LaunchAccountFromCliAsync(LaunchSettings launchSettings)
     {
-        if (_orchestrator == null || _settingsManager == null || _accountStore == null) return;
+        if (_services?.Orchestrator == null) return;
+
+        var orchestrator = _services.Orchestrator;
+        var settingsManager = _services.SettingsManager;
+        var accountStore = _services.AccountStore;
+        var trayWrapper = _services.TrayWrapper;
+        var globalSettings = _services.GlobalSettingsManager;
 
         string? identifier = launchSettings.AccountFlag.Data;
         string? rawTarget = launchSettings.TargetFlag.Data;
@@ -302,7 +282,7 @@ public partial class App : Application
             return;
         }
 
-        var accounts = _accountStore.LoadAll();
+        var accounts = accountStore.LoadAll();
         RobloxAccount? account = Guid.TryParse(identifier, out var id)
             ? accounts.FirstOrDefault(a => a.Id == id)
             : accounts.FirstOrDefault(a => string.Equals(a.Username, identifier, StringComparison.OrdinalIgnoreCase));
@@ -321,18 +301,17 @@ public partial class App : Application
             return;
         }
 
-        bool previousMultiInstance = _settingsManager.Prop.MultiInstanceEnabled;
+        bool previousMultiInstance = settingsManager.Prop.MultiInstanceEnabled;
         if (launchSettings.NoHoldFlag.Active)
         {
-            _settingsManager.Prop.MultiInstanceEnabled = false;
+            settingsManager.Prop.MultiInstanceEnabled = false;
         }
         else if (previousMultiInstance)
         {
-            _orchestrator.MultiInstanceController.Enable();
+            orchestrator.MultiInstanceController.Enable();
         }
 
         string? settingsBackup = null;
-        var globalSettings = new GlobalSettingsManager(Paths.RobloxGlobalSettings);
         try
         {
             string effectiveTarget = RobloxLauncher.BuildEffectiveTargetInput(rawTarget, launchSettings.JobIdFlag.Data);
@@ -344,14 +323,14 @@ public partial class App : Application
                 globalSettings.ApplyProfile(account.RobloxSettings);
             }
 
-            var previousPids = _orchestrator.ProcessSupervisor.CaptureRunningClientPids();
-            var result = await _orchestrator.LaunchAccountAsync(account, parsedTarget);
+            var previousPids = orchestrator.ProcessSupervisor.CaptureRunningClientPids();
+            var result = await orchestrator.LaunchAccountAsync(account, parsedTarget);
 
             if (result.Success)
             {
-                _accountStore.Upsert(account);
+                accountStore.Upsert(account);
                 _mainWindow?.ViewModel.ReloadAccounts();
-                _trayWrapper?.ShowBalloonNotification(
+                trayWrapper?.ShowBalloonNotification(
                     LocalizationService.Instance.GetString("Str_Tray_LaunchedTitle"),
                     result.ProcessId.HasValue
                         ? LocalizationService.Instance.Format("Str_Tray_LaunchedPidFormat", result.ProcessId.Value)
@@ -359,7 +338,7 @@ public partial class App : Application
 
                 if (settingsBackup != null)
                 {
-                    await _orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(previousPids);
+                    await orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(previousPids);
                 }
             }
             else if (!launchSettings.QuietFlag.Active)
@@ -385,7 +364,7 @@ public partial class App : Application
         }
         finally
         {
-            _settingsManager.Prop.MultiInstanceEnabled = previousMultiInstance;
+            settingsManager.Prop.MultiInstanceEnabled = previousMultiInstance;
             if (settingsBackup != null)
             {
                 try { globalSettings.RestoreBackup(settingsBackup); } catch { }
@@ -400,30 +379,18 @@ public partial class App : Application
 
     private void ShowMainWindow()
     {
+        if (_services == null) return;
+
         if (_mainWindow == null)
         {
-            var vm = new MainWindowViewModel(
-                _settingsManager!.Prop,
-                _accountStore,
-                _orchestrator!.MultiInstanceController,
-                _orchestrator.ProcessSupervisor,
-                _orchestrator,
-                Paths.Current,
-                stateManager: _stateManager,
-                robloxStateManager: _robloxStateManager,
-                joinTargetStore: _joinTargetStore);
-
-            _mainWindow = new MainWindow(
-                vm,
-                _settingsManager,
-                _stateManager!,
-                _trayWrapper,
+            _mainWindow = AppServiceConfiguration.CreateMainWindow(
+                _services,
                 onLaunchRequested: () => _ = LaunchPlayerFromTrayOrSettingsAsync(new LaunchSettings()));
 
             _mainWindow.Closed += (_, _) =>
             {
                 _mainWindow = null;
-                if (!_isShuttingDown && _settingsManager?.Prop.MinimizeToTray == false)
+                if (!_isShuttingDown && _services?.SettingsManager.Prop.MinimizeToTray == false)
                 {
                     ShutdownApp(0);
                 }
@@ -440,14 +407,18 @@ public partial class App : Application
 
     private async Task LaunchPlayerFromTrayOrSettingsAsync(LaunchSettings launchSettings)
     {
-        if (_orchestrator == null || _settingsManager == null) return;
+        if (_services?.Orchestrator == null) return;
+
+        var orchestrator = _services.Orchestrator;
+        var settingsManager = _services.SettingsManager;
+        var trayWrapper = _services.TrayWrapper;
 
         using var cts = new CancellationTokenSource();
         IBootstrapperDialog? dialog = null;
 
         if (!launchSettings.QuietFlag.Active)
         {
-            dialog = BootstrapperDialogFactory.Create(_settingsManager.Prop, cts, Paths.Current);
+            dialog = BootstrapperDialogFactory.Create(settingsManager.Prop, cts, _services.Paths);
             dialog.ShowBootstrapper();
         }
 
@@ -460,12 +431,12 @@ public partial class App : Application
                 Dispatcher.InvokeAsync(() => dialog.Message = msg);
             }
 
-            var result = await _orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
+            var result = await orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
             dialog?.CloseBootstrapper();
 
             if (result.Success)
             {
-                _trayWrapper?.ShowBalloonNotification(
+                trayWrapper?.ShowBalloonNotification(
                     LocalizationService.Instance.GetString("Str_Tray_LaunchedTitle"),
                     result.ProcessId.HasValue
                         ? LocalizationService.Instance.Format("Str_Tray_LaunchedPidFormat", result.ProcessId.Value)
@@ -499,9 +470,9 @@ public partial class App : Application
             }
         }
 
-        if (!_settingsManager.Prop.MultiInstanceEnabled &&
+        if (!settingsManager.Prop.MultiInstanceEnabled &&
             (_mainWindow == null || !_mainWindow.IsVisible) &&
-            _orchestrator.ProcessSupervisor.GetRunningRobloxPids().Count == 0)
+            orchestrator.ProcessSupervisor.GetRunningRobloxPids().Count == 0)
         {
             ShutdownApp(0);
         }
@@ -509,6 +480,8 @@ public partial class App : Application
 
     private async Task RunDedicatedWatcherModeAsync(LaunchSettings launchSettings)
     {
+        if (_services == null) return;
+
         try
         {
             WatcherData? data = null;
@@ -523,7 +496,7 @@ public partial class App : Application
                 }
                 if (int.TryParse(arg, out int pid) && pid > 0)
                 {
-                    data = new WatcherData { ProcessId = pid, LogFile = Paths.RobloxLogs };
+                    data = new WatcherData { ProcessId = pid, LogFile = _services.Paths.RobloxLogs };
                     break;
                 }
             }
@@ -533,28 +506,16 @@ public partial class App : Application
                 var running = Process.GetProcessesByName("RobloxPlayerBeta").FirstOrDefault();
                 if (running != null)
                 {
-                    data = new WatcherData { ProcessId = running.Id, LogFile = Paths.RobloxLogs };
+                    data = new WatcherData { ProcessId = running.Id, LogFile = _services.Paths.RobloxLogs };
                     running.Dispose();
                 }
             }
 
             if (data == null || data.ProcessId <= 0) return;
 
-            var settings = _settingsManager!.Prop;
-            using var watcher = new ActivityWatcher();
-            using var discord = settings.UseDiscordRichPresence ? new DiscordRpcService() : null;
-            using var windowManip = settings.EnableWindowManipulation
-                ? new WindowManipulationService(new Win32WindowInterop(), new WindowManipulationOptions
-                {
-                    TargetProcessId = (uint)data.ProcessId,
-                    CustomTitleTemplate = settings.RobloxTitle,
-                    BorderlessFullscreen = settings.FakeBorderlessFullscreen
-                })
-                : null;
-
-            windowManip?.StartHook();
-            using var session = new WatcherSession(data, watcher, new ProcessLifecycleMonitor(), discord, windowManip);
-            await session.RunAsync();
+            using var scope = AppServiceConfiguration.CreateDedicatedWatcherScope(data, _services.SettingsManager.Prop);
+            scope.WindowManipulation?.StartHook();
+            await scope.Session.RunAsync();
         }
         catch (Exception ex)
         {
@@ -564,6 +525,8 @@ public partial class App : Application
 
     private void RunUninstallMode(LaunchSettings launchSettings)
     {
+        if (_services == null) return;
+
         if (!launchSettings.QuietFlag.Active)
         {
             var confirm = MessageBox.Show(
@@ -575,30 +538,33 @@ public partial class App : Application
             if (confirm != MessageBoxResult.Yes) return;
         }
 
-        var installer = new InstallerService(Paths.Current, _stateManager);
-        installer.Uninstall(removeDataDirectory: true, scheduleSelfDelete: true);
+        _services.InstallerService.Uninstall(removeDataDirectory: true, scheduleSelfDelete: true);
     }
 
     private void ToggleMultiInstanceFromTray()
     {
-        if (_orchestrator == null || _settingsManager == null) return;
-        bool next = !_settingsManager.Prop.MultiInstanceEnabled;
-        _settingsManager.Prop.MultiInstanceEnabled = next;
-        _settingsManager.Save();
+        if (_services?.Orchestrator == null) return;
+
+        var settingsManager = _services.SettingsManager;
+        var orchestrator = _services.Orchestrator;
+
+        bool next = !settingsManager.Prop.MultiInstanceEnabled;
+        settingsManager.Prop.MultiInstanceEnabled = next;
+        settingsManager.Save();
 
         if (next)
-            _orchestrator.MultiInstanceController.Enable();
+            orchestrator.MultiInstanceController.Enable();
         else
-            _orchestrator.MultiInstanceController.Disable();
+            orchestrator.MultiInstanceController.Disable();
 
         _mainWindow?.ViewModel.RefreshMultiInstanceStatus();
     }
 
     private void HandleTrayExitRequested()
     {
-        if (_orchestrator != null)
+        if (_services?.Orchestrator != null)
         {
-            var runningPids = _orchestrator.MultiInstanceController.GetStatus().RunningRobloxPids;
+            var runningPids = _services.Orchestrator.MultiInstanceController.GetStatus().RunningRobloxPids;
             if (runningPids.Count > 0)
             {
                 var choice = MessageBox.Show(
@@ -621,18 +587,13 @@ public partial class App : Application
         _isShuttingDown = true;
 
         _mainWindow?.ForceClose();
-        _trayWrapper?.Dispose();
-        _orchestrator?.MultiInstanceController.Dispose();
-        _orchestrator?.Dispose();
-        _ipc?.Dispose();
+        _services?.Dispose();
         Shutdown(exitCode);
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _trayWrapper?.Dispose();
-        _orchestrator?.Dispose();
-        _ipc?.Dispose();
+        _services?.Dispose();
         base.OnExit(e);
     }
 }

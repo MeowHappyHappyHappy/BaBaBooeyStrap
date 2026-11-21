@@ -1,13 +1,9 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Text.Json;
-using BaBaBooeyStrap.Bootstrapper.Deployment;
+using BaBaBooeyStrap.App.DependencyInjection;
+using BaBaBooeyStrap.App.Services.Pipeline;
 using BaBaBooeyStrap.Bootstrapper.Deployment.Models;
-using BaBaBooeyStrap.Bootstrapper.FastFlags;
-using BaBaBooeyStrap.Bootstrapper.Mods;
-using BaBaBooeyStrap.Bootstrapper.Settings;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Launch;
 using BaBaBooeyStrap.Core.Logging;
@@ -15,7 +11,6 @@ using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Roblox;
 using BaBaBooeyStrap.Core.Storage;
-using BaBaBooeyStrap.Integrations.Cleaner;
 using BaBaBooeyStrap.Integrations.Discord;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 using BaBaBooeyStrap.Integrations.Watcher;
@@ -49,6 +44,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
     private readonly IRoValraService _roValraService;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+    private readonly IReadOnlyList<IBootstrapPipelineStep> _pipelineSteps;
     private readonly List<WatcherSession> _activeWatchers = new();
     private readonly ConcurrentDictionary<int, ActiveServerSessionInfo> _activeServers = new();
     private readonly ConcurrentDictionary<int, ActivityWatcher> _activeSessionWatchers = new();
@@ -68,7 +65,9 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         IProcessSupervisor? processSupervisor = null,
         IRobloxAuthService? authService = null,
         ILogger? logger = null,
-        IRoValraService? roValraService = null)
+        IRoValraService? roValraService = null,
+        IEnumerable<IBootstrapPipelineStep>? pipelineSteps = null,
+        HttpClient? httpClient = null)
     {
         _paths = paths ?? Paths.Current;
         _settingsManager = settingsManager ?? new JsonManager<Settings>(_paths.SettingsFile);
@@ -79,8 +78,17 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         _launchGate = new LaunchGate(_multiInstanceController);
         _authService = authService ?? new RobloxAuthService();
         _logger = logger ?? Logger.Current;
-        _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        _ownsHttpClient = httpClient == null;
+        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _roValraService = roValraService ?? new RoValraService(_httpClient, logger: _logger);
+        _pipelineSteps = pipelineSteps?.ToList()
+            ?? AppServiceConfiguration.CreateDefaultBootstrapPipeline(
+                _paths,
+                _settingsManager,
+                _stateManager,
+                _robloxStateManager,
+                _httpClient,
+                _logger);
     }
 
     public IMultiInstanceController MultiInstanceController => _multiInstanceController;
@@ -159,7 +167,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             }
         }
 
-        // 2-4. Ensure target Roblox version is deployed, apply FastFlags/Mods, and run optional cleaner under _prepareLock
+        // 2-4. Execute bootstrap pipeline (version check, package deployment, mods/FastFlags, pre-launch cleanup) under _prepareLock
         bool isStudio = settings.RobloxLaunchMode is LaunchMode.Studio or LaunchMode.StudioAuth;
         if (!skipDeploymentCheck)
         {
@@ -227,43 +235,20 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         Action<string>? statusCallback,
         CancellationToken ct)
     {
-        var appSettings = _settingsManager.Prop;
-        string? versionGuid = await EnsureDeployedAsync(settings, isStudio, progress, statusCallback, ct).ConfigureAwait(false);
-        string versionDir = !string.IsNullOrWhiteSpace(versionGuid)
-            ? _paths.GetVersionDirectory(versionGuid)
-            : ResolveFallbackVersionDir(isStudio);
+        var context = new BootstrapPipelineContext(
+            settings,
+            _settingsManager.Prop,
+            isStudio,
+            progress,
+            statusCallback);
 
-        if (!string.IsNullOrWhiteSpace(versionDir) && Directory.Exists(versionDir))
+        foreach (var step in _pipelineSteps)
         {
-            if (!IsVersionInstallationComplete(versionDir, isStudio))
-            {
-                TryRepairFromCachedDownloads(versionDir, isStudio);
-            }
-
-            EnsureAppSettingsXml(versionDir);
-            if (!isStudio)
-            {
-                TryRecoverMissingWebView2Loader(versionDir);
-            }
-
-            statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusApplyingMods"));
-            await ApplyFastFlagsAndModsAsync(appSettings, versionDir, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            await step.ExecuteAsync(context, ct).ConfigureAwait(false);
         }
 
-        if (appSettings.CleanerOptions != CleanerOptions.Never)
-        {
-            try
-            {
-                var cleaner = new CacheCleaner(_paths, _logger);
-                cleaner.ExecuteCleanup(CleanerPolicyMapper.FromSettings(appSettings));
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn("BootstrapperOrchestrator", $"Cache cleanup skipped: {ex.Message}");
-            }
-        }
-
-        return versionGuid;
+        return context.ResolvedVersionGuid;
     }
 
     public Task<LaunchResult> LaunchAccountAsync(RobloxAccount account, LaunchTarget target, CancellationToken ct = default)
@@ -341,199 +326,6 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
 
         return result with { Target = resolution.Target };
-    }
-
-    private async Task<string?> EnsureDeployedAsync(
-        LaunchSettings settings,
-        bool isStudio,
-        IProgress<PackageDownloadProgress>? progress,
-        Action<string>? statusCallback,
-        CancellationToken ct)
-    {
-        string exeName = isStudio ? "RobloxStudioBeta.exe" : "RobloxPlayerBeta.exe";
-        string existingGuid = isStudio
-            ? _robloxStateManager.Prop.Studio.VersionGuid
-            : _robloxStateManager.Prop.Player.VersionGuid;
-
-        bool force = settings.ForceFlag.Active || _stateManager.Prop.ForceReinstall;
-        if (!force && !string.IsNullOrWhiteSpace(existingGuid))
-        {
-            string existingDir = _paths.GetVersionDirectory(existingGuid);
-            string existingExe = Path.Combine(existingDir, exeName);
-            if (settings.BypassUpdateCheck && File.Exists(existingExe))
-            {
-                return existingGuid;
-            }
-
-            if (!_settingsManager.Prop.CheckForUpdates && IsVersionInstallationComplete(existingDir, isStudio))
-            {
-                return existingGuid;
-            }
-        }
-
-        if (settings.BypassUpdateCheck)
-        {
-            return existingGuid;
-        }
-
-        try
-        {
-            statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusFindingCdn"));
-            var mirrorSelector = new CdnMirrorSelector(_httpClient);
-            string cdnBaseUrl = await mirrorSelector.ResolveOptimalCdnUrlAsync(ct).ConfigureAwait(false);
-
-            string channel = !string.IsNullOrWhiteSpace(settings.ChannelFlag.Data)
-                ? settings.ChannelFlag.Data
-                : _settingsManager.Prop.Channel;
-
-            string binaryType = isStudio ? "WindowsStudio64" : "WindowsPlayer";
-            string clientVersionUrl = $"https://clientsettings.roblox.com/v2/client-version/{binaryType}" +
-                (!string.Equals(channel, "production", StringComparison.OrdinalIgnoreCase) &&
-                 !string.Equals(channel, "live", StringComparison.OrdinalIgnoreCase)
-                    ? $"/channel/{Uri.EscapeDataString(channel)}"
-                    : string.Empty);
-
-            statusCallback?.Invoke(LocalizationService.Instance.Format("Str_Bootstrapper_StatusCheckingVersionFormat", binaryType));
-            using var resp = await _httpClient.GetAsync(clientVersionUrl, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
-            {
-                return existingGuid;
-            }
-
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(json);
-            string latestGuid = doc.RootElement.GetProperty("clientVersionUpload").GetString() ?? string.Empty;
-            string latestVersion = doc.RootElement.TryGetProperty("version", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
-
-            if (string.IsNullOrWhiteSpace(latestGuid))
-            {
-                return existingGuid;
-            }
-
-            string targetVersionDir = _paths.GetVersionDirectory(latestGuid);
-            string targetExe = Path.Combine(targetVersionDir, exeName);
-
-            if (!force && string.Equals(existingGuid, latestGuid, StringComparison.OrdinalIgnoreCase) && IsVersionInstallationComplete(targetVersionDir, isStudio))
-            {
-                return latestGuid;
-            }
-
-            statusCallback?.Invoke(LocalizationService.Instance.Format("Str_Bootstrapper_StatusDownloadingManifestFormat", latestGuid));
-            var manifestParser = new DeploymentManifestParser();
-            var packages = await manifestParser.FetchAndParseAsync(cdnBaseUrl, latestGuid, _httpClient, channel, ct: ct).ConfigureAwait(false);
-
-            statusCallback?.Invoke(LocalizationService.Instance.Format("Str_Bootstrapper_StatusDownloadingCountFormat", packages.Count));
-            var downloader = new PackageDownloader();
-            var downloadedPaths = await downloader.DownloadPackagesAsync(
-                _httpClient,
-                cdnBaseUrl,
-                latestGuid,
-                packages,
-                _paths.Downloads,
-                progress,
-                5,
-                ct).ConfigureAwait(false);
-
-            statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusExtracting"));
-            var extractor = new PackageExtractor();
-            Directory.CreateDirectory(targetVersionDir);
-
-            for (int i = 0; i < packages.Count && i < downloadedPaths.Count; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-                string pkgPath = downloadedPaths[i];
-                if (string.IsNullOrWhiteSpace(pkgPath) || !File.Exists(pkgPath)) continue;
-
-                string pkgName = Path.GetFileName(pkgPath);
-                string relSubdir = PackageExtractor.PackageDirectoryMap.TryGetValue(pkgName, out var mapped)
-                    ? mapped
-                    : string.Empty;
-
-                if (pkgName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        await extractor.ExtractPackageAsync(pkgPath, targetVersionDir, relSubdir, null, ct).ConfigureAwait(false);
-                    }
-                    catch (Exception pkgEx) when (pkgEx is not OperationCanceledException)
-                    {
-                        _logger.Warn("BootstrapperOrchestrator", $"Package extraction failed for '{pkgName}': {pkgEx.Message}");
-                    }
-                }
-            }
-
-            EnsureAppSettingsXml(targetVersionDir);
-
-            if (!File.Exists(targetExe))
-            {
-                return existingGuid;
-            }
-
-            if (isStudio)
-            {
-                _robloxStateManager.Prop.Studio.VersionGuid = latestGuid;
-                _robloxStateManager.Prop.Studio.Version = latestVersion;
-            }
-            else
-            {
-                _robloxStateManager.Prop.Player.VersionGuid = latestGuid;
-                _robloxStateManager.Prop.Player.Version = latestVersion;
-            }
-
-            _robloxStateManager.Save();
-            _stateManager.Prop.ForceReinstall = false;
-            _stateManager.Save();
-            return latestGuid;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("BootstrapperOrchestrator", $"Update/deploy step fell back to local version: {ex.Message}");
-            return existingGuid;
-        }
-    }
-
-    private async Task ApplyFastFlagsAndModsAsync(Settings appSettings, string versionDir, CancellationToken ct)
-    {
-        try
-        {
-            if (appSettings.UseFastFlagManager)
-            {
-                string modClientSettings = _paths.GetClientSettingsPath();
-                if (File.Exists(modClientSettings))
-                {
-                    string versionClientSettings = _paths.GetClientSettingsPath(Path.GetFileName(versionDir));
-                    Directory.CreateDirectory(Path.GetDirectoryName(versionClientSettings)!);
-                    string jsonContent = await File.ReadAllTextAsync(modClientSettings, System.Text.Encoding.UTF8, ct).ConfigureAwait(false);
-                    await File.WriteAllTextAsync(versionClientSettings, jsonContent, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false), ct).ConfigureAwait(false);
-                }
-            }
-
-            var modEngine = new ModOverlayEngine();
-            var modResult = await modEngine.ApplyModificationsAsync(
-                _paths.Modifications,
-                versionDir,
-                _robloxStateManager.Prop.ModManifest,
-                robloxDomain: appSettings.RobloxDomain,
-                ct: ct).ConfigureAwait(false);
-
-            if (modResult.Success)
-            {
-                _robloxStateManager.Prop.ModManifest = modResult.ManifestedFiles.ToList();
-                _robloxStateManager.Save();
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("BootstrapperOrchestrator", $"Mod/FastFlag application error: {ex.Message}");
-        }
     }
 
     private void StartWatcherForPid(
@@ -727,161 +519,6 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
     }
 
-    private string ResolveFallbackVersionDir(bool isStudio)
-    {
-        string exeName = isStudio ? "RobloxStudioBeta.exe" : "RobloxPlayerBeta.exe";
-        string? incompleteFallback = null;
-
-        foreach (var root in new[] { _paths.Versions, _paths.RobloxVersions })
-        {
-            if (!Directory.Exists(root)) continue;
-            foreach (var dir in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
-            {
-                if (IsVersionInstallationComplete(dir, isStudio))
-                    return dir;
-
-                if (incompleteFallback == null && File.Exists(Path.Combine(dir, exeName)))
-                    incompleteFallback = dir;
-            }
-        }
-
-        return incompleteFallback ?? string.Empty;
-    }
-
-    private static bool IsVersionInstallationComplete(string versionDir, bool isStudio)
-    {
-        if (string.IsNullOrWhiteSpace(versionDir) || !Directory.Exists(versionDir))
-            return false;
-
-        string exeName = isStudio ? "RobloxStudioBeta.exe" : "RobloxPlayerBeta.exe";
-        if (!File.Exists(Path.Combine(versionDir, exeName)))
-            return false;
-
-        if (!isStudio)
-        {
-            string appSettingsPath = Path.Combine(versionDir, "AppSettings.xml");
-            if (!File.Exists(Path.Combine(versionDir, "WebView2Loader.dll")) ||
-                !File.Exists(appSettingsPath) ||
-                !File.Exists(Path.Combine(versionDir, "ssl", "cacert.pem")) ||
-                !Directory.Exists(Path.Combine(versionDir, "PlatformContent", "pc", "textures")) ||
-                !Directory.Exists(Path.Combine(versionDir, "PlatformContent", "pc", "terrain")) ||
-                !Directory.Exists(Path.Combine(versionDir, "PlatformContent", "pc", "fonts")) ||
-                !Directory.Exists(Path.Combine(versionDir, "content", "configs")) ||
-                !Directory.Exists(Path.Combine(versionDir, "content", "fonts")) ||
-                !Directory.Exists(Path.Combine(versionDir, "content", "sky")) ||
-                !Directory.Exists(Path.Combine(versionDir, "content", "sounds")) ||
-                !Directory.Exists(Path.Combine(versionDir, "content", "textures")) ||
-                !Directory.Exists(Path.Combine(versionDir, "ExtraContent", "LuaPackages")) ||
-                !Directory.Exists(Path.Combine(versionDir, "ExtraContent", "translations")) ||
-                !Directory.Exists(Path.Combine(versionDir, "shaders")))
-            {
-                return false;
-            }
-
-            try
-            {
-                if (!File.ReadAllText(appSettingsPath).Contains("http://www.", StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private void TryRepairFromCachedDownloads(string versionDir, bool isStudio)
-    {
-        if (isStudio || !Directory.Exists(_paths.Downloads)) return;
-
-        try
-        {
-            var extractor = new PackageExtractor();
-            foreach (var (pkgName, relSubdir) in PackageExtractor.PackageDirectoryMap)
-            {
-                if (string.Equals(pkgName, "WebView2RuntimeInstaller.zip", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                string cachedZip = Path.Combine(_paths.Downloads, pkgName);
-                if (!File.Exists(cachedZip))
-                    continue;
-
-                try
-                {
-                    extractor.ExtractPackageAsync(cachedZip, versionDir, relSubdir, null, CancellationToken.None)
-                        .GetAwaiter().GetResult();
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warn("BootstrapperOrchestrator", $"Cached repair skipped '{pkgName}': {ex.Message}");
-                }
-            }
-
-            string targetCacert = Path.Combine(versionDir, "ssl", "cacert.pem");
-            string rootCacert = Path.Combine(versionDir, "cacert.pem");
-            if (!File.Exists(targetCacert) && File.Exists(rootCacert))
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(targetCacert)!);
-                File.Copy(rootCacert, targetCacert, overwrite: true);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("BootstrapperOrchestrator", $"Cached repair failed: {ex.Message}");
-        }
-    }
-
-    private void EnsureAppSettingsXml(string versionDir)
-    {
-        try
-        {
-            ModOverlayEngine.EnsureAppSettingsXml(versionDir, _settingsManager.Prop.RobloxDomain);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("BootstrapperOrchestrator", $"Failed to write AppSettings.xml: {ex.Message}");
-        }
-    }
-
-    private void TryRecoverMissingWebView2Loader(string versionDir)
-    {
-        try
-        {
-            string targetDll = Path.Combine(versionDir, "WebView2Loader.dll");
-            if (File.Exists(targetDll)) return;
-
-            string webViewZip = Path.Combine(_paths.Downloads, "WebView2.zip");
-            if (File.Exists(webViewZip))
-            {
-                var extractor = new PackageExtractor();
-                extractor.ExtractZipFile(webViewZip, versionDir);
-                if (File.Exists(targetDll)) return;
-            }
-
-            foreach (var root in new[] { _paths.Versions, _paths.RobloxVersions })
-            {
-                if (!Directory.Exists(root)) continue;
-                foreach (var dir in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
-                {
-                    string candidateDll = Path.Combine(dir, "WebView2Loader.dll");
-                    if (File.Exists(candidateDll))
-                    {
-                        File.Copy(candidateDll, targetDll, overwrite: true);
-                        return;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("BootstrapperOrchestrator", $"Failed to recover WebView2Loader.dll: {ex.Message}");
-        }
-    }
-
     public void Dispose()
     {
         if (_disposed) return;
@@ -898,6 +535,9 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         _activeSessionWatchers.Clear();
         _activeServers.Clear();
         _prepareLock.Dispose();
-        _httpClient.Dispose();
+        if (_ownsHttpClient)
+        {
+            _httpClient.Dispose();
+        }
     }
 }
