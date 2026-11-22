@@ -17,6 +17,28 @@
                         <TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.CheckForUpdates}" HorizontalAlignment="Right"/>
                     </DockPanel>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_CheckAppUpdates}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_CheckAppUpdatesDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.CheckAppUpdates}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_RunOnStartup}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_RunOnStartupDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.RunOnStartup}" VerticalAlignment="Center"/>
+                    </Grid>
                     <DockPanel Margin="0,4">
                         <TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/>
@@ -145,6 +167,75 @@
                         <CheckBox Content="{DynamicResource Str_Behaviour_CleanCrashDumps}" IsChecked="{Binding WindowIntegrations.CleanRobloxCrashDumps}" Margin="0,0,16,6"/>
                     </WrapPanel>
                     <TextBlock Text="{Binding WindowIntegrations.CleanerStatusText}" Opacity="0.75" Margin="0,6,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Custom Integrations -->
+            <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,10">
+                        <StackPanel>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsHeader}" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:Button Content="{DynamicResource Str_Behaviour_AddIntegration}" Appearance="Primary" Click="AddIntegration_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </DockPanel>
+
+                    <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsEmpty}"
+                               FontSize="12.5"
+                               Opacity="0.65"
+                               Margin="0,2,0,4">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding WindowIntegrations.CustomIntegrations.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
+                    <ItemsControl ItemsSource="{Binding WindowIntegrations.CustomIntegrations}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border CornerRadius="6"
+                                        Padding="10,8"
+                                        Margin="0,0,0,6"
+                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <TextBlock Text="{Binding Location}" FontSize="11.5" Opacity="0.72" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <ui:Button Content="{DynamicResource Str_Common_Edit}" Click="EditIntegration_Click" Margin="0,0,6,0" Padding="10,4"/>
+                                            <ui:Button Content="{DynamicResource Str_Common_Remove}" Appearance="Danger" Click="RemoveIntegration_Click" Padding="10,4"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
+            <!-- Profile Backup & Restore -->
+            <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_Behaviour_ProfileHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock Text="{DynamicResource Str_Behaviour_ProfileDesc}" FontSize="12" Opacity="0.7" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                    <WrapPanel>
+                        <ui:Button Content="{DynamicResource Str_Behaviour_ExportProfile}" Appearance="Primary" Click="ExportProfile_Click" Margin="0,0,8,0"/>
+                        <ui:Button Content="{DynamicResource Str_Behaviour_ImportProfile}" Click="ImportProfile_Click"/>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
         </StackPanel>

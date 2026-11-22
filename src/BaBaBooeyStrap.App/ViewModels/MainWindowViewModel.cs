@@ -16,7 +16,13 @@ namespace BaBaBooeyStrap.App.ViewModels;
 public class MainWindowViewModel : ViewModelBase
 {
     private readonly Settings _settings;
+    private readonly IPaths _paths;
+    private readonly FastFlagManager _fastFlagManager;
+    private readonly IJoinTargetStore _joinTargetStore;
+    private readonly IJsonManager<Settings>? _settingsManager;
     private readonly IJsonManager<State>? _stateManager;
+    private readonly IJsonManager<RobloxState>? _robloxStateManager;
+    private readonly IAppUpdateService _appUpdateService;
     private readonly EventHandler<string> _languageChangedHandler;
 
     private string _statusMessage = LocalizationService.Instance.GetString("Str_Common_Ready");
@@ -35,35 +41,40 @@ public class MainWindowViewModel : ViewModelBase
         IGlobalSettingsManager? globalSettingsManager = null,
         IJsonManager<State>? stateManager = null,
         IJsonManager<RobloxState>? robloxStateManager = null,
-        IJoinTargetStore? joinTargetStore = null)
+        IJoinTargetStore? joinTargetStore = null,
+        IJsonManager<Settings>? settingsManager = null,
+        IAppUpdateService? appUpdateService = null)
     {
         _settings = settings ?? new Settings();
-        var resolvedPaths = paths ?? Paths.Current;
+        _paths = paths ?? Core.Paths.Current;
         var resolvedSupervisor = processSupervisor ?? new ProcessSupervisor();
-        var resolvedGlobalSettings = globalSettingsManager ?? new GlobalSettingsManager(resolvedPaths.RobloxGlobalSettings);
-        var resolvedJoinTargetStore = joinTargetStore ?? new JoinTargetStore(resolvedPaths.TargetsFile);
-        var fastFlagManager = new FastFlagManager(resolvedPaths.GetClientSettingsPath());
+        var resolvedGlobalSettings = globalSettingsManager ?? new GlobalSettingsManager(_paths.RobloxGlobalSettings);
+        _joinTargetStore = joinTargetStore ?? new JoinTargetStore(_paths.TargetsFile);
+        _fastFlagManager = new FastFlagManager(_paths.GetClientSettingsPath());
+        _settingsManager = settingsManager;
         _stateManager = stateManager;
-        var installerService = new InstallerService(resolvedPaths, stateManager);
+        _robloxStateManager = robloxStateManager;
+        var installerService = new InstallerService(_paths, stateManager);
+        _appUpdateService = appUpdateService ?? new AppUpdateService(_paths);
 
         LaunchSettings = new LaunchSettingsViewModel(
             _settings,
-            resolvedPaths,
+            _paths,
             resolvedGlobalSettings,
             stateManager,
             robloxStateManager,
             installerService,
             SetLocalizedStatus);
 
-        FastFlags = new FastFlagsViewModel(_settings, fastFlagManager);
+        FastFlags = new FastFlagsViewModel(_settings, _fastFlagManager);
 
-        Mods = new ModsViewModel(resolvedPaths, SetLocalizedStatus);
+        Mods = new ModsViewModel(_paths, SetLocalizedStatus);
 
         AccountManagement = new AccountsViewModel(
             _settings,
-            resolvedPaths,
+            _paths,
             accountStore,
-            resolvedJoinTargetStore,
+            _joinTargetStore,
             multiInstanceController,
             resolvedSupervisor,
             launcher,
@@ -71,7 +82,7 @@ public class MainWindowViewModel : ViewModelBase
             stateManager,
             SetLocalizedStatus);
 
-        WindowIntegrations = new WindowAndIntegrationsViewModel(_settings, resolvedPaths, SetLocalizedStatus);
+        WindowIntegrations = new WindowAndIntegrationsViewModel(_settings, _paths, SetLocalizedStatus);
 
         LaunchSettings.PropertyChanged += OnLaunchSettingsPropertyChanged;
         FastFlags.PropertyChanged += OnFastFlagsPropertyChanged;
@@ -83,6 +94,11 @@ public class MainWindowViewModel : ViewModelBase
     }
 
     public Settings Settings => _settings;
+    internal IPaths AppPaths => _paths;
+    internal IJsonManager<Settings>? SettingsManager => _settingsManager;
+    internal IJsonManager<State>? StateManager => _stateManager;
+    internal IJsonManager<RobloxState>? RobloxStateManager => _robloxStateManager;
+    internal IAppUpdateService AppUpdateService => _appUpdateService;
 
     public LaunchSettingsViewModel LaunchSettings { get; }
     public FastFlagsViewModel FastFlags { get; }
@@ -124,6 +140,7 @@ public class MainWindowViewModel : ViewModelBase
         }
 
         manager.Save();
+        try { LaunchSettings.SyncRunOnStartupRegistry(); } catch { }
         if (_stateManager != null)
         {
             AccountManagement.PersistLastTargetState();
@@ -132,6 +149,61 @@ public class MainWindowViewModel : ViewModelBase
 
         HasUnsavedChanges = false;
         SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
+    }
+
+    public void ExportProfileToFile(string filePath)
+    {
+        ProfileTransferService.ExportToFile(
+            filePath,
+            _settings,
+            _fastFlagManager,
+            _joinTargetStore,
+            LaunchSettings.AppVersion);
+        SetLocalizedStatus("Str_Behaviour_StatusProfileExported");
+    }
+
+    public ProfileBundle ImportProfileFromFile(
+        string filePath,
+        IJsonManager<Settings>? settingsManager = null,
+        bool replaceSavedTargets = false)
+    {
+        var bundle = ProfileTransferService.ImportFromFile(filePath);
+        ApplyImportedProfile(bundle, settingsManager ?? _settingsManager, replaceSavedTargets);
+        return bundle;
+    }
+
+    public void ApplyImportedProfile(
+        ProfileBundle bundle,
+        IJsonManager<Settings>? settingsManager = null,
+        bool replaceSavedTargets = false)
+    {
+        ArgumentNullException.ThrowIfNull(bundle);
+
+        _isSuppressingDirtyTracking = true;
+        try
+        {
+            ProfileTransferService.ApplyImportedProfile(
+                bundle,
+                _settings,
+                _fastFlagManager,
+                _joinTargetStore,
+                replaceSavedTargets);
+
+            (settingsManager ?? _settingsManager)?.Save();
+            try { LaunchSettings.SyncRunOnStartupRegistry(); } catch { }
+
+            LaunchSettings.RefreshFromSettings();
+            FastFlags.RefreshFromSettings();
+            WindowIntegrations.RefreshFromSettings();
+            AccountManagement.ReloadSavedTargets();
+            HasUnsavedChanges = false;
+        }
+        finally
+        {
+            _isSuppressingDirtyTracking = false;
+        }
+
+        SetLocalizedStatus("Str_Behaviour_StatusProfileImported");
     }
 
     public void RefreshLocalizedProperties()
@@ -160,6 +232,9 @@ public class MainWindowViewModel : ViewModelBase
             case nameof(LaunchSettingsViewModel.IsTestingCdn):
             case nameof(LaunchSettingsViewModel.IsNotTestingCdn):
             case nameof(LaunchSettingsViewModel.InstalledPlayerVersion):
+            case nameof(LaunchSettingsViewModel.AppUpdateStatusText):
+            case nameof(LaunchSettingsViewModel.IsCheckingAppUpdate):
+            case nameof(LaunchSettingsViewModel.IsNotCheckingAppUpdate):
                 return;
             case nameof(LaunchSettingsViewModel.HasUnsavedGlobalSettings):
                 if (LaunchSettings.HasUnsavedGlobalSettings)

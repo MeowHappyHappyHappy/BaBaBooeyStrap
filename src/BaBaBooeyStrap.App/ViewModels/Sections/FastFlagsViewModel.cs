@@ -33,6 +33,8 @@ public sealed class FastFlagsViewModel : ViewModelBase
         LoadFastFlagPresets();
     }
 
+    public FastFlagManager FastFlagManager => _fastFlagManager;
+
     public bool UseFastFlagManager
     {
         get => _settings.UseFastFlagManager;
@@ -260,5 +262,19 @@ public sealed class FastFlagsViewModel : ViewModelBase
             _fastFlagManager.RemoveFlag("FFlagHandleAltEnterFullscreenManually");
 
         _fastFlagManager.Save();
+    }
+
+    public void ResetAllFastFlags()
+    {
+        _fastFlagManager.Clear();
+        _fastFlagManager.Save();
+        LoadFastFlagPresets();
+    }
+
+    public void RefreshFromSettings()
+    {
+        LoadFastFlagPresets();
+        OnPropertyChanged(nameof(UseFastFlagManager));
+        OnPropertyChanged(nameof(UseDisableAppPatch));
     }
 }

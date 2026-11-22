@@ -317,6 +317,93 @@ public sealed class RobloxAuthService : IRobloxAuthService
         return new RobloxUserPresence(userId, 0, null, null, null, null, null);
     }
 
+    public async Task<RobloxGameInfo?> GetGameInfoByPlaceIdAsync(long placeId, CancellationToken ct = default)
+    {
+        if (placeId <= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            long? universeId = null;
+            using (var uniReq = CreateAnonymousGetRequest($"https://apis.roblox.com/universes/v1/places/{placeId}/universe"))
+            using (var uniRes = await _httpClient.SendAsync(uniReq, ct).ConfigureAwait(false))
+            {
+                if (!uniRes.IsSuccessStatusCode)
+                {
+                    return null;
+                }
+
+                string uniJson = await uniRes.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                using var uniDoc = JsonDocument.Parse(uniJson);
+                universeId = TryGetOptionalInt64(uniDoc.RootElement, "universeId");
+            }
+
+            if (!universeId.HasValue || universeId.Value <= 0)
+            {
+                return null;
+            }
+
+            string gameName = $"Place {placeId}";
+            using (var gameReq = CreateAnonymousGetRequest($"https://games.roblox.com/v1/games?universeIds={universeId.Value}"))
+            using (var gameRes = await _httpClient.SendAsync(gameReq, ct).ConfigureAwait(false))
+            {
+                if (gameRes.IsSuccessStatusCode)
+                {
+                    string gameJson = await gameRes.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    using var gameDoc = JsonDocument.Parse(gameJson);
+                    if (gameDoc.RootElement.TryGetProperty("data", out var dataArr) &&
+                        dataArr.ValueKind == JsonValueKind.Array &&
+                        dataArr.GetArrayLength() > 0)
+                    {
+                        string? fetchedName = TryGetOptionalNonEmptyString(dataArr[0], "name");
+                        if (!string.IsNullOrWhiteSpace(fetchedName))
+                        {
+                            gameName = fetchedName;
+                        }
+                    }
+                }
+            }
+
+            string? thumbnailUrl = null;
+            using (var thumbReq = CreateAnonymousGetRequest(
+                $"https://thumbnails.roblox.com/v1/games/icons?universeIds={universeId.Value}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false"))
+            using (var thumbRes = await _httpClient.SendAsync(thumbReq, ct).ConfigureAwait(false))
+            {
+                if (thumbRes.IsSuccessStatusCode)
+                {
+                    string thumbJson = await thumbRes.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    using var thumbDoc = JsonDocument.Parse(thumbJson);
+                    if (thumbDoc.RootElement.TryGetProperty("data", out var thumbArr) &&
+                        thumbArr.ValueKind == JsonValueKind.Array &&
+                        thumbArr.GetArrayLength() > 0)
+                    {
+                        thumbnailUrl = TryGetOptionalNonEmptyString(thumbArr[0], "imageUrl");
+                    }
+                }
+            }
+
+            return new RobloxGameInfo(placeId, universeId.Value, gameName, thumbnailUrl);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static HttpRequestMessage CreateAnonymousGetRequest(string url)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("User-Agent", "BaBaBooeyStrap/1.0");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return request;
+    }
+
     private static long? TryGetOptionalInt64(JsonElement element, string propertyName)
     {
         if (element.TryGetProperty(propertyName, out var prop) &&

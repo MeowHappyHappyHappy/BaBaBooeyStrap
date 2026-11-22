@@ -8,11 +8,14 @@
       Foreground="{DynamicResource TextFillColorPrimaryBrush}"
       TextElement.Foreground="{DynamicResource TextFillColorPrimaryBrush}"
       Title="{DynamicResource Str_About_PageTitle}">
+    <Page.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+    </Page.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
         <StackPanel>
             <TextBlock Text="{DynamicResource Str_About_Header}" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,16"/>
 
-            <Border CornerRadius="8" Padding="20" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+            <Border CornerRadius="8" Padding="20" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="BaBaBooeyStrap" FontSize="20" FontWeight="Bold"/>
                     <TextBlock Opacity="0.8" Margin="0,2,0,8">
@@ -28,7 +31,38 @@
                     <TextBlock Text="{DynamicResource Str_About_Description}"
                                TextWrapping="Wrap" Margin="0,0,0,16"/>
 
-                    <ui:Button Content="{DynamicResource Str_About_OpenLogs}" Appearance="Primary" Click="OpenLogs_Click" HorizontalAlignment="Left"/>
+                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <ui:Button Content="{DynamicResource Str_About_OpenLogs}" Appearance="Primary" Click="OpenLogs_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_About_CheckUpdates}"
+                                   IsEnabled="{Binding LaunchSettings.IsNotCheckingAppUpdate}"
+                                   Click="CheckUpdates_Click"
+                                   Margin="0,0,10,8"/>
+                        <ui:ProgressRing Width="18"
+                                         Height="18"
+                                         IsIndeterminate="True"
+                                         Visibility="{Binding LaunchSettings.IsCheckingAppUpdate, Converter={StaticResource BoolToVisibilityConverter}}"
+                                         Margin="0,0,8,8"
+                                         VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding LaunchSettings.AppUpdateStatusText}"
+                                   Opacity="0.8"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,0,8"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Troubleshooting Card -->
+            <Border CornerRadius="8" Padding="20" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{DynamicResource Str_About_TroubleshootingHeader}" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <TextBlock Text="{DynamicResource Str_About_TroubleshootingDesc}" FontSize="12.5" Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,14"/>
+
+                    <WrapPanel Orientation="Horizontal">
+                        <ui:Button Content="{DynamicResource Str_About_ResetFastFlags}" Click="ResetFastFlags_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_About_ClearCacheNow}" Click="ClearCacheImmediate_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_About_RepairProtocols}" Click="RepairProtocols_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_About_ExportDiagnostics}" Appearance="Primary" Click="ExportDiagnostics_Click" Margin="0,0,0,8"/>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
         </StackPanel>

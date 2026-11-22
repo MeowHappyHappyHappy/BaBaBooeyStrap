@@ -11,6 +11,9 @@ public class State
     public WindowState SettingsWindow { get; set; } = new WindowState();
     public string? InstallLocation { get; set; }
     public DateTimeOffset? LastUpdateCheck { get; set; }
+    public bool OnboardingCompleted { get; set; }
+    public DateTimeOffset? LastAppUpdateCheck { get; set; }
+    public string? SkippedAppVersion { get; set; }
     public string LastTargetName { get; set; } = string.Empty;
     public string LastTargetInput { get; set; } = string.Empty;
     public string LastJobId { get; set; } = string.Empty;

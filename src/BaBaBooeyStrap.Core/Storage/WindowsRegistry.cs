@@ -6,6 +6,7 @@ public static class WindowsRegistry
 {
     public const string AppName = "BaBaBooeyStrap";
     public const string AppRegistryRoot = @"Software\BaBaBooeyStrap";
+    public const string StartupRunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
     public static void RegisterProtocol(string key, string name, string handlerPath, string handlerParam = "%1")
     {
@@ -105,13 +106,45 @@ public static class WindowsRegistry
     {
         try
         {
-            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", writable: true);
+            using var key = Registry.CurrentUser.OpenSubKey(StartupRunRegistryPath, writable: true);
             if (key?.GetValue("RobloxPlayerBeta") is string val && val.Contains("RobloxPlayerBeta.exe", StringComparison.OrdinalIgnoreCase))
             {
                 key.DeleteValue("RobloxPlayerBeta");
             }
         }
         catch { }
+    }
+
+    public static void SetAppStartup(string handlerPath, bool enabled)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(StartupRunRegistryPath);
+            if (key == null) return;
+
+            if (enabled && !string.IsNullOrWhiteSpace(handlerPath))
+            {
+                key.SetValue(AppName, $"\"{handlerPath}\" -quiet -nolaunch");
+            }
+            else
+            {
+                key.DeleteValue(AppName, throwOnMissingValue: false);
+            }
+        }
+        catch { }
+    }
+
+    public static bool IsAppStartupEnabled()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(StartupRunRegistryPath, writable: false);
+            return key?.GetValue(AppName) is string val && !string.IsNullOrWhiteSpace(val);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static void UnregisterProtocol(string key)
@@ -149,6 +182,7 @@ public static class WindowsRegistry
         UnregisterProtocol("Roblox.Place");
         UnregisterProtocol(".rbxl");
         UnregisterProtocol(".rbxlx");
+        SetAppStartup(string.Empty, false);
 
         try
         {

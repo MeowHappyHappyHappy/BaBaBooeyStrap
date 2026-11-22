@@ -9,5 +9,8 @@ public sealed class SavedJoinTarget
     public string Name { get; set; } = string.Empty;
     public string TargetInput { get; set; } = string.Empty;
     public string? JobId { get; set; }
+    public long? PlaceId { get; set; }
+    public string? GameName { get; set; }
+    public string? ThumbnailUrl { get; set; }
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }

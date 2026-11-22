@@ -18,4 +18,9 @@ public partial class ChannelPage : Page
         if (ViewModel == null) return;
         await ViewModel.LaunchSettings.TestFastestCdnMirrorAsync();
     }
+
+    private void ResetChannelDefaults_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel?.LaunchSettings.ResetChannelDefaults();
+    }
 }

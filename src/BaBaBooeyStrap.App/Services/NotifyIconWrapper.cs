@@ -5,6 +5,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Interop;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
@@ -24,12 +25,16 @@ public sealed class NotifyIconWrapper : IDisposable
     private readonly Action? _onToggleMultiInstance;
     private readonly Action? _onExitRequested;
     private readonly Func<IReadOnlyList<ActiveServerSessionInfo>>? _getActiveServers;
+    private readonly Func<IReadOnlyList<RobloxAccount>>? _getAccounts;
+    private readonly Func<IReadOnlyList<SavedJoinTarget>>? _getSavedTargets;
+    private readonly Action<RobloxAccount, SavedJoinTarget?>? _onQuickLaunchAccount;
     private Dispatcher? _uiDispatcher;
 
     private WinForms.NotifyIcon? _notifyIcon;
     private WinForms.ContextMenuStrip? _contextMenu;
     private WinForms.ToolStripMenuItem? _settingsMenuItem;
     private WinForms.ToolStripMenuItem? _launchMenuItem;
+    private WinForms.ToolStripMenuItem? _quickLaunchMenuItem;
     private WinForms.ToolStripMenuItem? _multiInstanceMenuItem;
     private WinForms.ToolStripMenuItem? _serverLocationMenuItem;
     private WinForms.ToolStripMenuItem? _exitMenuItem;
@@ -46,9 +51,10 @@ public sealed class NotifyIconWrapper : IDisposable
     public string? LastServerLocationText { get; private set; }
     public string? LastTooltipText { get; private set; }
     public IReadOnlyList<string> LastServerLocationSubItems { get; private set; } = Array.Empty<string>();
+    public IReadOnlyList<string> LastQuickLaunchAccountNames { get; private set; } = Array.Empty<string>();
 
     public IReadOnlyList<string> ContextMenuActions { get; } =
-        ["Settings", "Launch Roblox", "Multi-Instance Status", "Server Location", "Exit"];
+        ["Settings", "Launch Roblox", "Quick Launch", "Multi-Instance Status", "Server Location", "Exit"];
 
     public NotifyIconWrapper(
         bool headlessMode = false,
@@ -57,7 +63,10 @@ public sealed class NotifyIconWrapper : IDisposable
         Func<MultiInstanceStatus>? getMultiInstanceStatus = null,
         Action? onToggleMultiInstance = null,
         Action? onExitRequested = null,
-        Func<IReadOnlyList<ActiveServerSessionInfo>>? getActiveServers = null)
+        Func<IReadOnlyList<ActiveServerSessionInfo>>? getActiveServers = null,
+        Func<IReadOnlyList<RobloxAccount>>? getAccounts = null,
+        Func<IReadOnlyList<SavedJoinTarget>>? getSavedTargets = null,
+        Action<RobloxAccount, SavedJoinTarget?>? onQuickLaunchAccount = null)
     {
         _headlessMode = headlessMode;
         _onOpenSettings = onOpenSettings;
@@ -66,6 +75,9 @@ public sealed class NotifyIconWrapper : IDisposable
         _onToggleMultiInstance = onToggleMultiInstance;
         _onExitRequested = onExitRequested;
         _getActiveServers = getActiveServers;
+        _getAccounts = getAccounts;
+        _getSavedTargets = getSavedTargets;
+        _onQuickLaunchAccount = onQuickLaunchAccount;
         _uiDispatcher = Application.Current?.Dispatcher ?? Dispatcher.FromThread(Thread.CurrentThread);
 
         LocalizationService.Instance.LanguageChanged += OnLanguageChanged;
@@ -80,12 +92,14 @@ public sealed class NotifyIconWrapper : IDisposable
         if (_headlessMode)
         {
             RefreshServerLocationStatus();
+            RefreshQuickLaunchMenu();
             return;
         }
 
         CreateOrRecreateWinFormsIcon(iconKind, customIconPath);
         EnsureTaskbarCreatedHook();
         RefreshServerLocationStatus();
+        RefreshQuickLaunchMenu();
     }
 
     public void AttachWindow(Window window)
@@ -266,6 +280,7 @@ public sealed class NotifyIconWrapper : IDisposable
         if (_headlessMode)
         {
             RefreshServerLocationStatus();
+            RefreshQuickLaunchMenu();
             return;
         }
 
@@ -274,6 +289,8 @@ public sealed class NotifyIconWrapper : IDisposable
 
         if (_launchMenuItem != null)
             _launchMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_LaunchRoblox");
+
+        RefreshQuickLaunchMenu();
 
         if (_multiInstanceMenuItem != null)
         {
@@ -285,6 +302,104 @@ public sealed class NotifyIconWrapper : IDisposable
 
         if (_exitMenuItem != null)
             _exitMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_Exit");
+    }
+
+    public void RefreshQuickLaunchMenu()
+    {
+        if (_disposed) return;
+
+        IReadOnlyList<RobloxAccount> accounts;
+        IReadOnlyList<SavedJoinTarget> targets;
+        try
+        {
+            accounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>();
+        }
+        catch
+        {
+            accounts = Array.Empty<RobloxAccount>();
+        }
+
+        try
+        {
+            targets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>();
+        }
+        catch
+        {
+            targets = Array.Empty<SavedJoinTarget>();
+        }
+
+        LastQuickLaunchAccountNames = accounts.Select(a => a.Username).ToList();
+
+        if (_headlessMode || _quickLaunchMenuItem == null)
+        {
+            return;
+        }
+
+        _quickLaunchMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_QuickLaunch");
+        ClearDropDownItems(_quickLaunchMenuItem);
+
+        if (accounts.Count == 0)
+        {
+            var emptyItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tray_QuickLaunchEmpty"))
+            {
+                Enabled = false
+            };
+            _quickLaunchMenuItem.DropDownItems.Add(emptyItem);
+            return;
+        }
+
+        foreach (var account in accounts)
+        {
+            var capturedAccount = account;
+            if (targets.Count == 0)
+            {
+                var accItem = new WinForms.ToolStripMenuItem(
+                    capturedAccount.Username,
+                    null,
+                    (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null)));
+                _quickLaunchMenuItem.DropDownItems.Add(accItem);
+                continue;
+            }
+
+            var accParent = new WinForms.ToolStripMenuItem(capturedAccount.Username);
+            var lastTargetItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tray_QuickLaunchLastTarget"),
+                null,
+                (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null)));
+            accParent.DropDownItems.Add(lastTargetItem);
+            accParent.DropDownItems.Add(new WinForms.ToolStripSeparator());
+
+            foreach (var target in targets)
+            {
+                var capturedTarget = target;
+                string label = !string.IsNullOrWhiteSpace(capturedTarget.GameName) &&
+                               !string.Equals(capturedTarget.GameName, capturedTarget.Name, StringComparison.OrdinalIgnoreCase)
+                    ? $"{capturedTarget.Name} ({capturedTarget.GameName})"
+                    : capturedTarget.Name;
+                var targetItem = new WinForms.ToolStripMenuItem(
+                    label,
+                    null,
+                    (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, capturedTarget)));
+                accParent.DropDownItems.Add(targetItem);
+            }
+
+            _quickLaunchMenuItem.DropDownItems.Add(accParent);
+        }
+    }
+
+    private static void ClearDropDownItems(WinForms.ToolStripMenuItem parent)
+    {
+        while (parent.DropDownItems.Count > 0)
+        {
+            var item = parent.DropDownItems[0];
+            parent.DropDownItems.RemoveAt(0);
+            if (item is WinForms.ToolStripMenuItem menuItem)
+            {
+                ClearDropDownItems(menuItem);
+            }
+            try { item.Dispose(); } catch { }
+        }
     }
 
     public void RefreshServerLocationStatus()
@@ -621,6 +736,9 @@ public sealed class NotifyIconWrapper : IDisposable
             null,
             (_, _) => InvokeOnUiDispatcher(_onLaunchRoblox));
 
+        _quickLaunchMenuItem = new WinForms.ToolStripMenuItem(
+            LocalizationService.Instance.GetString("Str_Tray_QuickLaunch"));
+
         _multiInstanceMenuItem = new WinForms.ToolStripMenuItem(
             LocalizationService.Instance.GetString("Str_Tray_MultiInstanceStatus"),
             null,
@@ -648,6 +766,7 @@ public sealed class NotifyIconWrapper : IDisposable
 
         _contextMenu.Items.Add(_settingsMenuItem);
         _contextMenu.Items.Add(_launchMenuItem);
+        _contextMenu.Items.Add(_quickLaunchMenuItem);
         _contextMenu.Items.Add(_multiInstanceMenuItem);
         _contextMenu.Items.Add(_serverLocationMenuItem);
         _contextMenu.Items.Add(new WinForms.ToolStripSeparator());
@@ -708,8 +827,14 @@ public sealed class NotifyIconWrapper : IDisposable
             ClearMenuItemImage(_serverLocationMenuItem);
         }
 
+        if (_quickLaunchMenuItem != null)
+        {
+            ClearDropDownItems(_quickLaunchMenuItem);
+        }
+
         _settingsMenuItem = null;
         _launchMenuItem = null;
+        _quickLaunchMenuItem = null;
         _multiInstanceMenuItem = null;
         _serverLocationMenuItem = null;
         _singleActiveServer = null;

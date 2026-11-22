@@ -1,0 +1,91 @@
+<ui:FluentWindow x:Class="BaBaBooeyStrap.App.Views.Dialogs.UpdateAvailableDialog"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="{DynamicResource Str_Update_Title}"
+                 Width="540"
+                 SizeToContent="Height"
+                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                 WindowStartupLocation="CenterOwner"
+                 ResizeMode="NoResize"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar x:Name="DialogTitleBar"
+                     Grid.Row="0"
+                     Title="{DynamicResource Str_Update_Title}"
+                     ShowMaximize="False"
+                     ShowMinimize="False" />
+
+        <StackPanel Grid.Row="1" Margin="20,10,20,14">
+            <TextBlock x:Name="VersionSummaryText"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,8" />
+
+            <TextBlock Text="{DynamicResource Str_Update_ReleaseNotesLabel}"
+                       FontSize="12"
+                       Opacity="0.75"
+                       Margin="0,0,0,4" />
+
+            <TextBox x:Name="ReleaseNotesBox"
+                     IsReadOnly="True"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto"
+                     Height="170"
+                     Padding="10,8"
+                     Margin="0,0,0,12"
+                     Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                     Background="{DynamicResource ControlFillColorDefaultBrush}"
+                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" />
+
+            <StackPanel x:Name="DownloadProgressPanel" Visibility="Collapsed">
+                <TextBlock x:Name="ProgressStatusText"
+                           FontSize="12"
+                           Opacity="0.85"
+                           Margin="0,0,0,6" />
+                <ProgressBar x:Name="DownloadProgressBar"
+                             Minimum="0"
+                             Maximum="100"
+                             Height="8" />
+            </StackPanel>
+        </StackPanel>
+
+        <Border Grid.Row="2"
+                Padding="20,12"
+                BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+            <DockPanel>
+                <ui:Button x:Name="SkipVersionButton"
+                           Content="{DynamicResource Str_Update_SkipVersion}"
+                           Click="SkipVersion_Click"
+                           HorizontalAlignment="Left" />
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <ui:Button x:Name="LaterButton"
+                               Content="{DynamicResource Str_Update_Later}"
+                               IsCancel="True"
+                               Click="Later_Click"
+                               Margin="0,0,8,0" />
+                    <ui:Button x:Name="OpenGitHubButton"
+                               Content="{DynamicResource Str_Update_OpenGitHub}"
+                               Click="OpenGitHub_Click"
+                               Margin="0,0,8,0" />
+                    <ui:Button x:Name="UpdateNowButton"
+                               Content="{DynamicResource Str_Update_UpdateNow}"
+                               Appearance="Primary"
+                               IsDefault="True"
+                               Click="UpdateNow_Click" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

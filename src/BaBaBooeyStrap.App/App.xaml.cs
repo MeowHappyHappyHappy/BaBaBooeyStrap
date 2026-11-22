@@ -14,6 +14,7 @@ using BaBaBooeyStrap.Core.Launch;
 using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
+using BaBaBooeyStrap.Core.Storage;
 
 namespace BaBaBooeyStrap.App;
 
@@ -23,6 +24,7 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private bool _isQuietMode;
     private bool _isShuttingDown;
+    private bool _hasCheckedAppUpdateThisSession;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -95,7 +97,8 @@ public partial class App : Application
                 onOpenSettings: ShowMainWindow,
                 onLaunchRoblox: () => _ = LaunchPlayerFromTrayOrSettingsAsync(new LaunchSettings()),
                 onToggleMultiInstance: ToggleMultiInstanceFromTray,
-                onExitRequested: HandleTrayExitRequested);
+                onExitRequested: HandleTrayExitRequested,
+                onQuickLaunchAccount: (acc, target) => _ = LaunchAccountFromTrayAsync(acc, target));
 
             orchestrator.ActiveServersChanged += (_, _) => _services?.TrayWrapper?.RefreshServerLocationStatus();
             orchestrator.ServerLocationResolved += (_, info) =>
@@ -177,10 +180,56 @@ public partial class App : Application
             return;
         }
 
+        if (!string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) && !stateManager.Prop.OnboardingCompleted)
+        {
+            stateManager.Prop.OnboardingCompleted = true;
+            stateManager.Save();
+        }
+
         if (!launchSettings.QuietFlag.Active &&
+            !stateManager.Prop.OnboardingCompleted &&
+            string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) &&
+            launchSettings.RobloxLaunchMode == LaunchMode.None &&
+            !launchSettings.AccountFlag.Active &&
+            !launchSettings.HoldFlag.Active &&
+            !launchSettings.NoLaunchFlag.Active)
+        {
+            var firstRun = new FirstRunDialog(settingsManager.Prop);
+            firstRun.ShowDialog();
+
+            installer.Install(
+                createDesktopShortcut: firstRun.CreateDesktopShortcut,
+                createStartMenuShortcuts: true,
+                registerProtocols: firstRun.RegisterProtocols);
+
+            if (settingsManager.Prop.MultiInstanceEnabled)
+                orchestrator?.MultiInstanceController.Enable();
+            else
+                orchestrator?.MultiInstanceController.Disable();
+
+            if (settingsManager.Prop.RunOnStartup)
+            {
+                string startupExe = File.Exists(_services.Paths.Application) ? _services.Paths.Application : _services.Paths.Process;
+                WindowsRegistry.SetAppStartup(startupExe, true);
+            }
+
+            stateManager.Prop.OnboardingCompleted = true;
+            settingsManager.Save();
+            stateManager.Save();
+        }
+        else if (!launchSettings.QuietFlag.Active &&
             (string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) || !installer.IsInstalledHere()))
         {
             installer.Install(createDesktopShortcut: false, createStartMenuShortcuts: true, registerProtocols: true);
+        }
+
+        if (launchSettings.NoLaunchFlag.Active &&
+            !launchSettings.MenuFlag.Active &&
+            launchSettings.RobloxLaunchMode == LaunchMode.None &&
+            !launchSettings.AccountFlag.Active &&
+            !launchSettings.HoldFlag.Active)
+        {
+            return;
         }
 
         if (launchSettings.HoldFlag.Active)
@@ -254,12 +303,6 @@ public partial class App : Application
     {
         if (_services?.Orchestrator == null) return;
 
-        var orchestrator = _services.Orchestrator;
-        var settingsManager = _services.SettingsManager;
-        var accountStore = _services.AccountStore;
-        var trayWrapper = _services.TrayWrapper;
-        var globalSettings = _services.GlobalSettingsManager;
-
         string? identifier = launchSettings.AccountFlag.Data;
         string? rawTarget = launchSettings.TargetFlag.Data;
         if (string.IsNullOrWhiteSpace(identifier) || string.IsNullOrWhiteSpace(rawTarget))
@@ -273,7 +316,7 @@ public partial class App : Application
             return;
         }
 
-        var accounts = accountStore.LoadAll();
+        var accounts = _services.AccountStore.LoadAll();
         RobloxAccount? account = Guid.TryParse(identifier, out var id)
             ? accounts.FirstOrDefault(a => a.Id == id)
             : accounts.FirstOrDefault(a => string.Equals(a.Username, identifier, StringComparison.OrdinalIgnoreCase));
@@ -290,8 +333,60 @@ public partial class App : Application
             return;
         }
 
+        await ExecuteAccountLaunchAsync(
+            account,
+            rawTarget,
+            launchSettings.JobIdFlag.Data,
+            launchSettings.QuietFlag.Active,
+            launchSettings.NoHoldFlag.Active);
+
+        if (launchSettings.DetachFlag.Active && (_mainWindow == null || !_mainWindow.IsVisible))
+        {
+            ShutdownApp(0);
+        }
+    }
+
+    private async Task LaunchAccountFromTrayAsync(RobloxAccount account, SavedJoinTarget? savedTarget)
+    {
+        if (_services == null) return;
+
+        var state = _services.StateManager.Prop;
+        string? rawTarget = savedTarget != null ? savedTarget.TargetInput : state.LastTargetInput;
+        string? jobId = savedTarget != null ? savedTarget.JobId : state.LastJobId;
+
+        if (string.IsNullOrWhiteSpace(rawTarget))
+        {
+            FluentDialogService.ShowWarning(
+                LocalizationService.Instance.GetString("Str_Tray_QuickLaunch"),
+                LocalizationService.Instance.GetString("Str_Tray_QuickLaunchNoTarget"));
+            ShowMainWindow();
+            return;
+        }
+
+        await ExecuteAccountLaunchAsync(
+            account,
+            rawTarget,
+            jobId,
+            quietMode: false,
+            forceDisableMultiInstance: false);
+    }
+
+    private async Task ExecuteAccountLaunchAsync(
+        RobloxAccount account,
+        string rawTarget,
+        string? jobId,
+        bool quietMode,
+        bool forceDisableMultiInstance)
+    {
+        if (_services?.Orchestrator == null) return;
+
+        var orchestrator = _services.Orchestrator;
+        var settingsManager = _services.SettingsManager;
+        var accountStore = _services.AccountStore;
+        var globalSettings = _services.GlobalSettingsManager;
+
         bool previousMultiInstance = settingsManager.Prop.MultiInstanceEnabled;
-        if (launchSettings.NoHoldFlag.Active)
+        if (forceDisableMultiInstance)
         {
             settingsManager.Prop.MultiInstanceEnabled = false;
         }
@@ -303,7 +398,7 @@ public partial class App : Application
         string? settingsBackup = null;
         try
         {
-            string effectiveTarget = RobloxLauncher.BuildEffectiveTargetInput(rawTarget, launchSettings.JobIdFlag.Data);
+            string effectiveTarget = RobloxLauncher.BuildEffectiveTargetInput(rawTarget, jobId);
             var parsedTarget = RobloxLauncher.ParseTargetInput(effectiveTarget);
 
             if (account.RobloxSettings?.HasOverrides == true)
@@ -325,7 +420,7 @@ public partial class App : Application
                     await orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(previousPids);
                 }
             }
-            else if (!launchSettings.QuietFlag.Active)
+            else if (!quietMode)
             {
                 FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
@@ -334,8 +429,8 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            Logger.ExceptionStatic("App.LaunchAccountFromCliAsync", ex);
-            if (!launchSettings.QuietFlag.Active)
+            Logger.ExceptionStatic("App.ExecuteAccountLaunchAsync", ex);
+            if (!quietMode)
             {
                 FluentDialogService.ShowError(
                     LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
@@ -349,11 +444,6 @@ public partial class App : Application
             {
                 try { globalSettings.RestoreBackup(settingsBackup); } catch { }
             }
-        }
-
-        if (launchSettings.DetachFlag.Active && (_mainWindow == null || !_mainWindow.IsVisible))
-        {
-            ShutdownApp(0);
         }
     }
 
@@ -383,6 +473,81 @@ public partial class App : Application
         _mainWindow.Activate();
         _mainWindow.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
         _mainWindow.ViewModel.AccountManagement.RefreshProtocolStatus();
+
+        TriggerBackgroundAppUpdateCheckIfDue();
+    }
+
+    private void TriggerBackgroundAppUpdateCheckIfDue()
+    {
+        if (_hasCheckedAppUpdateThisSession || _isShuttingDown || _services?.AppUpdateService == null)
+        {
+            return;
+        }
+
+        var settings = _services.SettingsManager.Prop;
+        var stateManager = _services.StateManager;
+        if (!settings.CheckAppUpdates)
+        {
+            return;
+        }
+
+        if (stateManager.Prop.LastAppUpdateCheck is { } lastCheck &&
+            DateTimeOffset.UtcNow - lastCheck < TimeSpan.FromHours(6))
+        {
+            return;
+        }
+
+        _hasCheckedAppUpdateThisSession = true;
+        var updateService = _services.AppUpdateService;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var info = await updateService.CheckForUpdateAsync().ConfigureAwait(false);
+                stateManager.Prop.LastAppUpdateCheck = DateTimeOffset.UtcNow;
+                stateManager.Save();
+
+                if (!info.IsUpdateAvailable)
+                {
+                    return;
+                }
+
+                string latestStr = info.LatestVersion.ToString();
+                if (!string.IsNullOrWhiteSpace(stateManager.Prop.SkippedAppVersion) &&
+                    string.Equals(stateManager.Prop.SkippedAppVersion, latestStr, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    if (_isShuttingDown) return;
+
+                    var dlg = new UpdateAvailableDialog(info, updateService);
+                    if (_mainWindow != null && _mainWindow.IsLoaded && _mainWindow.IsVisible)
+                    {
+                        dlg.Owner = _mainWindow;
+                    }
+                    dlg.ShowDialog();
+
+                    if (!string.IsNullOrWhiteSpace(dlg.SkippedVersion))
+                    {
+                        stateManager.Prop.SkippedAppVersion = dlg.SkippedVersion;
+                        stateManager.Save();
+                    }
+
+                    if (dlg.UpdateInstalledNeedsRestart)
+                    {
+                        ShutdownApp(0);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.WarnStatic("App.UpdateCheck", $"Background update check failed: {ex.Message}");
+            }
+        });
     }
 
     private async Task LaunchPlayerFromTrayOrSettingsAsync(LaunchSettings launchSettings)

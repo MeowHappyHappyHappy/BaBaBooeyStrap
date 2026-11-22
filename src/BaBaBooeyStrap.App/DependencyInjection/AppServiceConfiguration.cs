@@ -41,6 +41,7 @@ public static class AppServiceConfiguration
         var installerService = new InstallerService(resolvedPaths, stateManager);
         var globalSettingsManager = new GlobalSettingsManager(resolvedPaths.RobloxGlobalSettings);
         var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var appUpdateService = new AppUpdateService(resolvedPaths, httpClient, Logger.Current);
 
         return new AppServices(
             resolvedPaths,
@@ -51,7 +52,10 @@ public static class AppServiceConfiguration
             joinTargetStore,
             installerService,
             globalSettingsManager,
-            httpClient);
+            httpClient)
+        {
+            AppUpdateService = appUpdateService
+        };
     }
 
     public static SingleInstanceIpc CreateSingleInstanceIpc() => new();
@@ -112,7 +116,8 @@ public static class AppServiceConfiguration
         Action onLaunchRoblox,
         Action onToggleMultiInstance,
         Action onExitRequested,
-        bool headlessMode = false)
+        bool headlessMode = false,
+        Action<RobloxAccount, SavedJoinTarget?>? onQuickLaunchAccount = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var orchestrator = services.Orchestrator
@@ -125,7 +130,10 @@ public static class AppServiceConfiguration
             getMultiInstanceStatus: () => orchestrator.MultiInstanceController.GetStatus(),
             onToggleMultiInstance: onToggleMultiInstance,
             onExitRequested: onExitRequested,
-            getActiveServers: () => orchestrator.GetActiveServers());
+            getActiveServers: () => orchestrator.GetActiveServers(),
+            getAccounts: () => services.AccountStore.LoadAll(),
+            getSavedTargets: () => services.JoinTargetStore.LoadAll(),
+            onQuickLaunchAccount: onQuickLaunchAccount);
 
         services.TrayWrapper = tray;
         return tray;
@@ -147,7 +155,9 @@ public static class AppServiceConfiguration
             globalSettingsManager: services.GlobalSettingsManager,
             stateManager: services.StateManager,
             robloxStateManager: services.RobloxStateManager,
-            joinTargetStore: services.JoinTargetStore);
+            joinTargetStore: services.JoinTargetStore,
+            settingsManager: services.SettingsManager,
+            appUpdateService: services.AppUpdateService);
     }
 
     public static MainWindow CreateMainWindow(AppServices services, Action onLaunchRequested)

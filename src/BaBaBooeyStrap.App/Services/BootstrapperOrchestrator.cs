@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using BaBaBooeyStrap.App.DependencyInjection;
@@ -11,6 +12,7 @@ using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Roblox;
 using BaBaBooeyStrap.Core.Storage;
+using BaBaBooeyStrap.Integrations.Custom;
 using BaBaBooeyStrap.Integrations.Discord;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 using BaBaBooeyStrap.Integrations.Watcher;
@@ -42,6 +44,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
     private readonly ILaunchGate _launchGate;
     private readonly IRobloxAuthService _authService;
     private readonly IRoValraService _roValraService;
+    private readonly ICustomIntegrationRunner _customIntegrationRunner;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -67,7 +70,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         ILogger? logger = null,
         IRoValraService? roValraService = null,
         IEnumerable<IBootstrapPipelineStep>? pipelineSteps = null,
-        HttpClient? httpClient = null)
+        HttpClient? httpClient = null,
+        ICustomIntegrationRunner? customIntegrationRunner = null)
     {
         _paths = paths ?? Paths.Current;
         _settingsManager = settingsManager ?? new JsonManager<Settings>(_paths.SettingsFile);
@@ -81,6 +85,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         _ownsHttpClient = httpClient == null;
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _roValraService = roValraService ?? new RoValraService(_httpClient, logger: _logger);
+        _customIntegrationRunner = customIntegrationRunner ?? new CustomIntegrationRunner(_logger);
         _pipelineSteps = pipelineSteps?.ToList()
             ?? AppServiceConfiguration.CreateDefaultBootstrapPipeline(
                 _paths,
@@ -210,6 +215,15 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             catch { }
         }
 
+        // 5b. Launch PreLaunch Custom Integrations
+        IReadOnlyList<int> preLaunchedAutoClosePids = Array.Empty<int>();
+        if (!isStudio && appSettings.CustomIntegrations.Count > 0)
+        {
+            preLaunchedAutoClosePids = await _customIntegrationRunner
+                .LaunchIntegrationsAsync(appSettings.CustomIntegrations, preLaunchOnly: true, ct: ct)
+                .ConfigureAwait(false);
+        }
+
         // 6. Launch Roblox executable via Core RobloxLauncher
         statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusStartingRoblox"));
         var coreLauncher = new RobloxLauncher(_paths, _authService, _robloxStateManager, _logger);
@@ -217,11 +231,32 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
         if (result.Success && result.ProcessId.HasValue)
         {
-            _processSupervisor.RegisterProcess(result.ProcessId.Value);
+            int pid = result.ProcessId.Value;
+            _processSupervisor.RegisterProcess(pid);
+            _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
+
+            if (!isStudio && appSettings.CustomIntegrations.Count > 0)
+            {
+                var integrationSnapshot = appSettings.CustomIntegrations.ToList();
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _customIntegrationRunner
+                            .LaunchIntegrationsAsync(integrationSnapshot, preLaunchOnly: false, trackedRobloxPid: pid, ct)
+                            .ConfigureAwait(false);
+                    }
+                    catch { }
+                });
+            }
 
             if (appSettings.EnableActivityTracking && !isStudio)
             {
-                StartWatcherForPid(result.ProcessId.Value, appSettings, accountUsername, preExistingLogs);
+                StartWatcherForPid(pid, appSettings, accountUsername, preExistingLogs);
+            }
+            else if (!isStudio && appSettings.CustomIntegrations.Any(i => i.AutoClose))
+            {
+                MonitorProcessExitForCustomIntegrations(pid);
             }
         }
 
@@ -417,6 +452,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 finally
                 {
                     _processSupervisor.UnregisterProcess(pid);
+                    _customIntegrationRunner.CloseIntegrationsForPid(pid);
                     _activeSessionWatchers.TryRemove(pid, out _);
                     if (_activeServers.TryRemove(pid, out _))
                     {
@@ -519,10 +555,29 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
     }
 
+    private void MonitorProcessExitForCustomIntegrations(int pid)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var proc = Process.GetProcessById(pid);
+                await proc.WaitForExitAsync().ConfigureAwait(false);
+            }
+            catch { }
+            finally
+            {
+                _customIntegrationRunner.CloseIntegrationsForPid(pid);
+            }
+        });
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
+
+        try { _customIntegrationRunner.Dispose(); } catch { }
 
         lock (_watcherLock)
         {

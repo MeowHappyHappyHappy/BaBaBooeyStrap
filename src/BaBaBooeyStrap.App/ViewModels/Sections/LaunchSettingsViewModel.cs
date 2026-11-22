@@ -26,6 +26,10 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     private string _cdnTestResult = LocalizationService.Instance.GetString("Str_Common_NotTestedYet");
     private string _cdnTestResultKey = "Str_Common_NotTestedYet";
     private object?[] _cdnTestResultArgs = Array.Empty<object?>();
+    private string _appUpdateStatusText = string.Empty;
+    private string? _appUpdateStatusKey;
+    private object?[] _appUpdateStatusArgs = Array.Empty<object?>();
+    private bool _isCheckingAppUpdate;
     private bool _forceReinstall;
     private bool _isTestingCdn;
     private bool _hasUnsavedGlobalSettings;
@@ -58,6 +62,30 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
 
     // --- Launcher Behaviour ---
     public bool CheckForUpdates { get => _settings.CheckForUpdates; set { _settings.CheckForUpdates = value; OnPropertyChanged(); } }
+    public bool CheckAppUpdates
+    {
+        get => _settings.CheckAppUpdates;
+        set
+        {
+            if (_settings.CheckAppUpdates != value)
+            {
+                _settings.CheckAppUpdates = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+    public bool RunOnStartup
+    {
+        get => _settings.RunOnStartup;
+        set
+        {
+            if (_settings.RunOnStartup != value)
+            {
+                _settings.RunOnStartup = value;
+                OnPropertyChanged();
+            }
+        }
+    }
     public bool BackgroundUpdatesEnabled { get => _settings.BackgroundUpdatesEnabled; set { _settings.BackgroundUpdatesEnabled = value; OnPropertyChanged(); } }
     public bool ConfirmLaunches { get => _settings.ConfirmLaunches; set { _settings.ConfirmLaunches = value; OnPropertyChanged(); } }
     public bool ForceLocalData { get => _settings.ForceLocalData; set { _settings.ForceLocalData = value; OnPropertyChanged(); } }
@@ -253,6 +281,74 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
 
     public string RuntimeInfo => $".NET {Environment.Version} | {(Environment.Is64BitProcess ? "win-x64" : "win-x86")} | {Environment.OSVersion}";
 
+    public string AppUpdateStatusText
+    {
+        get => _appUpdateStatusText;
+        private set => SetProperty(ref _appUpdateStatusText, value);
+    }
+
+    public bool IsCheckingAppUpdate
+    {
+        get => _isCheckingAppUpdate;
+        set
+        {
+            if (SetProperty(ref _isCheckingAppUpdate, value))
+            {
+                OnPropertyChanged(nameof(IsNotCheckingAppUpdate));
+            }
+        }
+    }
+
+    public bool IsNotCheckingAppUpdate => !IsCheckingAppUpdate;
+
+    public void SetAppUpdateStatus(string key, params object?[] args)
+    {
+        _appUpdateStatusKey = key;
+        _appUpdateStatusArgs = args ?? Array.Empty<object?>();
+        AppUpdateStatusText = LocalizedFormatHelper.Format(_appUpdateStatusKey, _appUpdateStatusArgs);
+    }
+
+    public void ResetChannelDefaults()
+    {
+        Channel = "production";
+        SelectedChannelChangeMode = ChannelChangeMode.Automatic;
+        SelectedDistributorType = DistributorType.Global;
+        SelectedWebEnvironment = WebEnvironment.Production;
+        RobloxDomain = "roblox.com";
+        Locale = "nil";
+        ForceRobloxLanguage = false;
+        _setLocalizedStatus("Str_Channel_StatusResetDefaults", Array.Empty<object?>());
+    }
+
+    public void SyncRunOnStartupRegistry()
+    {
+        string exe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
+        WindowsRegistry.SetAppStartup(exe, _settings.RunOnStartup);
+    }
+
+    public void RefreshFromSettings()
+    {
+        OnPropertyChanged(nameof(CheckForUpdates));
+        OnPropertyChanged(nameof(CheckAppUpdates));
+        OnPropertyChanged(nameof(RunOnStartup));
+        OnPropertyChanged(nameof(BackgroundUpdatesEnabled));
+        OnPropertyChanged(nameof(ConfirmLaunches));
+        OnPropertyChanged(nameof(ForceLocalData));
+        OnPropertyChanged(nameof(StaticDirectory));
+        OnPropertyChanged(nameof(WPFSoftwareRender));
+        OnPropertyChanged(nameof(DeveloperMode));
+        OnPropertyChanged(nameof(DebugDisableVersionPackageCleanup));
+        OnPropertyChanged(nameof(Channel));
+        OnPropertyChanged(nameof(SelectedChannelChangeMode));
+        OnPropertyChanged(nameof(SelectedDistributorType));
+        OnPropertyChanged(nameof(SelectedWebEnvironment));
+        OnPropertyChanged(nameof(RobloxDomain));
+        OnPropertyChanged(nameof(Locale));
+        OnPropertyChanged(nameof(ForceRobloxLanguage));
+        OnPropertyChanged(nameof(SelectedRobloxTheme));
+        OnPropertyChanged(nameof(EnableRobloxBackgroundApp));
+    }
+
     public async Task TestFastestCdnMirrorAsync()
     {
         if (IsTestingCdn) return;
@@ -356,6 +452,10 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     public void RefreshLocalizedProperties()
     {
         CdnTestResult = LocalizedFormatHelper.Format(_cdnTestResultKey, _cdnTestResultArgs);
+        if (!string.IsNullOrEmpty(_appUpdateStatusKey))
+        {
+            AppUpdateStatusText = LocalizedFormatHelper.Format(_appUpdateStatusKey, _appUpdateStatusArgs);
+        }
         OnPropertyChanged(nameof(InstalledPlayerVersion));
     }
 }

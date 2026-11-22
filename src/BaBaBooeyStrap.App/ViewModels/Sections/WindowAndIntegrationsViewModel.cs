@@ -286,6 +286,72 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
 
     public ObservableCollection<CustomIntegration> CustomIntegrations => _settings.CustomIntegrations;
 
+    public void AddCustomIntegration(CustomIntegration integration)
+    {
+        ArgumentNullException.ThrowIfNull(integration);
+        _settings.CustomIntegrations.Add(integration);
+        OnPropertyChanged(nameof(CustomIntegrations));
+    }
+
+    public void UpdateCustomIntegration(int index, CustomIntegration updated)
+    {
+        ArgumentNullException.ThrowIfNull(updated);
+        if (index < 0 || index >= _settings.CustomIntegrations.Count) return;
+        _settings.CustomIntegrations[index] = updated;
+        OnPropertyChanged(nameof(CustomIntegrations));
+    }
+
+    public bool RemoveCustomIntegration(CustomIntegration integration)
+    {
+        if (integration == null) return false;
+        bool removed = _settings.CustomIntegrations.Remove(integration);
+        if (removed)
+        {
+            OnPropertyChanged(nameof(CustomIntegrations));
+        }
+        return removed;
+    }
+
+    public void RefreshFromSettings()
+    {
+        OnPropertyChanged(nameof(CurrentTheme));
+        OnPropertyChanged(nameof(CurrentLanguage));
+        OnPropertyChanged(nameof(AcrylicBackgroundOpacity));
+        OnPropertyChanged(nameof(UseAcrylicBackground));
+        OnPropertyChanged(nameof(MinimizeToTray));
+        OnPropertyChanged(nameof(SelectedBootstrapperStyle));
+        OnPropertyChanged(nameof(BootstrapperTitle));
+        OnPropertyChanged(nameof(SelectedBootstrapperIcon));
+        OnPropertyChanged(nameof(IsCustomBootstrapperIconSelected));
+        OnPropertyChanged(nameof(BootstrapperIconCustomLocation));
+        OnPropertyChanged(nameof(SelectedRobloxIcon));
+        OnPropertyChanged(nameof(RobloxTitle));
+        OnPropertyChanged(nameof(RobloxIconCustomLocation));
+        OnPropertyChanged(nameof(SelectedCustomTheme));
+        OnPropertyChanged(nameof(EnableWindowManipulation));
+        OnPropertyChanged(nameof(FakeBorderlessFullscreen));
+        OnPropertyChanged(nameof(EnableActivityTracking));
+        OnPropertyChanged(nameof(UseDiscordRichPresence));
+        OnPropertyChanged(nameof(RichPresenceStatusDisplayType));
+        OnPropertyChanged(nameof(HideRPCButtons));
+        OnPropertyChanged(nameof(ShowAccountOnRichPresence));
+        OnPropertyChanged(nameof(ShowServerDetails));
+        OnPropertyChanged(nameof(EnableBetterMatchmaking));
+        OnPropertyChanged(nameof(EnableBetterMatchmakingRandomization));
+        OnPropertyChanged(nameof(SelectedCleanerOption));
+        OnPropertyChanged(nameof(CleanRobloxCache));
+        OnPropertyChanged(nameof(CleanRobloxStudioCache));
+        OnPropertyChanged(nameof(CleanRobloxLogs));
+        OnPropertyChanged(nameof(CleanBaBaBooeyStrapLogs));
+        OnPropertyChanged(nameof(CleanRobloxCrashDumps));
+        OnPropertyChanged(nameof(CustomIntegrations));
+
+        LocalizationService.Instance.ApplyLanguage(_settings.Language);
+        ThemeChanged?.Invoke(this, _settings.Theme);
+        RefreshCustomThemes();
+        RefreshCustomIconState();
+    }
+
     public void RefreshCustomThemes()
     {
         AvailableCustomThemes.Clear();

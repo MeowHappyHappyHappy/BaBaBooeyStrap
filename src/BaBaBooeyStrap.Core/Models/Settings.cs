@@ -22,6 +22,8 @@ public class Settings
 
     // Bootstrapper Behavior & Updates
     public bool CheckForUpdates { get; set; } = true;
+    public bool CheckAppUpdates { get; set; } = true;
+    public bool RunOnStartup { get; set; } = false;
     public bool ConfirmLaunches { get; set; } = true;
     public bool BackgroundUpdatesEnabled { get; set; } = false;
     public bool ForceLocalData { get; set; } = false;

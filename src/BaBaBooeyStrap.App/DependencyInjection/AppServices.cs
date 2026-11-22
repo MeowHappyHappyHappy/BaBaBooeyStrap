@@ -49,6 +49,7 @@ public sealed class AppServices : IDisposable
     public SingleInstanceIpc? Ipc { get; set; }
     public BootstrapperOrchestrator? Orchestrator { get; set; }
     public NotifyIconWrapper? TrayWrapper { get; set; }
+    public AppUpdateService? AppUpdateService { get; set; }
 
     public void Dispose()
     {

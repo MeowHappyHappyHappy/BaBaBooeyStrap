@@ -504,6 +504,9 @@ public sealed class Milestone5AppTests : IDisposable
         public Task<RobloxUserPresence> GetUserPresenceAsync(string cookie, long userId, CancellationToken ct = default) =>
             Task.FromResult(new RobloxUserPresence(userId, 2, 1818L, 1818L, "job-follow-1", 12345L, "Playing"));
 
+        public Task<RobloxGameInfo?> GetGameInfoByPlaceIdAsync(long placeId, CancellationToken ct = default) =>
+            Task.FromResult<RobloxGameInfo?>(new RobloxGameInfo(placeId, 12345L, $"Game {placeId}", null));
+
         public void Dispose() { }
     }
 
