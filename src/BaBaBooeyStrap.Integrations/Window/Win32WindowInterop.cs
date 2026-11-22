@@ -127,4 +127,35 @@ public sealed class Win32WindowInterop : IWin32WindowInterop
 
     public bool PostThreadMessage(uint idThread, uint msg, nint wParam, nint lParam) =>
         User32.PostThreadMessageW(idThread, msg, wParam, lParam);
+
+    public bool ShowWindow(nint hWnd, int nCmdShow) =>
+        User32.ShowWindow(hWnd, nCmdShow);
+
+    public bool IsZoomed(nint hWnd) =>
+        User32.IsZoomed(hWnd);
+
+    public nint GetForegroundWindow() =>
+        User32.GetForegroundWindow();
+
+    public bool SetForegroundWindow(nint hWnd) =>
+        User32.SetForegroundWindow(hWnd);
+
+    public bool BringWindowToTop(nint hWnd) =>
+        User32.BringWindowToTop(hWnd);
+
+    public bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach) =>
+        User32.AttachThreadInput(idAttach, idAttachTo, fAttach);
+
+    public bool AllowSetForegroundWindow(int dwProcessId) =>
+        User32.AllowSetForegroundWindow(dwProcessId);
+
+    public bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) =>
+        User32.PostMessageW(hWnd, msg, wParam, lParam);
+
+    public bool TryGetExtendedFrameBounds(nint hWnd, out User32.RECT rect) =>
+        Dwmapi.DwmGetWindowAttribute(
+            hWnd,
+            Dwmapi.DWMWA_EXTENDED_FRAME_BOUNDS,
+            out rect,
+            Marshal.SizeOf<User32.RECT>()) == 0;
 }

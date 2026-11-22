@@ -123,7 +123,24 @@
                                    Margin="0,0,8,0"
                                    Click="ImportMultiRoblox_Click"/>
                         <ui:Button Content="{DynamicResource Str_Accounts_RefreshStatus}"
+                                   Margin="0,0,8,0"
                                    Click="RefreshStatus_Click"/>
+                        <ui:Button Content="{DynamicResource Str_Accounts_OpenQuickSwitcher}"
+                                   ToolTip="{DynamicResource Str_Accounts_OpenQuickSwitcherTip}"
+                                   Margin="0,0,6,0"
+                                   Click="QuickSwitcher_Click"/>
+                        <ui:Button Content="{DynamicResource Str_Accounts_ToggleFloatingBar}"
+                                   ToolTip="{DynamicResource Str_Accounts_ToggleFloatingBarTip}"
+                                   Margin="0,0,6,0"
+                                   Click="ToggleFloatingBar_Click"/>
+                        <ui:Button x:Name="TileWindowsButton"
+                                   Content="{DynamicResource Str_Accounts_TileWindowsMenu}"
+                                   ToolTip="{DynamicResource Str_Accounts_TileWindowsTip}"
+                                   Margin="0,0,6,0"
+                                   Click="TileMenu_Click"/>
+                        <ui:Button Content="{DynamicResource Str_Accounts_SwitcherSettings}"
+                                   ToolTip="{DynamicResource Str_Accounts_SwitcherSettingsTip}"
+                                   Click="SwitcherSettings_Click"/>
                     </StackPanel>
                 </WrapPanel>
             </StackPanel>
@@ -146,6 +163,7 @@
                     BorderThickness="1">
                 <Grid>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
@@ -218,9 +236,90 @@
                                 Text="{Binding AccountManagement.AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Margin="0,0,0,8"/>
 
+                    <!-- Running Roblox Windows Strip -->
+                    <Border Grid.Row="2"
+                            Visibility="{Binding AccountManagement.HasRunningInstances, Converter={StaticResource BoolToVisibilityConverter}}"
+                            CornerRadius="6"
+                            Padding="10,8"
+                            Margin="0,0,0,8"
+                            Background="{DynamicResource ControlFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <TextBlock Text="{DynamicResource Str_Accounts_RunningWindowsHeader}"
+                                           FontSize="12.5"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                                <ui:Button DockPanel.Dock="Right"
+                                           HorizontalAlignment="Right"
+                                           Content="{DynamicResource Str_Tray_MinimizeAllWindows}"
+                                           Padding="8,2"
+                                           FontSize="11.5"
+                                           Click="MinimizeAllRunning_Click"/>
+                            </DockPanel>
+                            <ItemsControl ItemsSource="{Binding AccountManagement.RunningInstances}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel Orientation="Horizontal"/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="6"
+                                                Margin="0,0,6,4"
+                                                Padding="4,3"
+                                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                                BorderThickness="1">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                                            <Setter Property="BorderBrush" Value="#FF3B82F6"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <ui:Button Tag="{Binding ProcessId}"
+                                                           Padding="7,3"
+                                                           Margin="0,0,4,0"
+                                                           Click="RunningInstancePill_Click">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding ShortLabel}" FontWeight="SemiBold" FontSize="12"/>
+                                                        <TextBlock Text="{Binding MonitorBadge}" FontSize="11" Opacity="0.72" Margin="6,0,0,0"/>
+                                                    </StackPanel>
+                                                </ui:Button>
+                                                <ui:Button Content="⇄"
+                                                           ToolTip="{DynamicResource Str_Switcher_MoveToMonitor}"
+                                                           IsEnabled="{Binding DataContext.AccountManagement.HasMultipleMonitors, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                           Tag="{Binding ProcessId}"
+                                                           Padding="6,3"
+                                                           Margin="0,0,2,0"
+                                                           Click="RunningInstanceMoveMonitor_Click"/>
+                                                <ui:Button Content="—"
+                                                           ToolTip="{DynamicResource Str_Switcher_MinimizeRestoreTip}"
+                                                           Tag="{Binding ProcessId}"
+                                                           Padding="6,3"
+                                                           Margin="0,0,2,0"
+                                                           Click="RunningInstanceMinimize_Click"/>
+                                                <ui:Button Content="✕"
+                                                           ToolTip="{DynamicResource Str_Switcher_CloseWindowTip}"
+                                                           Tag="{Binding ProcessId}"
+                                                           Padding="6,3"
+                                                           Click="RunningInstanceClose_Click"/>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
                     <!-- Accounts Grid -->
                     <ui:DataGrid x:Name="AccountsGrid"
-                                 Grid.Row="2"
+                                 Grid.Row="3"
                                  ItemsSource="{Binding AccountManagement.FilteredAccountItems}"
                                  SelectedItem="{Binding AccountManagement.SelectedAccountItem, Mode=TwoWay}"
                                  AutoGenerateColumns="False"

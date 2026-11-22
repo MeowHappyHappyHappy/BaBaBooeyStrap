@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
+using System.Windows;
 using System.Windows.Data;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Bootstrapper.Settings;
@@ -12,6 +13,7 @@ using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Roblox;
 using BaBaBooeyStrap.Core.Storage;
+using BaBaBooeyStrap.Integrations.Window;
 using BaBaBooeyStrap.MultiInstance;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
 
@@ -36,6 +38,7 @@ public sealed class AccountsViewModel : ViewModelBase
     private readonly TimeSpan _settingsApplySettleDelay;
     private readonly IJsonManager<State>? _stateManager;
     private readonly IRobloxAuthService? _injectedAuthService;
+    private readonly WindowSwitcherCoordinator? _switcherCoordinator;
     private readonly Action<string, object?[]> _setLocalizedStatus;
     private readonly StringBuilder _activityLogBuilder = new();
     private readonly ConcurrentDictionary<long, RobloxGameInfo?> _gameInfoCache = new();
@@ -90,7 +93,8 @@ public sealed class AccountsViewModel : ViewModelBase
         Action<string, object?[]> setLocalizedStatus,
         IRobloxAuthService? authService = null,
         IGlobalSettingsGuard? globalSettingsGuard = null,
-        TimeSpan? settingsApplySettleDelay = null)
+        TimeSpan? settingsApplySettleDelay = null,
+        WindowSwitcherCoordinator? switcherCoordinator = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -104,19 +108,32 @@ public sealed class AccountsViewModel : ViewModelBase
         _settingsApplySettleDelay = settingsApplySettleDelay ?? TimeSpan.FromMilliseconds(1200);
         _stateManager = stateManager;
         _injectedAuthService = authService;
+        _switcherCoordinator = switcherCoordinator;
         _setLocalizedStatus = setLocalizedStatus ?? throw new ArgumentNullException(nameof(setLocalizedStatus));
 
         FilteredAccountItems = CollectionViewSource.GetDefaultView(AccountItems);
         FilteredAccountItems.Filter = FilterAccountItem;
+
+        if (_switcherCoordinator != null)
+        {
+            _switcherCoordinator.InstancesChanged += (_, instances) => UpdateRunningInstancesOnDispatcher(instances);
+        }
 
         ReloadAccounts();
         ReloadSavedTargets();
         RestoreSavedTargetState();
         RefreshProtocolStatus();
         RefreshMultiInstanceStatus();
+        RefreshRunningInstances();
     }
 
     public TimeSpan WindowWaitTimeout { get; set; } = ProcessSupervisor.DefaultWindowWaitTimeout;
+
+    public WindowSwitcherCoordinator? SwitcherCoordinator => _switcherCoordinator;
+    public ObservableCollection<RunningRobloxInstance> RunningInstances { get; } = new();
+    public bool HasRunningInstances => RunningInstances.Count > 0;
+    public IReadOnlyList<MonitorInfo> AvailableMonitors => _switcherCoordinator?.GetMonitors() ?? Array.Empty<MonitorInfo>();
+    public bool HasMultipleMonitors => AvailableMonitors.Count > 1;
 
     public ObservableCollection<RobloxAccount> Accounts { get; } = new();
     public ObservableCollection<AccountItem> AccountItems { get; } = new();
@@ -1834,5 +1851,53 @@ public sealed class AccountsViewModel : ViewModelBase
             status.WaitingForMutex,
             pidsText,
             errorPart);
+    }
+
+    public void RefreshRunningInstances()
+    {
+        if (_switcherCoordinator == null) return;
+        _switcherCoordinator.Tracker.RefreshNow();
+        UpdateRunningInstancesOnDispatcher(_switcherCoordinator.GetRunningInstances());
+    }
+
+    public void ShowQuickSwitcher() => _switcherCoordinator?.ShowQuickSwitcher();
+    public void ToggleFloatingBar() => _switcherCoordinator?.ToggleFloatingBar();
+    public void FocusRunningInstance(int pid) => _switcherCoordinator?.FocusProcess(pid);
+    public void MoveRunningInstanceToMonitor(int pid, string deviceName) => _switcherCoordinator?.MoveProcessToMonitor(pid, deviceName);
+    public void MoveRunningInstanceToNextMonitor(int pid) => _switcherCoordinator?.MoveProcessToNextMonitor(pid);
+    public void ToggleMinimizeRunningInstance(int pid) => _switcherCoordinator?.ToggleMinimizeProcess(pid);
+    public void CloseRunningInstance(int pid) => _switcherCoordinator?.CloseProcess(pid);
+    public void MinimizeAllRunningInstances() => _switcherCoordinator?.MinimizeAll();
+
+    public void TileRunningWindows(WindowTilingMode? mode = null, string? monitorDevice = null)
+    {
+        if (_switcherCoordinator == null) return;
+        int count = _switcherCoordinator.TileInstances(mode, monitorDevice);
+        _setLocalizedStatus("Str_Accounts_StatusTiledFormat", [count]);
+    }
+
+    private void UpdateRunningInstancesOnDispatcher(IReadOnlyList<RunningRobloxInstance> instances)
+    {
+        void Apply()
+        {
+            RunningInstances.Clear();
+            foreach (var inst in instances)
+            {
+                RunningInstances.Add(inst);
+            }
+            OnPropertyChanged(nameof(HasRunningInstances));
+            OnPropertyChanged(nameof(AvailableMonitors));
+            OnPropertyChanged(nameof(HasMultipleMonitors));
+        }
+
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(Apply);
+        }
+        else
+        {
+            Apply();
+        }
     }
 }

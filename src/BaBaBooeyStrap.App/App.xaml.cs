@@ -112,6 +112,9 @@ public partial class App : Application
                 appSettings.BootstrapperIcon,
                 appSettings.BootstrapperIconCustomLocation);
 
+            var switcherCoordinator = AppServiceConfiguration.CreateWindowSwitcherCoordinator(_services);
+            switcherCoordinator.Initialize();
+
             // 5. Route initial CLI command
             await RouteCliCommandAsync(launchSettings);
         }

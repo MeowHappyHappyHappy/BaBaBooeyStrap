@@ -1,0 +1,241 @@
+<ui:FluentWindow x:Class="BaBaBooeyStrap.App.Views.Dialogs.WindowSwitcherSettingsDialog"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="{DynamicResource Str_SwitcherSettings_Title}"
+                 Width="620"
+                 Height="660"
+                 MinWidth="540"
+                 MinHeight="520"
+                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                 WindowStartupLocation="CenterOwner"
+                 ResizeMode="CanResizeWithGrip"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="Mica">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="{DynamicResource Str_SwitcherSettings_Title}"/>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+            <StackPanel>
+                <!-- 1. Window Title Tagging -->
+                <Border CornerRadius="8"
+                        Padding="14,12"
+                        Margin="0,0,0,12"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_TitleSection}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,8"/>
+
+                        <DockPanel Margin="0,0,0,10">
+                            <StackPanel>
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_AutoTagTitle}" FontWeight="SemiBold"/>
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_AutoTagDesc}"
+                                           FontSize="11.5"
+                                           Opacity="0.72"
+                                           TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <ui:ToggleSwitch x:Name="AutoTagToggle" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                        </DockPanel>
+
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_TemplateLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                        <ui:TextBox x:Name="TitleTemplateBox"
+                                    TextChanged="TitleTemplateBox_TextChanged"
+                                    Margin="0,0,0,6"/>
+
+                        <Border CornerRadius="6"
+                                Padding="8,6"
+                                Margin="0,0,0,6"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}">
+                            <TextBlock x:Name="TitlePreviewText" FontSize="12" FontWeight="SemiBold"/>
+                        </Border>
+
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_PlaceholdersHint}"
+                                   FontSize="11.5"
+                                   Opacity="0.7"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 2. Global Hotkeys -->
+                <Border CornerRadius="8"
+                        Padding="14,12"
+                        Margin="0,0,0,12"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeySection}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,4"/>
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeyHint}"
+                                   FontSize="11.5"
+                                   Opacity="0.72"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,10"/>
+
+                        <!-- Quick Switcher Hotkey -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="QuickHotkeyEnabledCheck" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeyQuickLabel}" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="QuickHotkeyStatusText" FontSize="11" Opacity="0.75"/>
+                            </StackPanel>
+                            <ui:TextBox x:Name="QuickHotkeyBox"
+                                        Grid.Column="2"
+                                        IsReadOnly="True"
+                                        PreviewKeyDown="QuickHotkeyBox_PreviewKeyDown"
+                                        Margin="0,0,6,0"/>
+                            <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Reset}" Click="ResetQuickHotkey_Click"/>
+                        </Grid>
+
+                        <!-- Cycle Next Hotkey -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CycleHotkeyEnabledCheck" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeyCycleLabel}" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="CycleHotkeyStatusText" FontSize="11" Opacity="0.75"/>
+                            </StackPanel>
+                            <ui:TextBox x:Name="CycleHotkeyBox"
+                                        Grid.Column="2"
+                                        IsReadOnly="True"
+                                        PreviewKeyDown="CycleHotkeyBox_PreviewKeyDown"
+                                        Margin="0,0,6,0"/>
+                            <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Reset}" Click="ResetCycleHotkey_Click"/>
+                        </Grid>
+
+                        <!-- Direct Slots Modifier -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="DirectSlotsEnabledCheck" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeyDirectLabel}" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="DirectSlotsStatusText" FontSize="11" Opacity="0.75"/>
+                            </StackPanel>
+                            <ui:TextBox x:Name="DirectSlotModifierBox"
+                                        Grid.Column="2"
+                                        IsReadOnly="True"
+                                        PreviewKeyDown="DirectSlotModifierBox_PreviewKeyDown"
+                                        Margin="0,0,6,0"/>
+                            <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Reset}" Click="ResetDirectSlots_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 3. Floating Switcher Bar -->
+                <Border CornerRadius="8"
+                        Padding="14,12"
+                        Margin="0,0,0,12"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingSection}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,8"/>
+
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingEnabled}" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="FloatingBarEnabledToggle" HorizontalAlignment="Right"/>
+                        </DockPanel>
+
+                        <DockPanel Margin="0,0,0,10">
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingAutoShow}" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="FloatingBarAutoShowToggle" HorizontalAlignment="Right"/>
+                        </DockPanel>
+
+                        <ui:Button Content="{DynamicResource Str_SwitcherSettings_ResetFloatingPos}"
+                                   HorizontalAlignment="Left"
+                                   Click="ResetFloatingBarPos_Click"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. Multi-Monitor Window Tiling -->
+                <Border CornerRadius="8"
+                        Padding="14,12"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="{DynamicResource Str_SwitcherSettings_TilingSection}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   Margin="0,0,0,10"/>
+
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="210"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_DefaultTilingMode}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="TilingModeCombo" Grid.Column="1"/>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="210"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_PreferredMonitor}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="PreferredMonitorCombo" Grid.Column="1"/>
+                        </Grid>
+
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="210"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_MainSidePrimaryMonitor}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="MainMonitorCombo" Grid.Column="1"/>
+                        </Grid>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="210"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_MainSideSecondaryMonitor}" VerticalAlignment="Center"/>
+                            <ComboBox x:Name="SideMonitorCombo" Grid.Column="1"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <ui:Button Content="{DynamicResource Str_Common_Cancel}" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <ui:Button Content="{DynamicResource Str_Common_Save}" Appearance="Primary" Click="Save_Click" MinWidth="100"/>
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

@@ -45,6 +45,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
     private readonly IRobloxAuthService _authService;
     private readonly IRoValraService _roValraService;
     private readonly ICustomIntegrationRunner _customIntegrationRunner;
+    private readonly IRunningInstanceTracker? _runningInstanceTracker;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -71,7 +72,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         IRoValraService? roValraService = null,
         IEnumerable<IBootstrapPipelineStep>? pipelineSteps = null,
         HttpClient? httpClient = null,
-        ICustomIntegrationRunner? customIntegrationRunner = null)
+        ICustomIntegrationRunner? customIntegrationRunner = null,
+        IRunningInstanceTracker? runningInstanceTracker = null)
     {
         _paths = paths ?? Paths.Current;
         _settingsManager = settingsManager ?? new JsonManager<Settings>(_paths.SettingsFile);
@@ -86,6 +88,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _roValraService = roValraService ?? new RoValraService(_httpClient, logger: _logger);
         _customIntegrationRunner = customIntegrationRunner ?? new CustomIntegrationRunner(_logger);
+        _runningInstanceTracker = runningInstanceTracker;
         _pipelineSteps = pipelineSteps?.ToList()
             ?? AppServiceConfiguration.CreateDefaultBootstrapPipeline(
                 _paths,
@@ -98,6 +101,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
     public IMultiInstanceController MultiInstanceController => _multiInstanceController;
     public IProcessSupervisor ProcessSupervisor => _processSupervisor;
+    public IRunningInstanceTracker? RunningInstanceTracker => _runningInstanceTracker;
 
     public IReadOnlyList<ActiveServerSessionInfo> GetActiveServers() =>
         _activeServers.Values.OrderBy(s => s.JoinedAtUtc).ToList();
@@ -148,7 +152,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         bool skipDeploymentCheck,
         string? accountUsername,
         CancellationToken ct = default,
-        Func<LaunchSettings, CancellationToken, Task<(LaunchSettings? PreparedSettings, LaunchResult? Failure)>>? preSpawnSettingsBuilder = null)
+        Func<LaunchSettings, CancellationToken, Task<(LaunchSettings? PreparedSettings, LaunchResult? Failure)>>? preSpawnSettingsBuilder = null,
+        RobloxAccount? launchedAccount = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ct.ThrowIfCancellationRequested();
@@ -299,6 +304,14 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             int pid = result.ProcessId.Value;
             _processSupervisor.RegisterProcess(pid);
             _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
+            if (launchedAccount != null)
+            {
+                _runningInstanceTracker?.RegisterLaunchedAccount(pid, launchedAccount);
+            }
+            else
+            {
+                _runningInstanceTracker?.RefreshNow();
+            }
 
             try
             {
@@ -582,7 +595,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 preparedSettings.RobloxLaunchArgs = builder.BuildProtocolUri();
                 preparedSettings.RobloxLaunchMode = LaunchMode.Player;
                 return (preparedSettings, null);
-            }).ConfigureAwait(false);
+            },
+            launchedAccount: account).ConfigureAwait(false);
 
         if (result.Success)
         {
@@ -640,6 +654,17 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 }, _logger)
                 : null;
 
+            IReadOnlyDictionary<string, string>? titlePlaceholders = _runningInstanceTracker?.GetPlaceholdersForPid(pid);
+            if (titlePlaceholders == null && !string.IsNullOrWhiteSpace(accountUsername))
+            {
+                titlePlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Account"] = accountUsername,
+                    ["AccountName"] = accountUsername,
+                    ["Pid"] = pid.ToString()
+                };
+            }
+
             IWindowManipulation? windowManip = appSettings.EnableWindowManipulation
                 ? new WindowManipulationService(
                     new Win32WindowInterop(),
@@ -647,15 +672,34 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                     {
                         TargetProcessId = (uint)pid,
                         CustomTitleTemplate = appSettings.RobloxTitle,
+                        TitlePlaceholders = titlePlaceholders,
                         CustomIconPath = appSettings.RobloxIcon == RobloxIcon.IconCustom ? appSettings.RobloxIconCustomLocation : null,
                         BorderlessFullscreen = appSettings.FakeBorderlessFullscreen
                     },
                     _logger)
                 : null;
 
+            if (windowManip != null)
+            {
+                _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
+            }
+
             activityWatcher.GameJoined += async (_, joinArgs) =>
             {
-                await HandleGameJoinedAsync(pid, accountUsername, joinArgs, appSettings, discordRpc).ConfigureAwait(false);
+                string? effectiveUsername = accountUsername;
+                if (_runningInstanceTracker != null &&
+                    long.TryParse(activityWatcher.CurrentActivity?.UserId, out long parsedUserId) &&
+                    parsedUserId > 0)
+                {
+                    _runningInstanceTracker.TryAssociateUserId(pid, parsedUserId);
+                    if (string.IsNullOrWhiteSpace(effectiveUsername))
+                    {
+                        effectiveUsername = _runningInstanceTracker.GetRunningInstances()
+                            .FirstOrDefault(i => i.ProcessId == pid)?.Username;
+                    }
+                }
+
+                await HandleGameJoinedAsync(pid, effectiveUsername, joinArgs, appSettings, discordRpc).ConfigureAwait(false);
             };
 
             activityWatcher.GameLeft += async (_, _) =>
@@ -681,6 +725,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 finally
                 {
                     _processSupervisor.UnregisterProcess(pid);
+                    _runningInstanceTracker?.MarkTitleManagedExternally(pid, false);
+                    _runningInstanceTracker?.RefreshNow();
                     _customIntegrationRunner.CloseIntegrationsForPid(pid);
                     _activeSessionWatchers.TryRemove(pid, out _);
                     if (_activeServers.TryRemove(pid, out _))

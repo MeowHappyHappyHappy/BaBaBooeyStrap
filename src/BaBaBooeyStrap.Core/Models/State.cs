@@ -17,6 +17,10 @@ public class State
     public string LastTargetName { get; set; } = string.Empty;
     public string LastTargetInput { get; set; } = string.Empty;
     public string LastJobId { get; set; } = string.Empty;
+    public string? FloatingBarMonitorDevice { get; set; }
+    public double? FloatingBarLeft { get; set; }
+    public double? FloatingBarTop { get; set; }
+    public bool FloatingBarCollapsed { get; set; }
 
     // Deprecated migration getters
     public AppState? Player { private get; set; }

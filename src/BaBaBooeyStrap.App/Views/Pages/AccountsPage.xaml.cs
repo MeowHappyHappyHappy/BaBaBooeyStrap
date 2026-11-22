@@ -8,6 +8,7 @@ using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.ViewModels.Sections;
 using BaBaBooeyStrap.App.Views.Dialogs;
 using BaBaBooeyStrap.Core.Logging;
+using BaBaBooeyStrap.Core.Models.Enums;
 
 namespace BaBaBooeyStrap.App.Views.Pages;
 
@@ -41,6 +42,7 @@ public partial class AccountsPage : Page
         AttachViewModelEvents(ViewModel?.AccountManagement);
         ViewModel?.AccountManagement.RefreshProtocolStatus();
         ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
+        ViewModel?.AccountManagement.RefreshRunningInstances();
         _statusTimer.Start();
         LogTextBox.ScrollToEnd();
     }
@@ -93,6 +95,117 @@ public partial class AccountsPage : Page
     {
         ViewModel?.AccountManagement.RefreshProtocolStatus();
         ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
+        ViewModel?.AccountManagement.RefreshRunningInstances();
+    }
+
+    private void QuickSwitcher_Click(object sender, RoutedEventArgs e) =>
+        ViewModel?.AccountManagement.ShowQuickSwitcher();
+
+    private void ToggleFloatingBar_Click(object sender, RoutedEventArgs e) =>
+        ViewModel?.AccountManagement.ToggleFloatingBar();
+
+    private void TileMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        var monitors = ViewModel.AccountManagement.AvailableMonitors;
+
+        var menu = new ContextMenu();
+        if (monitors.Count <= 1)
+        {
+            var grid = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
+            grid.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid);
+            menu.Items.Add(grid);
+        }
+        else
+        {
+            var gridSub = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
+            var autoItem = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MonitorCursorAuto") };
+            autoItem.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, null);
+            gridSub.Items.Add(autoItem);
+            gridSub.Items.Add(new Separator());
+            foreach (var mon in monitors)
+            {
+                var captured = mon;
+                var mItem = new MenuItem { Header = mon.DisplayLabel };
+                mItem.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, captured.DeviceName);
+                gridSub.Items.Add(mItem);
+            }
+            menu.Items.Add(gridSub);
+
+            var spread = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors") };
+            spread.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SpreadAcrossMonitors);
+            menu.Items.Add(spread);
+
+            var mainSide = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MainAndSide") };
+            mainSide.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.MainAndSide);
+            menu.Items.Add(mainSide);
+        }
+
+        menu.PlacementTarget = TileWindowsButton;
+        menu.IsOpen = true;
+    }
+
+    private void SwitcherSettings_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        var dlg = new WindowSwitcherSettingsDialog(
+            ViewModel.Settings,
+            ViewModel.AccountManagement.SwitcherCoordinator,
+            ViewModel.SettingsManager)
+        {
+            Owner = Window.GetWindow(this)
+        };
+        dlg.ShowDialog();
+    }
+
+    private void MinimizeAllRunning_Click(object sender, RoutedEventArgs e) =>
+        ViewModel?.AccountManagement.MinimizeAllRunningInstances();
+
+    private void RunningInstancePill_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: int pid })
+        {
+            ViewModel?.AccountManagement.FocusRunningInstance(pid);
+        }
+    }
+
+    private void RunningInstanceMoveMonitor_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null || sender is not FrameworkElement { Tag: int pid } el) return;
+        var monitors = ViewModel.AccountManagement.AvailableMonitors;
+        if (monitors.Count <= 1) return;
+
+        var instance = ViewModel.AccountManagement.RunningInstances.FirstOrDefault(i => i.ProcessId == pid);
+        var menu = new ContextMenu();
+        foreach (var mon in monitors)
+        {
+            var captured = mon;
+            var item = new MenuItem
+            {
+                Header = mon.DisplayLabel,
+                IsChecked = instance != null && string.Equals(mon.DeviceName, instance.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)
+            };
+            item.Click += (_, _) => ViewModel.AccountManagement.MoveRunningInstanceToMonitor(pid, captured.DeviceName);
+            menu.Items.Add(item);
+        }
+        menu.PlacementTarget = el;
+        menu.IsOpen = true;
+    }
+
+    private void RunningInstanceMinimize_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: int pid })
+        {
+            ViewModel?.AccountManagement.ToggleMinimizeRunningInstance(pid);
+        }
+    }
+
+    private void RunningInstanceClose_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: int pid })
+        {
+            ViewModel?.AccountManagement.CloseRunningInstance(pid);
+        }
     }
 
     private void ImportMultiRoblox_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ImportFromMultiRoblox();

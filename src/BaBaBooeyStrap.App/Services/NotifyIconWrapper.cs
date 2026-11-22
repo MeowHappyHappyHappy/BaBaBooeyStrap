@@ -8,6 +8,7 @@ using BaBaBooeyStrap.App.Views.Dialogs;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Integrations.Matchmaking;
+using BaBaBooeyStrap.Integrations.Window;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
 using WinForms = System.Windows.Forms;
 using Drawing = System.Drawing;
@@ -28,6 +29,12 @@ public sealed class NotifyIconWrapper : IDisposable
     private readonly Func<IReadOnlyList<RobloxAccount>>? _getAccounts;
     private readonly Func<IReadOnlyList<SavedJoinTarget>>? _getSavedTargets;
     private readonly Action<RobloxAccount, SavedJoinTarget?>? _onQuickLaunchAccount;
+    private readonly Func<IReadOnlyList<RunningRobloxInstance>>? _getRunningInstances;
+    private readonly Action<int>? _onFocusRunningInstance;
+    private readonly Action? _onMinimizeAllInstances;
+    private readonly Action<WindowTilingMode>? _onTileRunningInstances;
+    private readonly Action? _onToggleFloatingBar;
+    private readonly Func<bool>? _isFloatingBarVisible;
     private Dispatcher? _uiDispatcher;
 
     private WinForms.NotifyIcon? _notifyIcon;
@@ -35,6 +42,9 @@ public sealed class NotifyIconWrapper : IDisposable
     private WinForms.ToolStripMenuItem? _settingsMenuItem;
     private WinForms.ToolStripMenuItem? _launchMenuItem;
     private WinForms.ToolStripMenuItem? _quickLaunchMenuItem;
+    private WinForms.ToolStripMenuItem? _runningWindowsMenuItem;
+    private WinForms.ToolStripMenuItem? _tileWindowsMenuItem;
+    private WinForms.ToolStripMenuItem? _floatingBarMenuItem;
     private WinForms.ToolStripMenuItem? _multiInstanceMenuItem;
     private WinForms.ToolStripMenuItem? _serverLocationMenuItem;
     private WinForms.ToolStripMenuItem? _exitMenuItem;
@@ -58,9 +68,20 @@ public sealed class NotifyIconWrapper : IDisposable
     public string? LastTooltipText { get; private set; }
     public IReadOnlyList<string> LastServerLocationSubItems { get; private set; } = Array.Empty<string>();
     public IReadOnlyList<string> LastQuickLaunchAccountNames { get; private set; } = Array.Empty<string>();
+    public IReadOnlyList<string> LastRunningWindowLabels { get; private set; } = Array.Empty<string>();
 
     public IReadOnlyList<string> ContextMenuActions { get; } =
-        ["Settings", "Launch Roblox", "Quick Launch", "Multi-Instance Status", "Server Location", "Exit"];
+        [
+            "Settings",
+            "Launch Roblox",
+            "Quick Launch",
+            "Running Windows",
+            "Tile Windows",
+            "Toggle Floating Bar",
+            "Multi-Instance Status",
+            "Server Location",
+            "Exit"
+        ];
 
     public NotifyIconWrapper(
         bool headlessMode = false,
@@ -72,7 +93,13 @@ public sealed class NotifyIconWrapper : IDisposable
         Func<IReadOnlyList<ActiveServerSessionInfo>>? getActiveServers = null,
         Func<IReadOnlyList<RobloxAccount>>? getAccounts = null,
         Func<IReadOnlyList<SavedJoinTarget>>? getSavedTargets = null,
-        Action<RobloxAccount, SavedJoinTarget?>? onQuickLaunchAccount = null)
+        Action<RobloxAccount, SavedJoinTarget?>? onQuickLaunchAccount = null,
+        Func<IReadOnlyList<RunningRobloxInstance>>? getRunningInstances = null,
+        Action<int>? onFocusRunningInstance = null,
+        Action? onMinimizeAllInstances = null,
+        Action<WindowTilingMode>? onTileRunningInstances = null,
+        Action? onToggleFloatingBar = null,
+        Func<bool>? isFloatingBarVisible = null)
     {
         _headlessMode = headlessMode;
         _onOpenSettings = onOpenSettings;
@@ -84,6 +111,12 @@ public sealed class NotifyIconWrapper : IDisposable
         _getAccounts = getAccounts;
         _getSavedTargets = getSavedTargets;
         _onQuickLaunchAccount = onQuickLaunchAccount;
+        _getRunningInstances = getRunningInstances;
+        _onFocusRunningInstance = onFocusRunningInstance;
+        _onMinimizeAllInstances = onMinimizeAllInstances;
+        _onTileRunningInstances = onTileRunningInstances;
+        _onToggleFloatingBar = onToggleFloatingBar;
+        _isFloatingBarVisible = isFloatingBarVisible;
         _uiDispatcher = Application.Current?.Dispatcher ?? Dispatcher.FromThread(Thread.CurrentThread);
 
         LocalizationService.Instance.LanguageChanged += OnLanguageChanged;
@@ -101,12 +134,14 @@ public sealed class NotifyIconWrapper : IDisposable
         {
             RefreshServerLocationStatus();
             RefreshQuickLaunchMenu();
+            RefreshRunningInstancesMenu();
             return;
         }
 
         CreateOrRecreateWinFormsIcon(iconKind, customIconPath);
         EnsureTaskbarCreatedHook();
         RefreshServerLocationStatus();
+        RefreshRunningInstancesMenu();
         TriggerAsyncQuickLaunchCacheRefresh();
     }
 
@@ -289,6 +324,7 @@ public sealed class NotifyIconWrapper : IDisposable
         {
             RefreshServerLocationStatus();
             RefreshQuickLaunchMenu();
+            RefreshRunningInstancesMenu();
             return;
         }
 
@@ -299,6 +335,8 @@ public sealed class NotifyIconWrapper : IDisposable
             _launchMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_LaunchRoblox");
 
         RefreshQuickLaunchMenu();
+        RefreshRunningInstancesMenu();
+        RefreshTileAndFloatingBarMenuItems();
 
         if (_multiInstanceMenuItem != null)
         {
@@ -310,6 +348,113 @@ public sealed class NotifyIconWrapper : IDisposable
 
         if (_exitMenuItem != null)
             _exitMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_Exit");
+    }
+
+    public void RefreshRunningInstancesMenu()
+    {
+        if (_disposed) return;
+
+        IReadOnlyList<RunningRobloxInstance> instances;
+        try
+        {
+            instances = _getRunningInstances?.Invoke() ?? Array.Empty<RunningRobloxInstance>();
+        }
+        catch
+        {
+            instances = Array.Empty<RunningRobloxInstance>();
+        }
+
+        LastRunningWindowLabels = instances
+            .Select(i => $"#{i.SlotIndex} {i.EffectiveLabel} [{i.MonitorBadge}]")
+            .ToList();
+
+        if (_headlessMode) return;
+
+        var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
+        if (dispatcher != null && !dispatcher.CheckAccess())
+        {
+            try { dispatcher.BeginInvoke(new Action(RefreshRunningInstancesMenu)); } catch { }
+            return;
+        }
+
+        if (_runningWindowsMenuItem == null) return;
+
+        _runningWindowsMenuItem.Text = LocalizationService.Instance.Format(
+            "Str_Tray_RunningWindowsFormat",
+            instances.Count);
+        ClearDropDownItems(_runningWindowsMenuItem);
+
+        if (instances.Count == 0)
+        {
+            var emptyItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tray_RunningWindowsEmpty"))
+            {
+                Enabled = false
+            };
+            _runningWindowsMenuItem.DropDownItems.Add(emptyItem);
+            return;
+        }
+
+        foreach (var inst in instances)
+        {
+            int capturedPid = inst.ProcessId;
+            string minSuffix = inst.IsMinimized
+                ? $" ({LocalizationService.Instance.GetString("Str_QuickSwitcher_MinimizedState")})"
+                : string.Empty;
+            string label = $"#{inst.SlotIndex} {inst.EffectiveLabel} [{inst.MonitorBadge}]{minSuffix}";
+
+            var winItem = new WinForms.ToolStripMenuItem(
+                label,
+                null,
+                (_, _) => InvokeOnUiDispatcher(() => _onFocusRunningInstance?.Invoke(capturedPid)))
+            {
+                Checked = inst.IsFocused
+            };
+            _runningWindowsMenuItem.DropDownItems.Add(winItem);
+        }
+
+        _runningWindowsMenuItem.DropDownItems.Add(new WinForms.ToolStripSeparator());
+        var minAllItem = new WinForms.ToolStripMenuItem(
+            LocalizationService.Instance.GetString("Str_Tray_MinimizeAllWindows"),
+            null,
+            (_, _) => InvokeOnUiDispatcher(_onMinimizeAllInstances));
+        _runningWindowsMenuItem.DropDownItems.Add(minAllItem);
+    }
+
+    private void RefreshTileAndFloatingBarMenuItems()
+    {
+        if (_headlessMode || _disposed) return;
+
+        if (_tileWindowsMenuItem != null)
+        {
+            _tileWindowsMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_TileWindows");
+            ClearDropDownItems(_tileWindowsMenuItem);
+
+            var gridItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid"),
+                null,
+                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SingleMonitorGrid)));
+            var spreadItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors"),
+                null,
+                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SpreadAcrossMonitors)));
+            var mainSideItem = new WinForms.ToolStripMenuItem(
+                LocalizationService.Instance.GetString("Str_Tiling_MainAndSide"),
+                null,
+                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.MainAndSide)));
+
+            _tileWindowsMenuItem.DropDownItems.Add(gridItem);
+            _tileWindowsMenuItem.DropDownItems.Add(spreadItem);
+            _tileWindowsMenuItem.DropDownItems.Add(mainSideItem);
+        }
+
+        if (_floatingBarMenuItem != null)
+        {
+            bool visible = false;
+            try { visible = _isFloatingBarVisible?.Invoke() == true; } catch { }
+            _floatingBarMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_ToggleFloatingBar");
+            _floatingBarMenuItem.Checked = visible;
+        }
     }
 
     public void RefreshQuickLaunchMenu()
@@ -832,6 +977,17 @@ public sealed class NotifyIconWrapper : IDisposable
         _quickLaunchMenuItem = new WinForms.ToolStripMenuItem(
             LocalizationService.Instance.GetString("Str_Tray_QuickLaunch"));
 
+        _runningWindowsMenuItem = new WinForms.ToolStripMenuItem(
+            LocalizationService.Instance.Format("Str_Tray_RunningWindowsFormat", 0));
+
+        _tileWindowsMenuItem = new WinForms.ToolStripMenuItem(
+            LocalizationService.Instance.GetString("Str_Tray_TileWindows"));
+
+        _floatingBarMenuItem = new WinForms.ToolStripMenuItem(
+            LocalizationService.Instance.GetString("Str_Tray_ToggleFloatingBar"),
+            null,
+            (_, _) => InvokeOnUiDispatcher(_onToggleFloatingBar));
+
         _multiInstanceMenuItem = new WinForms.ToolStripMenuItem(
             LocalizationService.Instance.GetString("Str_Tray_MultiInstanceStatus"),
             null,
@@ -860,6 +1016,10 @@ public sealed class NotifyIconWrapper : IDisposable
         _contextMenu.Items.Add(_settingsMenuItem);
         _contextMenu.Items.Add(_launchMenuItem);
         _contextMenu.Items.Add(_quickLaunchMenuItem);
+        _contextMenu.Items.Add(_runningWindowsMenuItem);
+        _contextMenu.Items.Add(_tileWindowsMenuItem);
+        _contextMenu.Items.Add(_floatingBarMenuItem);
+        _contextMenu.Items.Add(new WinForms.ToolStripSeparator());
         _contextMenu.Items.Add(_multiInstanceMenuItem);
         _contextMenu.Items.Add(_serverLocationMenuItem);
         _contextMenu.Items.Add(new WinForms.ToolStripSeparator());
@@ -925,9 +1085,22 @@ public sealed class NotifyIconWrapper : IDisposable
             ClearDropDownItems(_quickLaunchMenuItem);
         }
 
+        if (_runningWindowsMenuItem != null)
+        {
+            ClearDropDownItems(_runningWindowsMenuItem);
+        }
+
+        if (_tileWindowsMenuItem != null)
+        {
+            ClearDropDownItems(_tileWindowsMenuItem);
+        }
+
         _settingsMenuItem = null;
         _launchMenuItem = null;
         _quickLaunchMenuItem = null;
+        _runningWindowsMenuItem = null;
+        _tileWindowsMenuItem = null;
+        _floatingBarMenuItem = null;
         _multiInstanceMenuItem = null;
         _serverLocationMenuItem = null;
         _singleActiveServer = null;

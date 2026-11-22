@@ -73,4 +73,20 @@ public class Settings
     public bool MultiInstanceEnabled { get; set; } = true;
     public int MultiInstanceLaunchDelayMs { get; set; } = 1500;
     public bool MinimizeToTray { get; set; } = true;
+
+    // Multi-Instance Window Switcher & Tiling
+    public bool AutoTagMultiInstanceWindowTitle { get; set; } = true;
+    public string MultiInstanceWindowTitleTemplate { get; set; } = "[#{Index}] {Account} - {OriginalTitle}";
+    public bool EnableQuickSwitcherHotkey { get; set; } = true;
+    public string QuickSwitcherHotkey { get; set; } = "Ctrl+Alt+Space";
+    public bool EnableCycleWindowHotkey { get; set; } = true;
+    public string CycleWindowHotkey { get; set; } = "Ctrl+Alt+Right";
+    public bool EnableDirectSlotHotkeys { get; set; } = true;
+    public string DirectSlotHotkeyModifier { get; set; } = "Ctrl+Alt";
+    public bool FloatingSwitcherBarEnabled { get; set; } = true;
+    public bool FloatingSwitcherBarAutoShow { get; set; } = true;
+    public WindowTilingMode DefaultWindowTilingMode { get; set; } = WindowTilingMode.SingleMonitorGrid;
+    public string? PreferredTilingMonitorDevice { get; set; }
+    public string? MainSidePrimaryMonitorDevice { get; set; }
+    public string? MainSideSecondaryMonitorDevice { get; set; }
 }

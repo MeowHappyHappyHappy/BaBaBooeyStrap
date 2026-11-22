@@ -31,4 +31,17 @@ public interface IWin32WindowInterop
     bool TranslateMessage(ref User32.MSG msg);
     nint DispatchMessage(ref User32.MSG msg);
     bool PostThreadMessage(uint idThread, uint msg, nint wParam, nint lParam);
+    bool ShowWindow(nint hWnd, int nCmdShow) => false;
+    bool IsZoomed(nint hWnd) => false;
+    nint GetForegroundWindow() => nint.Zero;
+    bool SetForegroundWindow(nint hWnd) => false;
+    bool BringWindowToTop(nint hWnd) => false;
+    bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach) => false;
+    bool AllowSetForegroundWindow(int dwProcessId) => false;
+    bool PostMessage(nint hWnd, uint msg, nint wParam, nint lParam) => false;
+    bool TryGetExtendedFrameBounds(nint hWnd, out User32.RECT rect)
+    {
+        rect = default;
+        return false;
+    }
 }

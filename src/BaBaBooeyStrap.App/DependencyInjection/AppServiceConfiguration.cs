@@ -43,6 +43,16 @@ public static class AppServiceConfiguration
         var globalSettingsGuard = new GlobalSettingsGuard(globalSettingsManager, resolvedPaths.Base, logger: Logger.Current);
         var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var appUpdateService = new AppUpdateService(resolvedPaths, httpClient, Logger.Current);
+        var windowInterop = new Win32WindowInterop();
+        var monitorProvider = new Win32MonitorProvider();
+        var runningInstanceTracker = new RunningInstanceTracker(
+            () => settingsManager.Prop,
+            windowInterop,
+            monitorProvider,
+            accountLookupByUserId: uid => accountStore.LoadAll().FirstOrDefault(a => a.UserId == uid),
+            logger: Logger.Current);
+        var windowFocusHelper = new WindowFocusHelper(windowInterop);
+        var windowTilingService = new WindowTilingService(windowInterop, monitorProvider);
 
         return new AppServices(
             resolvedPaths,
@@ -56,7 +66,11 @@ public static class AppServiceConfiguration
             httpClient)
         {
             AppUpdateService = appUpdateService,
-            GlobalSettingsGuard = globalSettingsGuard
+            GlobalSettingsGuard = globalSettingsGuard,
+            MonitorProvider = monitorProvider,
+            RunningInstanceTracker = runningInstanceTracker,
+            WindowFocusHelper = windowFocusHelper,
+            WindowTilingService = windowTilingService
         };
     }
 
@@ -106,7 +120,8 @@ public static class AppServiceConfiguration
             services.RobloxStateManager,
             logger: logger,
             pipelineSteps: pipeline,
-            httpClient: services.HttpClient);
+            httpClient: services.HttpClient,
+            runningInstanceTracker: services.RunningInstanceTracker);
 
         services.Orchestrator = orchestrator;
         return orchestrator;
@@ -135,10 +150,56 @@ public static class AppServiceConfiguration
             getActiveServers: () => orchestrator.GetActiveServers(),
             getAccounts: () => services.AccountStore.LoadAll(),
             getSavedTargets: () => services.JoinTargetStore.LoadAll(),
-            onQuickLaunchAccount: onQuickLaunchAccount);
+            onQuickLaunchAccount: onQuickLaunchAccount,
+            getRunningInstances: () => services.WindowSwitcherCoordinator?.GetRunningInstances() ?? Array.Empty<RunningRobloxInstance>(),
+            onFocusRunningInstance: pid => services.WindowSwitcherCoordinator?.FocusProcess(pid),
+            onMinimizeAllInstances: () => services.WindowSwitcherCoordinator?.MinimizeAll(),
+            onTileRunningInstances: mode => services.WindowSwitcherCoordinator?.TileInstances(mode),
+            onToggleFloatingBar: () => services.WindowSwitcherCoordinator?.ToggleFloatingBar(),
+            isFloatingBarVisible: () => services.WindowSwitcherCoordinator?.IsFloatingBarVisible == true);
 
         services.TrayWrapper = tray;
         return tray;
+    }
+
+    public static WindowSwitcherCoordinator CreateWindowSwitcherCoordinator(AppServices services, bool headlessMode = false)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        var windowInterop = new Win32WindowInterop();
+        var monitorProvider = services.MonitorProvider ?? new Win32MonitorProvider();
+        var tracker = services.RunningInstanceTracker ?? new RunningInstanceTracker(
+            () => services.SettingsManager.Prop,
+            windowInterop,
+            monitorProvider,
+            accountLookupByUserId: uid => services.AccountStore.LoadAll().FirstOrDefault(a => a.UserId == uid),
+            logger: Logger.Current);
+        var focusHelper = services.WindowFocusHelper ?? new WindowFocusHelper(windowInterop);
+        var tilingService = services.WindowTilingService ?? new WindowTilingService(windowInterop, monitorProvider);
+
+        services.MonitorProvider = monitorProvider;
+        services.RunningInstanceTracker = tracker;
+        services.WindowFocusHelper = focusHelper;
+        services.WindowTilingService = tilingService;
+
+        if (!headlessMode && services.GlobalHotkeyService == null)
+        {
+            services.GlobalHotkeyService = new GlobalHotkeyService(Logger.Current);
+        }
+
+        var coordinator = new WindowSwitcherCoordinator(
+            tracker,
+            focusHelper,
+            tilingService,
+            monitorProvider,
+            services.SettingsManager,
+            services.StateManager,
+            headlessMode ? null : services.GlobalHotkeyService,
+            services.TrayWrapper,
+            enableFloatingWindows: !headlessMode);
+
+        services.WindowSwitcherCoordinator = coordinator;
+        return coordinator;
     }
 
     public static MainWindowViewModel CreateMainWindowViewModel(AppServices services)
@@ -160,7 +221,8 @@ public static class AppServiceConfiguration
             joinTargetStore: services.JoinTargetStore,
             settingsManager: services.SettingsManager,
             appUpdateService: services.AppUpdateService,
-            globalSettingsGuard: services.GlobalSettingsGuard);
+            globalSettingsGuard: services.GlobalSettingsGuard,
+            switcherCoordinator: services.WindowSwitcherCoordinator);
     }
 
     public static MainWindow CreateMainWindow(AppServices services, Action onLaunchRequested)

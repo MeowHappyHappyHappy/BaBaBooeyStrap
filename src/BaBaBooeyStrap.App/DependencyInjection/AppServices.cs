@@ -51,12 +51,21 @@ public sealed class AppServices : IDisposable
     public NotifyIconWrapper? TrayWrapper { get; set; }
     public AppUpdateService? AppUpdateService { get; set; }
     public IGlobalSettingsGuard? GlobalSettingsGuard { get; set; }
+    public IMonitorProvider? MonitorProvider { get; set; }
+    public IRunningInstanceTracker? RunningInstanceTracker { get; set; }
+    public WindowFocusHelper? WindowFocusHelper { get; set; }
+    public WindowTilingService? WindowTilingService { get; set; }
+    public GlobalHotkeyService? GlobalHotkeyService { get; set; }
+    public WindowSwitcherCoordinator? WindowSwitcherCoordinator { get; set; }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
 
+        try { WindowSwitcherCoordinator?.Dispose(); } catch { }
+        try { GlobalHotkeyService?.Dispose(); } catch { }
+        try { RunningInstanceTracker?.Dispose(); } catch { }
         try { GlobalSettingsGuard?.Dispose(); } catch { }
         try { TrayWrapper?.Dispose(); } catch { }
         try { Orchestrator?.MultiInstanceController.Dispose(); } catch { }

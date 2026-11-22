@@ -23,6 +23,7 @@ public class MainWindowViewModel : ViewModelBase
     private readonly IJsonManager<State>? _stateManager;
     private readonly IJsonManager<RobloxState>? _robloxStateManager;
     private readonly IAppUpdateService _appUpdateService;
+    private readonly WindowSwitcherCoordinator? _switcherCoordinator;
     private readonly EventHandler<string> _languageChangedHandler;
 
     private string _statusMessage = LocalizationService.Instance.GetString("Str_Common_Ready");
@@ -44,7 +45,8 @@ public class MainWindowViewModel : ViewModelBase
         IJoinTargetStore? joinTargetStore = null,
         IJsonManager<Settings>? settingsManager = null,
         IAppUpdateService? appUpdateService = null,
-        IGlobalSettingsGuard? globalSettingsGuard = null)
+        IGlobalSettingsGuard? globalSettingsGuard = null,
+        WindowSwitcherCoordinator? switcherCoordinator = null)
     {
         _settings = settings ?? new Settings();
         _paths = paths ?? Core.Paths.Current;
@@ -57,6 +59,7 @@ public class MainWindowViewModel : ViewModelBase
         _robloxStateManager = robloxStateManager;
         var installerService = new InstallerService(_paths, stateManager);
         _appUpdateService = appUpdateService ?? new AppUpdateService(_paths);
+        _switcherCoordinator = switcherCoordinator;
 
         LaunchSettings = new LaunchSettingsViewModel(
             _settings,
@@ -83,7 +86,8 @@ public class MainWindowViewModel : ViewModelBase
             resolvedGlobalSettings,
             stateManager,
             SetLocalizedStatus,
-            globalSettingsGuard: globalSettingsGuard);
+            globalSettingsGuard: globalSettingsGuard,
+            switcherCoordinator: switcherCoordinator);
 
         WindowIntegrations = new WindowAndIntegrationsViewModel(_settings, _paths, SetLocalizedStatus);
 
@@ -151,6 +155,7 @@ public class MainWindowViewModel : ViewModelBase
         }
 
         HasUnsavedChanges = false;
+        _switcherCoordinator?.ReloadSettings();
         SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
     }
 

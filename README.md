@@ -12,6 +12,7 @@ A modern, high-performance Roblox bootstrapper for Windows (`win-x64`) built wit
 - **Built-in WebView2 Login & Cookie Verification**: Add accounts via an isolated WebView2 browser session or paste cookies directly, with batch cookie health verification.
 - **Smart Launch Targets**: Launch accounts directly into a `PlaceId`, game URL, VIP private server (`privateServerLinkCode`), server share link (`/share?code=...&type=Server`), specific `JobId`, or **Follow User** (`@username` / `user:id`).
 - **Per-Account Settings & Batch AFK Preset**: Override framerate cap, graphics quality, master volume, or fullscreen mode per account.
+- **Multi-Instance Window Switcher & Multi-Monitor Tiling**: Automatically tags Roblox window titles with slot index and account name (`[#1] Account - Roblox`), provides a cursor-monitor Quick Switcher (`Ctrl+Alt+Space`), global cycle (`Ctrl+Alt+Right`) and direct slot (`Ctrl+Alt+1..9`) hotkeys, a draggable auto-showing Floating Switcher Bar, tray/UI live window controls, and multi-monitor tiling (Single-Monitor Grid, Spread Across Monitors, Main + Side).
 
 ### 🚀 Fast Deployment & Bootstrapper Pipeline
 - **Automatic Fastest CDN Mirror Probing**: Races Roblox CDN mirrors and caches the fastest endpoint in memory.

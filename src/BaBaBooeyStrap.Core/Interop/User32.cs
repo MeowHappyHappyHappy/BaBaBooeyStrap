@@ -6,6 +6,11 @@ namespace BaBaBooeyStrap.Core.Interop;
 public static class User32
 {
     public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
+    public delegate bool MonitorEnumDelegate(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
+
+    public static readonly nint HWND_TOPMOST = new(-1);
+    public static readonly nint HWND_NOTOPMOST = new(-2);
+    public const int ASFW_ANY = -1;
 
     public const int SW_HIDE = 0;
     public const int SW_SHOWNORMAL = 1;
@@ -21,9 +26,18 @@ public static class User32
     public const int GWL_STYLE = -16;
     public const int GWL_EXSTYLE = -20;
 
+    public const uint WM_CLOSE = 0x0010;
     public const uint WM_SETICON = 0x0080;
+    public const uint WM_HOTKEY = 0x0312;
     public const nint ICON_SMALL = 0;
     public const nint ICON_BIG = 1;
+
+    // Hotkey modifiers
+    public const uint MOD_ALT = 0x0001;
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT = 0x0004;
+    public const uint MOD_WIN = 0x0008;
+    public const uint MOD_NOREPEAT = 0x4000;
 
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOMOVE = 0x0002;
@@ -96,6 +110,7 @@ public static class User32
         uint dwEventThread,
         uint dwmsEventTime);
 
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
     public const uint EVENT_OBJECT_CREATE = 0x8000;
     public const uint EVENT_OBJECT_DESTROY = 0x8001;
     public const uint EVENT_OBJECT_SHOW = 0x8002;
@@ -120,9 +135,13 @@ public static class User32
 
     // Extended styles (GWL_EXSTYLE)
     public const uint WS_EX_DLGMODALFRAME = 0x00000001;
+    public const uint WS_EX_TOOLWINDOW = 0x00000080;
     public const uint WS_EX_WINDOWEDGE = 0x00000100;
     public const uint WS_EX_CLIENTEDGE = 0x00000200;
     public const uint WS_EX_STATICEDGE = 0x00020000;
+    public const uint WS_EX_NOACTIVATE = 0x08000000;
+
+    public const uint MONITORINFOF_PRIMARY = 0x00000001;
 
     // System metrics & monitor constants
     public const int SM_CXSCREEN = 0;
@@ -163,6 +182,17 @@ public static class User32
         public RECT rcMonitor;
         public RECT rcWork;
         public uint dwFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct MONITORINFOEX
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -270,4 +300,50 @@ public static class User32
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostThreadMessageW(uint idThread, uint Msg, nint wParam, nint lParam);
+
+    [DllImport("user32.dll")]
+    public static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool BringWindowToTop(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, [MarshalAs(UnmanagedType.Bool)] bool fAttach);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsZoomed(nint hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessageW(nint hWnd, uint Msg, nint wParam, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    public static extern nint MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumDelegate lpfnEnum, nint dwData);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfoW(nint hMonitor, ref MONITORINFOEX lpmi);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnregisterHotKey(nint hWnd, int id);
 }
