@@ -953,6 +953,60 @@ public sealed class AuditFeedbackFixTests : IDisposable
         regionCalls.Should().Be(12);
     }
 
+    [Fact]
+    public void Phase6_InstallerAndBrowserProtocolLaunch_CopiesCompanionDlls_DetectsSync_AndValidatesProtocolHandler()
+    {
+        string sourceDir = Path.Combine(_tempDir, "publish_src");
+        string installDir = Path.Combine(_tempDir, "install_dst");
+        Directory.CreateDirectory(sourceDir);
+        Directory.CreateDirectory(Path.Combine(sourceDir, "runtimes", "win-x64", "native"));
+
+        string sourceExe = Path.Combine(sourceDir, "BaBaBooeyStrap.exe");
+        File.WriteAllBytes(sourceExe, [0x4D, 0x5A, 0x90, 0x00, 0x01]);
+        File.WriteAllBytes(Path.Combine(sourceDir, "WebView2Loader.dll"), [0xAA, 0xBB]);
+        File.WriteAllBytes(Path.Combine(sourceDir, "D3DCompiler_47_cor3.dll"), [0xCC, 0xDD]);
+        File.WriteAllBytes(Path.Combine(sourceDir, "runtimes", "win-x64", "native", "WebView2Loader.dll"), [0xEE, 0xFF]);
+
+        var paths = new CustomProcessSandboxPaths(installDir, sourceExe);
+        var stateMgr = new JsonManager<State>(paths.StateFile);
+        var installer = new InstallerService(paths, stateMgr, Logger.Current);
+
+        installer.IsInstalledHere().Should().BeFalse();
+        installer.NeedsInstallSync().Should().BeTrue();
+
+        string deployedExe = installer.EnsureInstalledExeAndCompanionFiles();
+        deployedExe.Should().Be(paths.Application);
+        File.Exists(paths.Application).Should().BeTrue();
+        File.Exists(Path.Combine(installDir, "WebView2Loader.dll")).Should().BeTrue();
+        File.Exists(Path.Combine(installDir, "D3DCompiler_47_cor3.dll")).Should().BeTrue();
+        File.Exists(Path.Combine(installDir, "runtimes", "win-x64", "native", "WebView2Loader.dll")).Should().BeTrue();
+
+        installer.NeedsInstallSync().Should().BeFalse();
+
+        // When source exe is rebuilt with different size, NeedsInstallSync returns true
+        File.WriteAllBytes(sourceExe, [0x4D, 0x5A, 0x90, 0x00, 0x01, 0x02, 0x03]);
+        installer.NeedsInstallSync().Should().BeTrue();
+
+        // Command executable extraction & bare studio protocol parsing
+        WindowsRegistry.ExtractExecutablePathFromCommand($"\"{paths.Application}\" -player \"%1\"")
+            .Should().Be(paths.Application);
+        WindowsRegistry.ExtractExecutablePathFromCommand($"{paths.Application} -player %1")
+            .Should().Be(paths.Application);
+
+        var bareStudio = new LaunchSettings(["roblox-studio:1+launchmode:edit+task:EditPlace+placeId:1818"]);
+        bareStudio.RobloxLaunchMode.Should().Be(LaunchMode.Studio);
+        bareStudio.RobloxLaunchArgs.Should().Be("roblox-studio:1+launchmode:edit+task:EditPlace+placeId:1818");
+
+        var bareStudioAuth = new LaunchSettings(["roblox-studio-auth:1+launchmode:auth"]);
+        bareStudioAuth.RobloxLaunchMode.Should().Be(LaunchMode.StudioAuth);
+        bareStudioAuth.RobloxLaunchArgs.Should().Be("roblox-studio-auth:1+launchmode:auth");
+    }
+
+    private sealed class CustomProcessSandboxPaths(string baseDir, string processPath) : PathProvider(baseDir)
+    {
+        public override string Process => processPath;
+    }
+
     private static void CreateCompleteInstallForTest(string versionDir)
     {
         Directory.CreateDirectory(versionDir);

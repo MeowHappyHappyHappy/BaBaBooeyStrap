@@ -423,17 +423,13 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
 
     public void RegisterPlayerProtocols()
     {
-        string exe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
-        WindowsRegistry.RegisterPlayer(exe);
-        WindowsRegistry.RegisterAppLocation(exe, _paths.Base);
-        WindowsRegistry.RegisterUninstall(exe);
+        _installerService.RegisterPlayerProtocols();
         _setLocalizedStatus("Str_Shortcuts_StatusPlayerRegistered", Array.Empty<object?>());
     }
 
     public void RegisterStudioProtocols()
     {
-        string exe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
-        WindowsRegistry.RegisterStudio(exe);
+        _installerService.RegisterStudioProtocols();
         _setLocalizedStatus("Str_Shortcuts_StatusStudioRegistered", Array.Empty<object?>());
     }
 

@@ -343,37 +343,12 @@ public class RobloxLauncher : IRobloxLauncher
         LaunchTargetParser.BuildEffectiveTargetInput(rawTarget, optionalJobId, followUserMode);
 
     /// <summary>
-    /// Checks Windows registry <c>HKCR\roblox</c> or <c>HKCR\roblox-player</c> (and HKCU fallback) to verify protocol registration.
+    /// Checks Windows registry <c>HKCU\Software\Classes\roblox</c> and <c>roblox-player</c> (with HKCR fallback)
+    /// to verify that URL protocols are registered and their shell open commands point to an existing BaBaBooeyStrap executable.
     /// </summary>
-    public static bool IsRobloxProtocolRegistered()
+    public static bool IsRobloxProtocolRegistered(string? expectedHandlerPath = null)
     {
-        try
-        {
-            using var robloxKey = Registry.ClassesRoot.OpenSubKey("roblox");
-            if (robloxKey is not null)
-            {
-                return true;
-            }
-
-            using var playerKey = Registry.ClassesRoot.OpenSubKey("roblox-player");
-            if (playerKey is not null)
-            {
-                return true;
-            }
-
-            using var hkcuRobloxKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\roblox");
-            if (hkcuRobloxKey is not null)
-            {
-                return true;
-            }
-
-            using var hkcuPlayerKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\roblox-player");
-            return hkcuPlayerKey is not null;
-        }
-        catch
-        {
-            return false;
-        }
+        return WindowsRegistry.ArePlayerProtocolsRegistered(expectedHandlerPath);
     }
 
     private static string BuildProcessArguments(string normalizedArgs, LaunchSettings settings)

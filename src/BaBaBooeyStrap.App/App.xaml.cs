@@ -223,7 +223,10 @@ public partial class App : Application
             stateManager.Save();
         }
         else if (!launchSettings.QuietFlag.Active &&
-            (string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) || !installer.IsInstalledHere()))
+            (string.IsNullOrWhiteSpace(stateManager.Prop.InstallLocation) ||
+             !installer.IsInstalledHere() ||
+             installer.NeedsInstallSync() ||
+             !RobloxLauncher.IsRobloxProtocolRegistered(_services.Paths.Application)))
         {
             installer.Install(createDesktopShortcut: false, createStartMenuShortcuts: true, registerProtocols: true);
         }
@@ -627,6 +630,13 @@ public partial class App : Application
             var result = await orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
             dialog?.CloseBootstrapper();
 
+            try
+            {
+                _services.InstallerService.EnsureProtocolsPreserved();
+                _mainWindow?.ViewModel.AccountManagement.RefreshProtocolStatus();
+            }
+            catch { }
+
             if (!result.Success && !launchSettings.QuietFlag.Active)
             {
                 FluentDialogService.ShowWarning(
@@ -652,6 +662,7 @@ public partial class App : Application
         }
 
         if (!settingsManager.Prop.MultiInstanceEnabled &&
+            !settingsManager.Prop.MinimizeToTray &&
             (_mainWindow == null || !_mainWindow.IsVisible) &&
             orchestrator.ProcessSupervisor.GetRunningRobloxPids().Count == 0)
         {

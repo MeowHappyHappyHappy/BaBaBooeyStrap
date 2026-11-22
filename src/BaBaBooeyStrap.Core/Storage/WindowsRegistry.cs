@@ -19,19 +19,116 @@ public static class WindowsRegistry
             using var defaultIcon = regKey.CreateSubKey("DefaultIcon");
             using var shellOpenCmd = regKey.CreateSubKey(@"shell\open\command");
 
-            if (regKey.GetValue("") == null)
+            string expectedTitle = $"URL: {name} Protocol";
+            if (regKey.GetValue("") as string != expectedTitle)
             {
-                regKey.SetValue("", $"URL: {name} Protocol");
+                regKey.SetValue("", expectedTitle);
+            }
+
+            if (regKey.GetValue("URL Protocol") == null)
+            {
                 regKey.SetValue("URL Protocol", "");
             }
+
+            if (defaultIcon != null && defaultIcon.GetValue("") as string != handlerPath)
+            {
+                defaultIcon.SetValue("", handlerPath);
+            }
+
             if (shellOpenCmd != null && shellOpenCmd.GetValue("") as string != command)
             {
-                defaultIcon?.SetValue("", handlerPath);
                 shellOpenCmd.SetValue("", command);
             }
         }
         catch { }
     }
+
+    public static string? ExtractExecutablePathFromCommand(string? commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return null;
+        }
+
+        string trimmed = commandLine.Trim();
+        if (trimmed.StartsWith('"'))
+        {
+            int endQuote = trimmed.IndexOf('"', 1);
+            if (endQuote > 1)
+            {
+                return trimmed[1..endQuote].Trim();
+            }
+
+            return trimmed.Trim('"').Trim();
+        }
+
+        int exeIdx = trimmed.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        if (exeIdx > 0)
+        {
+            return trimmed[..(exeIdx + 4)].Trim();
+        }
+
+        int spaceIdx = trimmed.IndexOf(' ');
+        return spaceIdx > 0 ? trimmed[..spaceIdx].Trim() : trimmed;
+    }
+
+    public static bool IsProtocolHandlerValid(string key, string? expectedHandlerPath = null)
+    {
+        try
+        {
+            using var regKey = Registry.CurrentUser.OpenSubKey($@"Software\Classes\{key}", writable: false)
+                ?? Registry.ClassesRoot.OpenSubKey(key, writable: false);
+            if (regKey == null)
+            {
+                return false;
+            }
+
+            if (regKey.GetValue("URL Protocol") == null)
+            {
+                return false;
+            }
+
+            using var cmdKey = regKey.OpenSubKey(@"shell\open\command", writable: false);
+            string? command = cmdKey?.GetValue("") as string;
+            string? exePath = ExtractExecutablePathFromCommand(command);
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedHandlerPath))
+            {
+                try
+                {
+                    if (!string.Equals(
+                            Path.GetFullPath(exePath),
+                            Path.GetFullPath(expectedHandlerPath),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            else if (!Path.GetFileName(exePath).Equals($"{AppName}.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public static bool ArePlayerProtocolsRegistered(string? expectedHandlerPath = null) =>
+        IsProtocolHandlerValid("roblox-player", expectedHandlerPath) &&
+        IsProtocolHandlerValid("roblox", expectedHandlerPath);
 
     public static void RegisterPlayer(string handlerPath)
     {

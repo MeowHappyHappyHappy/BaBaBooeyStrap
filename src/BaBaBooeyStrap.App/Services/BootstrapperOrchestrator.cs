@@ -295,6 +295,20 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             _processSupervisor.RegisterProcess(pid);
             _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
 
+            try
+            {
+                string handlerExe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
+                if (!string.IsNullOrWhiteSpace(handlerExe) && File.Exists(handlerExe))
+                {
+                    if (!WindowsRegistry.ArePlayerProtocolsRegistered(handlerExe))
+                    {
+                        WindowsRegistry.RegisterPlayer(handlerExe);
+                    }
+                    WindowsRegistry.RemoveRobloxStartupEntry();
+                }
+            }
+            catch { }
+
             if (!isStudio && appSettings.CustomIntegrations.Count > 0)
             {
                 var integrationSnapshot = appSettings.CustomIntegrations.ToList();

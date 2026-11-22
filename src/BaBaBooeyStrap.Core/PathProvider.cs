@@ -30,7 +30,7 @@ public class PathProvider : IPaths
     public string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
     public string WindowsStartMenu => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
     public string System => Environment.GetFolderPath(Environment.SpecialFolder.System);
-    public string Process => Environment.ProcessPath ?? string.Empty;
+    public virtual string Process => Environment.ProcessPath ?? string.Empty;
 
     public string Roblox => Path.Combine(LocalAppData, "Roblox");
     public string RobloxStudio => Path.Combine(LocalAppData, "Roblox Studio");

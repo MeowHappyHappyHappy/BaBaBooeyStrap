@@ -78,6 +78,18 @@ public class LaunchSettings
             RobloxLaunchArgs = first;
             start = 1;
         }
+        else if (first.StartsWith("roblox-studio-auth:", StringComparison.OrdinalIgnoreCase))
+        {
+            RobloxLaunchMode = LaunchMode.StudioAuth;
+            RobloxLaunchArgs = first;
+            start = 1;
+        }
+        else if (first.StartsWith("roblox-studio:", StringComparison.OrdinalIgnoreCase))
+        {
+            RobloxLaunchMode = LaunchMode.Studio;
+            RobloxLaunchArgs = first;
+            start = 1;
+        }
         else if (first.StartsWith("version-", StringComparison.OrdinalIgnoreCase))
         {
             VersionFlag.Active = true;
@@ -98,6 +110,20 @@ public class LaunchSettings
                     string.IsNullOrEmpty(RobloxLaunchArgs))
                 {
                     RobloxLaunchMode = LaunchMode.Player;
+                    RobloxLaunchArgs = token;
+                }
+                else if (token.StartsWith("roblox-studio-auth:", StringComparison.OrdinalIgnoreCase) &&
+                         RobloxLaunchMode == LaunchMode.None &&
+                         string.IsNullOrEmpty(RobloxLaunchArgs))
+                {
+                    RobloxLaunchMode = LaunchMode.StudioAuth;
+                    RobloxLaunchArgs = token;
+                }
+                else if (token.StartsWith("roblox-studio:", StringComparison.OrdinalIgnoreCase) &&
+                         RobloxLaunchMode == LaunchMode.None &&
+                         string.IsNullOrEmpty(RobloxLaunchArgs))
+                {
+                    RobloxLaunchMode = LaunchMode.Studio;
                     RobloxLaunchArgs = token;
                 }
                 else if (token.StartsWith("version-", StringComparison.OrdinalIgnoreCase) && !VersionFlag.Active)
