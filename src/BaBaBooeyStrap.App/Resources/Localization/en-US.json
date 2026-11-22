@@ -738,7 +738,7 @@
 
   "Str_QuickSwitcher_Title": "Switch Roblox Account Window",
   "Str_QuickSwitcher_TileAll": "Tile All",
-  "Str_QuickSwitcher_SearchPlaceholder": "Type username, notes, slot #, or PID to filter...",
+  "Str_QuickSwitcher_SearchPlaceholder": "Type username, notes, or slot # to filter...",
   "Str_QuickSwitcher_ActiveBadge": "Focused",
   "Str_QuickSwitcher_MinimizedState": "Minimized",
   "Str_QuickSwitcher_ExternalState": "External",
@@ -772,7 +772,7 @@
   "Str_SwitcherSettings_AutoTagTitle": "Show account name in Roblox window titles",
   "Str_SwitcherSettings_AutoTagDesc": "Automatically tags Roblox titlebars & Alt+Tab thumbnails (works even if Activity Tracking is off).",
   "Str_SwitcherSettings_TemplateLabel": "Window Title Template:",
-  "Str_SwitcherSettings_PlaceholdersHint": "Placeholders: {Index} (1,2..), {Account}, {DisplayName}, {Notes}, {Pid}, {OriginalTitle}",
+  "Str_SwitcherSettings_PlaceholdersHint": "Placeholders: {Index} (1,2..), {Server} (JP, US..), {Account}, {DisplayName}, {Notes}, {OriginalTitle}",
   "Str_SwitcherSettings_PreviewFormat": "Preview: {0}",
   "Str_SwitcherSettings_HotkeySection": "Global Switcher Hotkeys",
   "Str_SwitcherSettings_HotkeyHint": "Click a box and press your desired key combination. Direct Slot uses modifier + 1–9.",

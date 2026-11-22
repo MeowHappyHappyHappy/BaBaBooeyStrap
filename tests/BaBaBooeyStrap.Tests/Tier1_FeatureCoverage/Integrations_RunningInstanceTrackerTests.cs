@@ -90,8 +90,8 @@ public sealed class Integrations_RunningInstanceTrackerTests
         var initial = tracker.GetRunningInstances();
         initial.Should().ContainSingle();
         initial[0].IsExternal.Should().BeTrue();
-        initial[0].EffectiveLabel.Should().Be("Roblox (PID 4242)");
-        interop.GetWindowText(hwnd).Should().Be("[#1] PID 4242 - Roblox");
+        initial[0].EffectiveLabel.Should().Be("Roblox");
+        interop.GetWindowText(hwnd).Should().Be("[#1] Roblox");
 
         int eventCount = 0;
         tracker.InstancesChanged += (_, _) => eventCount++;
@@ -153,6 +153,61 @@ public sealed class Integrations_RunningInstanceTrackerTests
         interop.SetWindowText(hwnd, "Roblox");
         tracker.RefreshNow();
         interop.GetWindowText(hwnd).Should().Be("[#1] Hero - Roblox");
+    }
+
+    [Theory]
+    [InlineData("JP", "PlayerOne", "[#1] [JP] PlayerOne - Roblox")]
+    [InlineData("", "PlayerOne", "[#1] PlayerOne - Roblox")]
+    [InlineData("JP", "", "[#1] [JP] Roblox")]
+    [InlineData("", "", "[#1] Roblox")]
+    public void WindowTitleFormatter_DefaultTemplate_FormatsAccountAndServerCombinationsCleanly(
+        string server, string account, string expected)
+    {
+        var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Index"] = "1",
+            ["Server"] = server,
+            ["Account"] = account,
+            ["OriginalTitle"] = "Roblox"
+        };
+
+        WindowTitleFormatter.Format(Settings.DefaultMultiInstanceWindowTitleTemplate, placeholders)
+            .Should().Be(expected);
+    }
+
+    [Fact]
+    public void UpdateServerCode_UpdatesAndClearsServerAbbreviationInWindowTitle()
+    {
+        var settings = new Settings { AutoTagMultiInstanceWindowTitle = true };
+        var interop = new TrackerMockInterop();
+        var mon1 = new MonitorInfo(1, @"\\.\DISPLAY1", true,
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 },
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 });
+
+        nint hwnd = 0x7002;
+        interop.SetWindowText(hwnd, "Roblox");
+        var observed = new List<ObservedRobloxWindow>
+        {
+            new(6666, hwnd, "Roblox", false, false, mon1)
+        };
+
+        using var tracker = new RunningInstanceTracker(
+            () => settings,
+            interop,
+            new SingleMonitorProvider(mon1),
+            windowProbe: () => observed.Select(w => w with { WindowTitle = interop.GetWindowText(w.WindowHandle) }).ToList());
+
+        tracker.RegisterLaunchedAccount(6666, new RobloxAccount { UserId = 66, Username = "PlayerOne" });
+        interop.GetWindowText(hwnd).Should().Be("[#1] PlayerOne - Roblox");
+
+        tracker.UpdateServerCode(6666, "Japan");
+        interop.GetWindowText(hwnd).Should().Be("[#1] [JP] PlayerOne - Roblox");
+
+        tracker.UpdateServerCode(6666, "US");
+        interop.GetWindowText(hwnd).Should().Be("[#1] [US] PlayerOne - Roblox");
+
+        tracker.UpdateServerCode(6666, "Unknown");
+        interop.GetWindowText(hwnd).Should().Be("[#1] PlayerOne - Roblox");
     }
 
     private sealed class SingleMonitorProvider(MonitorInfo monitor) : IMonitorProvider

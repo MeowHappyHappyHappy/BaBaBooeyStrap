@@ -77,7 +77,7 @@ public sealed class App_WindowSwitcherTests : IDisposable
         tray.Initialize();
 
         tray.ContextMenuActions.Should().Contain(["Running Windows", "Tile Windows", "Toggle Floating Bar"]);
-        tray.LastRunningWindowLabels.Should().Equal("#1 Alpha [M1]", "#2 Roblox (PID 1002) [M2]");
+        tray.LastRunningWindowLabels.Should().Equal("#1 Alpha [M1]", "#2 Roblox [M2]");
     }
 
     [Fact]

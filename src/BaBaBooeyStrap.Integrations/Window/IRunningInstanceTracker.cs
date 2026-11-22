@@ -25,5 +25,6 @@ public interface IRunningInstanceTracker : IDisposable
     void RegisterLaunchedAccount(int pid, RobloxAccount account);
     bool TryAssociateUserId(int pid, long userId);
     void MarkTitleManagedExternally(int pid, bool managed);
+    void UpdateServerCode(int pid, string? serverCode) { }
     IReadOnlyDictionary<string, string> GetPlaceholdersForPid(int pid);
 }

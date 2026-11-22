@@ -101,12 +101,14 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
     private void UpdateTitlePreview()
     {
         string template = string.IsNullOrWhiteSpace(TitleTemplateBox.Text)
-            ? "[#{Index}] {Account} - {OriginalTitle}"
+            ? Settings.DefaultMultiInstanceWindowTitleTemplate
             : TitleTemplateBox.Text;
 
         var sample = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Index"] = "1",
+            ["Server"] = "JP",
+            ["ServerCode"] = "JP",
             ["Account"] = "PlayerOne",
             ["AccountName"] = "PlayerOne",
             ["DisplayName"] = "Player",
@@ -226,7 +228,7 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
     {
         _settings.AutoTagMultiInstanceWindowTitle = AutoTagToggle.IsChecked == true;
         _settings.MultiInstanceWindowTitleTemplate = string.IsNullOrWhiteSpace(TitleTemplateBox.Text)
-            ? "[#{Index}] {Account} - {OriginalTitle}"
+            ? Settings.DefaultMultiInstanceWindowTitleTemplate
             : TitleTemplateBox.Text.Trim();
 
         _settings.EnableQuickSwitcherHotkey = QuickHotkeyEnabledCheck.IsChecked == true;

@@ -53,6 +53,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
     private readonly List<WatcherSession> _activeWatchers = new();
     private readonly ConcurrentDictionary<int, ActiveServerSessionInfo> _activeServers = new();
     private readonly ConcurrentDictionary<int, ActivityWatcher> _activeSessionWatchers = new();
+    private readonly ConcurrentDictionary<int, IWindowManipulation> _activeWindowManips = new();
     private readonly object _watcherLock = new();
     private readonly SemaphoreSlim _prepareLock = new(1, 1);
     private bool _disposed;
@@ -655,12 +656,18 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 : null;
 
             IReadOnlyDictionary<string, string>? titlePlaceholders = _runningInstanceTracker?.GetPlaceholdersForPid(pid);
-            if (titlePlaceholders == null && !string.IsNullOrWhiteSpace(accountUsername))
+            if (titlePlaceholders == null)
             {
+                string safeAccount = !string.IsNullOrWhiteSpace(accountUsername) ? accountUsername : string.Empty;
                 titlePlaceholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["Account"] = accountUsername,
-                    ["AccountName"] = accountUsername,
+                    ["Index"] = "1",
+                    ["Account"] = safeAccount,
+                    ["AccountName"] = safeAccount,
+                    ["DisplayName"] = safeAccount,
+                    ["Notes"] = string.Empty,
+                    ["Server"] = string.Empty,
+                    ["ServerCode"] = string.Empty,
                     ["Pid"] = pid.ToString()
                 };
             }
@@ -689,6 +696,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
             if (windowManip != null)
             {
+                _activeWindowManips[pid] = windowManip;
                 _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
             }
 
@@ -699,7 +707,11 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                     long.TryParse(activityWatcher.CurrentActivity?.UserId, out long parsedUserId) &&
                     parsedUserId > 0)
                 {
-                    _runningInstanceTracker.TryAssociateUserId(pid, parsedUserId);
+                    if (_runningInstanceTracker.TryAssociateUserId(pid, parsedUserId) &&
+                        _activeWindowManips.TryGetValue(pid, out var associatedManip))
+                    {
+                        associatedManip.UpdateTitlePlaceholders(_runningInstanceTracker.GetPlaceholdersForPid(pid));
+                    }
                     if (string.IsNullOrWhiteSpace(effectiveUsername))
                     {
                         effectiveUsername = _runningInstanceTracker.GetRunningInstances()
@@ -733,6 +745,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 finally
                 {
                     _processSupervisor.UnregisterProcess(pid);
+                    _activeWindowManips.TryRemove(pid, out _);
                     _runningInstanceTracker?.MarkTitleManagedExternally(pid, false);
                     _runningInstanceTracker?.RefreshNow();
                     _customIntegrationRunner.CloseIntegrationsForPid(pid);
@@ -797,6 +810,10 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 }
             }
 
+            string serverCode = BaBaBooeyStrap.Integrations.Window.RunningInstanceTracker.NormalizeServerCode(resolvedLocation?.Country);
+            _runningInstanceTracker?.UpdateServerCode(pid, serverCode);
+            UpdateWindowTitlePlaceholdersForPid(pid, accountUsername, serverCode);
+
             if (discordRpc != null)
             {
                 if (!discordRpc.IsConnected)
@@ -831,15 +848,47 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
     internal async Task HandleGameLeftAsync(int pid, IDiscordRpcService? discordRpc = null)
     {
-        if (_activeServers.TryRemove(pid, out _))
+        string? accountUsername = null;
+        if (_activeServers.TryRemove(pid, out var removedSession))
         {
+            accountUsername = removedSession.AccountUsername;
             ActiveServersChanged?.Invoke(this, EventArgs.Empty);
         }
+
+        _runningInstanceTracker?.UpdateServerCode(pid, null);
+        UpdateWindowTitlePlaceholdersForPid(pid, accountUsername, serverCode: string.Empty);
 
         if (discordRpc != null)
         {
             try { await discordRpc.ClearPresenceAsync().ConfigureAwait(false); } catch { }
         }
+    }
+
+    private void UpdateWindowTitlePlaceholdersForPid(int pid, string? accountUsername, string serverCode)
+    {
+        if (!_activeWindowManips.TryGetValue(pid, out var manip))
+        {
+            return;
+        }
+
+        if (_runningInstanceTracker != null)
+        {
+            manip.UpdateTitlePlaceholders(_runningInstanceTracker.GetPlaceholdersForPid(pid));
+            return;
+        }
+
+        string safeAccount = !string.IsNullOrWhiteSpace(accountUsername) ? accountUsername : string.Empty;
+        manip.UpdateTitlePlaceholders(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Index"] = "1",
+            ["Account"] = safeAccount,
+            ["AccountName"] = safeAccount,
+            ["DisplayName"] = safeAccount,
+            ["Notes"] = string.Empty,
+            ["Server"] = serverCode,
+            ["ServerCode"] = serverCode,
+            ["Pid"] = pid.ToString()
+        });
     }
 
     private void MonitorProcessExitForCustomIntegrations(int pid)

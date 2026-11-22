@@ -43,6 +43,7 @@ public sealed class WindowManipulationService : IWindowManipulation
     private readonly ConcurrentDictionary<uint, PidCacheEntry> _robloxPidCache = new();
     private readonly object _hookLock = new();
     private readonly object _titleLock = new();
+    private IReadOnlyDictionary<string, string>? _dynamicPlaceholders;
 
     private Thread? _hookThread;
     private uint _hookThreadId;
@@ -69,6 +70,7 @@ public sealed class WindowManipulationService : IWindowManipulation
         _interop = interop ?? throw new ArgumentNullException(nameof(interop));
         _options = options ?? new WindowManipulationOptions();
         _logger = logger ?? Logger.Current;
+        _dynamicPlaceholders = _options.TitlePlaceholders;
     }
 
     public void StartHook()
@@ -375,7 +377,8 @@ public sealed class WindowManipulationService : IWindowManipulation
 
         if (!string.IsNullOrWhiteSpace(_options.CustomTitleTemplate))
         {
-            SetCustomTitle(hwnd, _options.CustomTitleTemplate, _options.TitlePlaceholders ?? EmptyPlaceholders);
+            var placeholders = Volatile.Read(ref _dynamicPlaceholders) ?? EmptyPlaceholders;
+            SetCustomTitle(hwnd, _options.CustomTitleTemplate, placeholders);
         }
 
         if (applyIconAndBorderless)
@@ -391,6 +394,26 @@ public sealed class WindowManipulationService : IWindowManipulation
                 {
                     _borderlessAppliedWindows[hwnd] = 0;
                 }
+            }
+        }
+    }
+
+    public void UpdateTitlePlaceholders(IReadOnlyDictionary<string, string> placeholders)
+    {
+        ArgumentNullException.ThrowIfNull(placeholders);
+        var snapshot = new Dictionary<string, string>(placeholders, StringComparer.OrdinalIgnoreCase);
+        Volatile.Write(ref _dynamicPlaceholders, snapshot);
+
+        if (_disposed || string.IsNullOrWhiteSpace(_options.CustomTitleTemplate))
+        {
+            return;
+        }
+
+        foreach (nint hwnd in _windowPids.Keys.ToList())
+        {
+            if (IsValidWindowHandle(hwnd))
+            {
+                SetCustomTitle(hwnd, _options.CustomTitleTemplate, snapshot);
             }
         }
     }

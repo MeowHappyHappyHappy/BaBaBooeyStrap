@@ -38,7 +38,6 @@ public partial class QuickSwitcherWindow : Window
                 {
                     parts.Add(Instance.Notes!);
                 }
-                parts.Add($"PID {Instance.ProcessId}");
                 if (Instance.IsMinimized)
                 {
                     parts.Add(LocalizationService.Instance.GetString("Str_QuickSwitcher_MinimizedState"));
@@ -193,7 +192,6 @@ public partial class QuickSwitcherWindow : Window
             : _allInstances.Where(i =>
                     i.EffectiveLabel.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                     (!string.IsNullOrWhiteSpace(i.Notes) && i.Notes.Contains(query, StringComparison.OrdinalIgnoreCase)) ||
-                    i.ProcessId.ToString().Contains(query, StringComparison.OrdinalIgnoreCase) ||
                     i.SlotIndex.ToString().Equals(query, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 

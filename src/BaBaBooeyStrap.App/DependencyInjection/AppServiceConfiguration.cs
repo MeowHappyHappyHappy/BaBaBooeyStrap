@@ -29,6 +29,14 @@ public static class AppServiceConfiguration
 
         var settingsManager = new JsonManager<Settings>(resolvedPaths.SettingsFile);
         settingsManager.Load(alertFailure: false);
+        if (string.Equals(
+            settingsManager.Prop.MultiInstanceWindowTitleTemplate?.Trim(),
+            Settings.LegacyMultiInstanceWindowTitleTemplate,
+            StringComparison.Ordinal))
+        {
+            settingsManager.Prop.MultiInstanceWindowTitleTemplate = Settings.DefaultMultiInstanceWindowTitleTemplate;
+            try { settingsManager.Save(); } catch { }
+        }
 
         var stateManager = new JsonManager<State>(resolvedPaths.StateFile);
         stateManager.Load(alertFailure: false);

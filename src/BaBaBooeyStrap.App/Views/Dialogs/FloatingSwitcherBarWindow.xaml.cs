@@ -39,7 +39,7 @@ public partial class FloatingSwitcherBarWindow : Window
                     : (Instance.IsMinimized
                         ? LocalizationService.Instance.GetString("Str_QuickSwitcher_MinimizedState")
                         : LocalizationService.Instance.GetString("Str_Common_Ready"));
-                return $"{Instance.DetailLabel}\nPID {Instance.ProcessId} · {Instance.MonitorBadge} · {state}";
+                return $"{Instance.DetailLabel}\n#{Instance.SlotIndex} · {Instance.MonitorBadge} · {state}";
             }
         }
         public Brush BackgroundBrush => Instance.IsFocused ? FocusedBg : (Instance.IsMinimized ? MinimizedBg : NormalBg);

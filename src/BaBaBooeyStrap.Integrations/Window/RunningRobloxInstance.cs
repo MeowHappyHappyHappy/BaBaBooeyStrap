@@ -19,7 +19,7 @@ public sealed record RunningRobloxInstance(
     public string EffectiveLabel =>
         !string.IsNullOrWhiteSpace(Username)
             ? Username
-            : $"Roblox (PID {ProcessId})";
+            : "Roblox";
 
     public string ShortLabel => $"#{SlotIndex} {EffectiveLabel}";
 

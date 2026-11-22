@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
+using BaBaBooeyStrap.Integrations.Matchmaking;
 
 namespace BaBaBooeyStrap.Integrations.Window;
 
@@ -36,6 +37,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
     private readonly object _stateLock = new();
     private readonly Dictionary<int, AccountRegistration> _registrations = new();
     private readonly Dictionary<int, int> _pidSlots = new();
+    private readonly Dictionary<int, string> _pidServerCodes = new();
     private readonly Dictionary<int, DateTimeOffset> _firstSeenUtc = new();
     private readonly HashSet<int> _externallyManagedTitlePids = new();
     private readonly Dictionary<nint, string> _originalTitles = new();
@@ -263,13 +265,45 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         }
     }
 
+    public void UpdateServerCode(int pid, string? serverCode)
+    {
+        if (pid <= 0) return;
+
+        string normalized = NormalizeServerCode(serverCode);
+        bool changed;
+
+        lock (_stateLock)
+        {
+            _pidServerCodes.TryGetValue(pid, out string? existing);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                changed = _pidServerCodes.Remove(pid);
+            }
+            else if (!string.Equals(existing, normalized, StringComparison.Ordinal))
+            {
+                _pidServerCodes[pid] = normalized;
+                changed = true;
+            }
+            else
+            {
+                changed = false;
+            }
+        }
+
+        if (changed)
+        {
+            RefreshNow();
+        }
+    }
+
     public IReadOnlyDictionary<string, string> GetPlaceholdersForPid(int pid)
     {
         lock (_stateLock)
         {
             int slot = _pidSlots.TryGetValue(pid, out int assigned) ? assigned : 1;
             _registrations.TryGetValue(pid, out var reg);
-            return BuildPlaceholders(pid, slot, reg);
+            _pidServerCodes.TryGetValue(pid, out string? serverCode);
+            return BuildPlaceholders(pid, slot, reg, serverCode: serverCode);
         }
     }
 
@@ -367,6 +401,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 }
 
                 _pidSlots.Remove(pid);
+                _pidServerCodes.Remove(pid);
                 _registrations.Remove(pid);
                 _firstSeenUtc.Remove(pid);
                 _externallyManagedTitlePids.Remove(pid);
@@ -435,10 +470,11 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         {
             string originalTitle = ResolveOriginalTitleLocked(hwnd, currentTitle);
             string template = string.IsNullOrWhiteSpace(settings.MultiInstanceWindowTitleTemplate)
-                ? "[#{Index}] {Account} - {OriginalTitle}"
+                ? Settings.DefaultMultiInstanceWindowTitleTemplate
                 : settings.MultiInstanceWindowTitleTemplate;
 
-            var placeholders = BuildPlaceholders(pid, slot, reg, originalTitle);
+            _pidServerCodes.TryGetValue(pid, out string? serverCode);
+            var placeholders = BuildPlaceholders(pid, slot, reg, originalTitle, serverCode);
             string formatted = WindowTitleFormatter.Format(template, placeholders);
 
             if (string.IsNullOrWhiteSpace(formatted) ||
@@ -486,11 +522,13 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         int pid,
         int slot,
         AccountRegistration? reg,
-        string originalTitle = "Roblox")
+        string originalTitle = "Roblox",
+        string? serverCode = null)
     {
-        string accountName = !string.IsNullOrWhiteSpace(reg?.Username) ? reg.Username : $"PID {pid}";
+        string accountName = !string.IsNullOrWhiteSpace(reg?.Username) ? reg.Username : string.Empty;
         string displayName = !string.IsNullOrWhiteSpace(reg?.DisplayName) ? reg.DisplayName : accountName;
         string notes = reg?.Notes ?? string.Empty;
+        string normalizedServer = NormalizeServerCode(serverCode);
 
         return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -499,9 +537,28 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             ["AccountName"] = accountName,
             ["DisplayName"] = displayName,
             ["Notes"] = notes,
+            ["Server"] = normalizedServer,
+            ["ServerCode"] = normalizedServer,
             ["Pid"] = pid.ToString(),
             ["OriginalTitle"] = string.IsNullOrWhiteSpace(originalTitle) ? "Roblox" : originalTitle
         };
+    }
+
+    public static string NormalizeServerCode(string? serverCode)
+    {
+        if (string.IsNullOrWhiteSpace(serverCode) ||
+            string.Equals(serverCode.Trim(), "Unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        string iso = RoValraService.NormalizeCountryToIso(serverCode);
+        if (iso.Length == 2 && char.IsAsciiLetter(iso[0]) && char.IsAsciiLetter(iso[1]))
+        {
+            return iso.ToUpperInvariant();
+        }
+
+        return string.Empty;
     }
 
     private int EnsureSlotAssignedLocked(int pid)

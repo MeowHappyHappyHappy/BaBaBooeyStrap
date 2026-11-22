@@ -74,9 +74,12 @@ public class Settings
     public int MultiInstanceLaunchDelayMs { get; set; } = 1500;
     public bool MinimizeToTray { get; set; } = true;
 
+    public const string LegacyMultiInstanceWindowTitleTemplate = "[#{Index}] {Account} - {OriginalTitle}";
+    public const string DefaultMultiInstanceWindowTitleTemplate = "[#{Index}] [{Server}] {Account} - {OriginalTitle}";
+
     // Multi-Instance Window Switcher & Tiling
     public bool AutoTagMultiInstanceWindowTitle { get; set; } = true;
-    public string MultiInstanceWindowTitleTemplate { get; set; } = "[#{Index}] {Account} - {OriginalTitle}";
+    public string MultiInstanceWindowTitleTemplate { get; set; } = DefaultMultiInstanceWindowTitleTemplate;
     public bool EnableQuickSwitcherHotkey { get; set; } = true;
     public string QuickSwitcherHotkey { get; set; } = "Ctrl+Alt+Space";
     public bool EnableCycleWindowHotkey { get; set; } = true;

@@ -738,7 +738,7 @@
 
   "Str_QuickSwitcher_Title": "快速切換 Roblox 帳號視窗",
   "Str_QuickSwitcher_TileAll": "一鍵平鋪",
-  "Str_QuickSwitcher_SearchPlaceholder": "輸入帳號名稱、備註、編號或 PID 篩選...",
+  "Str_QuickSwitcher_SearchPlaceholder": "輸入帳號名稱、備註或編號篩選...",
   "Str_QuickSwitcher_ActiveBadge": "使用中",
   "Str_QuickSwitcher_MinimizedState": "已最小化",
   "Str_QuickSwitcher_ExternalState": "外部啟動",
@@ -772,7 +772,7 @@
   "Str_SwitcherSettings_AutoTagTitle": "在 Roblox 視窗標題自動顯示帳號識別",
   "Str_SwitcherSettings_AutoTagDesc": "自動在視窗標題欄、工作列與 Alt+Tab 加上編號與帳號名稱（不依賴活動追蹤功能）。",
   "Str_SwitcherSettings_TemplateLabel": "視窗標題模板：",
-  "Str_SwitcherSettings_PlaceholdersHint": "可用變數：{Index}（編號 1,2..）、{Account}（帳號名）、{DisplayName}、{Notes}（備註）、{Pid}、{OriginalTitle}",
+  "Str_SwitcherSettings_PlaceholdersHint": "可用變數：{Index}（編號 1,2..）、{Server}（伺服器縮寫如 JP, US..）、{Account}（帳號名）、{DisplayName}、{Notes}（備註）、{OriginalTitle}",
   "Str_SwitcherSettings_PreviewFormat": "預覽效果：{0}",
   "Str_SwitcherSettings_HotkeySection": "全域快速切換熱鍵",
   "Str_SwitcherSettings_HotkeyHint": "點擊輸入框後按下目標組合鍵即可錄製；直達編號熱鍵只需設定修飾鍵（自動搭配 1–9）。",
