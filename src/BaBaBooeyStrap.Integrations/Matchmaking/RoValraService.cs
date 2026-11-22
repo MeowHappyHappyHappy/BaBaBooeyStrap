@@ -19,6 +19,10 @@ public sealed class RoValraService : IRoValraService
     private readonly record struct CacheEntry<T>(T Value, DateTime ExpiresUtc);
     private readonly record struct IpInfoLookup(bool Success, bool IsBogon, string City, string Region, string Country, double Latitude, double Longitude);
     private readonly record struct DataCenterEndpoint(string Country, double Latitude, double Longitude);
+    private readonly record struct LivePublicServerInfo(string Id, int Playing, int MaxPlayers)
+    {
+        public int AvailableSlots => Math.Max(0, MaxPlayers - Playing);
+    }
 
     private static readonly Dictionary<string, string> CountryNameToIso = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -286,73 +290,64 @@ public sealed class RoValraService : IRoValraService
         }
     }
 
-    public async Task<string?> GetBetterMatchmakingServerIdAsync(
+    public Task<string?> GetBetterMatchmakingServerIdAsync(
         long placeId,
         bool randomize = false,
+        CancellationToken ct = default) =>
+        GetBetterMatchmakingServerIdAsync(placeId, randomize, requiredSlots: 1, excludedServerIds: null, ct);
+
+    public async Task<string?> GetBetterMatchmakingServerIdAsync(
+        long placeId,
+        bool randomize,
+        int requiredSlots,
+        IReadOnlySet<string>? excludedServerIds = null,
         CancellationToken ct = default)
     {
+        if (placeId <= 0) return null;
+
         try
         {
-            double clientLat = _clientLatitude ?? 0;
-            double clientLon = _clientLongitude ?? 0;
-            bool hasClientCoords = _clientLatitude.HasValue && _clientLongitude.HasValue;
-
-            var selfInfo = await GetCachedSelfIpInfoAsync(ct).ConfigureAwait(false);
-            if (!hasClientCoords)
+            int effectiveRequiredSlots = Math.Max(1, requiredSlots);
+            var liveServersTask = GetLivePublicServersAsync(placeId, ct);
+            var orderedRegions = await GetOrderedBestRegionsAsync(ct).ConfigureAwait(false);
+            if (orderedRegions.Count == 0)
             {
-                if (!selfInfo.Success || string.IsNullOrWhiteSpace(selfInfo.Country))
-                {
-                    return null;
-                }
-
-                clientLat = selfInfo.Latitude;
-                clientLon = selfInfo.Longitude;
+                await liveServersTask.ConfigureAwait(false);
+                return null;
             }
 
-            var dataCenters = await GetCachedDataCentersAsync(ct).ConfigureAwait(false);
-            if (dataCenters.Count == 0) return null;
+            var regionServersTask = QueryOrderedRegionsServerIdsAsync(placeId, orderedRegions, ct);
+            await Task.WhenAll(liveServersTask, regionServersTask).ConfigureAwait(false);
 
-            var candidates = new List<(string Country, double DistanceKm)>(dataCenters.Count);
-            foreach (var dc in dataCenters)
+            var liveServers = await liveServersTask.ConfigureAwait(false);
+            if (liveServers.Count == 0)
             {
-                double dist = CalculateHaversineKm(clientLat, clientLon, dc.Latitude, dc.Longitude);
-                candidates.Add((dc.Country, dist));
+                return null;
             }
 
-            var orderedRegions = candidates
-                .OrderByDescending(c => !string.IsNullOrWhiteSpace(selfInfo.Country) &&
-                                        string.Equals(c.Country, selfInfo.Country, StringComparison.OrdinalIgnoreCase))
-                .ThenBy(c => c.DistanceKm)
-                .Select(c => c.Country)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(MaxBestRegionsToQuery)
-                .ToList();
+            var regionServerLists = await regionServersTask.ConfigureAwait(false);
 
-            if (orderedRegions.Count == 0) return null;
-
-            string?[] results = new string?[orderedRegions.Count];
-            using var concurrencyGate = new SemaphoreSlim(MaxConcurrentRegionQueries, MaxConcurrentRegionQueries);
-
-            var tasks = orderedRegions.Select(async (region, index) =>
+            foreach (var regionServers in regionServerLists)
             {
-                await concurrencyGate.WaitAsync(ct).ConfigureAwait(false);
-                try
+                var verifiedCandidates = new List<string>();
+                foreach (string serverId in regionServers)
                 {
-                    results[index] = await QueryRegionServerIdAsync(placeId, region, randomize, ct).ConfigureAwait(false);
-                }
-                finally
-                {
-                    concurrencyGate.Release();
-                }
-            }).ToArray();
+                    if (excludedServerIds != null && excludedServerIds.Contains(serverId))
+                    {
+                        continue;
+                    }
 
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+                    if (liveServers.TryGetValue(serverId, out var liveInfo) &&
+                        liveInfo.AvailableSlots >= effectiveRequiredSlots)
+                    {
+                        verifiedCandidates.Add(serverId);
+                    }
+                }
 
-            foreach (string? serverId in results)
-            {
-                if (!string.IsNullOrWhiteSpace(serverId))
+                if (verifiedCandidates.Count > 0)
                 {
-                    return serverId;
+                    int index = randomize ? Random.Shared.Next(0, verifiedCandidates.Count) : 0;
+                    return verifiedCandidates[index];
                 }
             }
         }
@@ -366,6 +361,238 @@ public sealed class RoValraService : IRoValraService
         }
 
         return null;
+    }
+
+    public async Task<IReadOnlyList<string?>> AllocateBetterMatchmakingServersAsync(
+        long placeId,
+        int accountCount,
+        bool randomize = false,
+        CancellationToken ct = default)
+    {
+        if (accountCount <= 0)
+        {
+            return Array.Empty<string?>();
+        }
+
+        if (accountCount == 1)
+        {
+            string? single = await GetBetterMatchmakingServerIdAsync(placeId, randomize, requiredSlots: 1, excludedServerIds: null, ct).ConfigureAwait(false);
+            return [single];
+        }
+
+        var allocations = new string?[accountCount];
+        if (placeId <= 0)
+        {
+            return allocations;
+        }
+
+        try
+        {
+            var liveServers = await GetLivePublicServersAsync(placeId, ct).ConfigureAwait(false);
+            if (liveServers.Count == 0)
+            {
+                return allocations;
+            }
+
+            var orderedRegions = await GetOrderedBestRegionsAsync(ct).ConfigureAwait(false);
+            if (orderedRegions.Count == 0)
+            {
+                return allocations;
+            }
+
+            var regionServerLists = await QueryOrderedRegionsServerIdsAsync(placeId, orderedRegions, ct).ConfigureAwait(false);
+
+            var verifiedByRegion = new List<List<(string ServerId, int AvailableSlots)>>(regionServerLists.Count);
+            var remainingSlots = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var regionServers in regionServerLists)
+            {
+                var regionVerified = new List<(string ServerId, int AvailableSlots)>();
+                foreach (string serverId in regionServers)
+                {
+                    if (!liveServers.TryGetValue(serverId, out var liveInfo) || liveInfo.AvailableSlots <= 0)
+                    {
+                        continue;
+                    }
+
+                    if (remainingSlots.TryAdd(serverId, liveInfo.AvailableSlots))
+                    {
+                        regionVerified.Add((serverId, liveInfo.AvailableSlots));
+                    }
+                }
+
+                if (regionVerified.Count > 0)
+                {
+                    verifiedByRegion.Add(regionVerified);
+                }
+            }
+
+            if (verifiedByRegion.Count == 0)
+            {
+                return allocations;
+            }
+
+            // Step 1: Prefer a single verified server in the best region that can fit all accounts together
+            foreach (var regionVerified in verifiedByRegion)
+            {
+                var fullBatchCandidates = regionVerified
+                    .Where(s => s.AvailableSlots >= accountCount)
+                    .Select(s => s.ServerId)
+                    .ToList();
+
+                if (fullBatchCandidates.Count > 0)
+                {
+                    string chosen = fullBatchCandidates[randomize ? Random.Shared.Next(0, fullBatchCandidates.Count) : 0];
+                    Array.Fill(allocations, chosen);
+                    return allocations;
+                }
+            }
+
+            // Step 2: Split across verified servers in region order, decrementing reserved slots
+            for (int i = 0; i < accountCount; i++)
+            {
+                string? assigned = null;
+                foreach (var regionVerified in verifiedByRegion)
+                {
+                    var available = regionVerified
+                        .Where(s => remainingSlots.TryGetValue(s.ServerId, out int rem) && rem > 0)
+                        .Select(s => s.ServerId)
+                        .ToList();
+
+                    if (available.Count > 0)
+                    {
+                        assigned = available[randomize ? Random.Shared.Next(0, available.Count) : 0];
+                        remainingSlots[assigned]--;
+                        break;
+                    }
+                }
+
+                // Step 3: Remaining accounts get null to safely fall back to native RequestGame
+                allocations[i] = assigned;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("RoValraService", $"Batch better matchmaking failed for place {placeId}: {ex.Message}");
+        }
+
+        return allocations;
+    }
+
+    private async Task<List<string>> GetOrderedBestRegionsAsync(CancellationToken ct)
+    {
+        double clientLat = _clientLatitude ?? 0;
+        double clientLon = _clientLongitude ?? 0;
+        bool hasClientCoords = _clientLatitude.HasValue && _clientLongitude.HasValue;
+
+        var selfInfo = await GetCachedSelfIpInfoAsync(ct).ConfigureAwait(false);
+        if (!hasClientCoords)
+        {
+            if (!selfInfo.Success || string.IsNullOrWhiteSpace(selfInfo.Country))
+            {
+                return [];
+            }
+
+            clientLat = selfInfo.Latitude;
+            clientLon = selfInfo.Longitude;
+        }
+
+        var dataCenters = await GetCachedDataCentersAsync(ct).ConfigureAwait(false);
+        if (dataCenters.Count == 0) return [];
+
+        var candidates = new List<(string Country, double DistanceKm)>(dataCenters.Count);
+        foreach (var dc in dataCenters)
+        {
+            double dist = CalculateHaversineKm(clientLat, clientLon, dc.Latitude, dc.Longitude);
+            candidates.Add((dc.Country, dist));
+        }
+
+        return candidates
+            .OrderByDescending(c => !string.IsNullOrWhiteSpace(selfInfo.Country) &&
+                                    string.Equals(c.Country, selfInfo.Country, StringComparison.OrdinalIgnoreCase))
+            .ThenBy(c => c.DistanceKm)
+            .Select(c => c.Country)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MaxBestRegionsToQuery)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<IReadOnlyList<string>>> QueryOrderedRegionsServerIdsAsync(
+        long placeId,
+        IReadOnlyList<string> orderedRegions,
+        CancellationToken ct)
+    {
+        var results = new IReadOnlyList<string>[orderedRegions.Count];
+        using var concurrencyGate = new SemaphoreSlim(MaxConcurrentRegionQueries, MaxConcurrentRegionQueries);
+
+        var tasks = orderedRegions.Select(async (region, index) =>
+        {
+            await concurrencyGate.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                results[index] = await QueryRegionServerIdsAsync(placeId, region, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                concurrencyGate.Release();
+            }
+        }).ToArray();
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        return results;
+    }
+
+    private async Task<Dictionary<string, LivePublicServerInfo>> GetLivePublicServersAsync(long placeId, CancellationToken ct)
+    {
+        var liveServers = new Dictionary<string, LivePublicServerInfo>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            string url = $"https://games.roblox.com/v1/games/{placeId}/servers/0?sortOrder=Desc&excludeFullGames=true&limit=100";
+            using var resp = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+            {
+                _logger.Debug("RoValraService", $"Live server verification skipped for place {placeId}: HTTP {(int)resp.StatusCode}");
+                return liveServers;
+            }
+
+            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+            {
+                return liveServers;
+            }
+
+            foreach (var entry in data.EnumerateArray())
+            {
+                string? id = entry.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                if (string.IsNullOrWhiteSpace(id)) continue;
+
+                int playing = entry.TryGetProperty("playing", out var playingProp) && playingProp.TryGetInt32(out int p) ? p : 0;
+                int maxPlayers = entry.TryGetProperty("maxPlayers", out var maxProp) && maxProp.TryGetInt32(out int m) ? m : 0;
+
+                if (maxPlayers <= 0 || playing >= maxPlayers)
+                {
+                    continue;
+                }
+
+                liveServers[id] = new LivePublicServerInfo(id, playing, maxPlayers);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("RoValraService", $"Live server verification query failed for place {placeId}: {ex.Message}");
+        }
+
+        return liveServers;
     }
 
     private async Task<IpInfoLookup> GetCachedSelfIpInfoAsync(CancellationToken ct)
@@ -467,13 +694,14 @@ public sealed class RoValraService : IRoValraService
         }
     }
 
-    private async Task<string?> QueryRegionServerIdAsync(long placeId, string region, bool randomize, CancellationToken ct)
+    private async Task<IReadOnlyList<string>> QueryRegionServerIdsAsync(long placeId, string region, CancellationToken ct)
     {
+        var result = new List<string>();
         try
         {
             string serversUrl = $"https://apis.rovalra.com/v1/servers/region?place_id={placeId}&region={Uri.EscapeDataString(region)}";
             using var srvResp = await _httpClient.GetAsync(serversUrl, ct).ConfigureAwait(false);
-            if (!srvResp.IsSuccessStatusCode) return null;
+            if (!srvResp.IsSuccessStatusCode) return result;
 
             string srvJson = await srvResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var srvDoc = JsonDocument.Parse(srvJson);
@@ -481,15 +709,19 @@ public sealed class RoValraService : IRoValraService
                 servers.ValueKind != JsonValueKind.Array ||
                 servers.GetArrayLength() == 0)
             {
-                return null;
+                return result;
             }
 
-            int index = randomize ? Random.Shared.Next(0, servers.GetArrayLength()) : 0;
-            var chosen = servers[index];
-            if (chosen.TryGetProperty("server_id", out var idProp))
+            foreach (var chosen in servers.EnumerateArray())
             {
-                string? serverId = idProp.GetString();
-                if (!string.IsNullOrWhiteSpace(serverId)) return serverId;
+                if (chosen.TryGetProperty("server_id", out var idProp))
+                {
+                    string? serverId = idProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(serverId))
+                    {
+                        result.Add(serverId);
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -501,7 +733,7 @@ public sealed class RoValraService : IRoValraService
             _logger.Debug("RoValraService", $"Region query failed for {region}: {ex.Message}");
         }
 
-        return null;
+        return result;
     }
 
     public async Task<Dictionary<string, int>> GetRegionLatenciesAsync(string endpoint, CancellationToken ct = default)

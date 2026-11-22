@@ -40,6 +40,7 @@ public static class AppServiceConfiguration
         var joinTargetStore = new JoinTargetStore(resolvedPaths.TargetsFile);
         var installerService = new InstallerService(resolvedPaths, stateManager);
         var globalSettingsManager = new GlobalSettingsManager(resolvedPaths.RobloxGlobalSettings);
+        var globalSettingsGuard = new GlobalSettingsGuard(globalSettingsManager, resolvedPaths.Base, logger: Logger.Current);
         var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var appUpdateService = new AppUpdateService(resolvedPaths, httpClient, Logger.Current);
 
@@ -54,7 +55,8 @@ public static class AppServiceConfiguration
             globalSettingsManager,
             httpClient)
         {
-            AppUpdateService = appUpdateService
+            AppUpdateService = appUpdateService,
+            GlobalSettingsGuard = globalSettingsGuard
         };
     }
 
@@ -157,7 +159,8 @@ public static class AppServiceConfiguration
             robloxStateManager: services.RobloxStateManager,
             joinTargetStore: services.JoinTargetStore,
             settingsManager: services.SettingsManager,
-            appUpdateService: services.AppUpdateService);
+            appUpdateService: services.AppUpdateService,
+            globalSettingsGuard: services.GlobalSettingsGuard);
     }
 
     public static MainWindow CreateMainWindow(AppServices services, Action onLaunchRequested)

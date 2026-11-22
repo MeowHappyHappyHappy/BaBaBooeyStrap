@@ -185,6 +185,15 @@ public sealed class RoValraServiceTests
             }
         });
 
+        handler.WhenGet("games.roblox.com/v1/games/1818/servers/0").RespondWithJson(new
+        {
+            data = new[]
+            {
+                new { id = "srv-us-1111", playing = 3, maxPlayers = 10 },
+                new { id = "srv-us-2222", playing = 5, maxPlayers = 10 }
+            }
+        });
+
         using var http = handler.ToHttpClient();
         var service = new RoValraService(http);
 

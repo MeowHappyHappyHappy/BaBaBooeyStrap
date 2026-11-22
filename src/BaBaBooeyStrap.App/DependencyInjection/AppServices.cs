@@ -50,12 +50,14 @@ public sealed class AppServices : IDisposable
     public BootstrapperOrchestrator? Orchestrator { get; set; }
     public NotifyIconWrapper? TrayWrapper { get; set; }
     public AppUpdateService? AppUpdateService { get; set; }
+    public IGlobalSettingsGuard? GlobalSettingsGuard { get; set; }
 
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
 
+        try { GlobalSettingsGuard?.Dispose(); } catch { }
         try { TrayWrapper?.Dispose(); } catch { }
         try { Orchestrator?.MultiInstanceController.Dispose(); } catch { }
         try { Orchestrator?.Dispose(); } catch { }

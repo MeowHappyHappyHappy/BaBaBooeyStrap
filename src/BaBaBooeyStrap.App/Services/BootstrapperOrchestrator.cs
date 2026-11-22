@@ -265,7 +265,12 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                     !uriBuilder.UserId.HasValue)
                 {
                     string? serverId = await _roValraService
-                        .GetBetterMatchmakingServerIdAsync(uriBuilder.PlaceId, appSettings.EnableBetterMatchmakingRandomization, ct)
+                        .GetBetterMatchmakingServerIdAsync(
+                            uriBuilder.PlaceId,
+                            appSettings.EnableBetterMatchmakingRandomization,
+                            requiredSlots: 1,
+                            excludedServerIds: null,
+                            ct)
                         .ConfigureAwait(false);
                     if (!string.IsNullOrWhiteSpace(serverId))
                     {
@@ -364,9 +369,46 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         return context;
     }
 
+    public async Task<IReadOnlyList<string?>> AllocateBatchMatchmakingServersAsync(
+        long placeId,
+        int accountCount,
+        CancellationToken ct = default)
+    {
+        if (accountCount <= 0)
+        {
+            return Array.Empty<string?>();
+        }
+
+        var appSettings = _settingsManager.Prop;
+        if (!appSettings.EnableBetterMatchmaking || placeId <= 0)
+        {
+            return new string?[accountCount];
+        }
+
+        try
+        {
+            return await _roValraService
+                .AllocateBetterMatchmakingServersAsync(
+                    placeId,
+                    accountCount,
+                    appSettings.EnableBetterMatchmakingRandomization,
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("BootstrapperOrchestrator", $"Batch better matchmaking lookup failed for place {placeId}: {ex.Message}");
+            return new string?[accountCount];
+        }
+    }
+
     public Task<LaunchResult> LaunchAccountAsync(RobloxAccount account, LaunchTarget target, CancellationToken ct = default)
     {
-        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck: false, ct);
+        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck: false, skipBetterMatchmaking: false, ct);
     }
 
     public Task<LaunchResult> LaunchAccountAsync(
@@ -375,7 +417,18 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         bool skipDeploymentCheck,
         CancellationToken ct = default)
     {
-        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck, ct);
+        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck, skipBetterMatchmaking: false, ct);
+    }
+
+    public Task<LaunchResult> LaunchAccountAsync(
+        RobloxAccount account,
+        LaunchTarget target,
+        IProgress<PackageDownloadProgress>? progress,
+        Action<string>? statusCallback,
+        bool skipDeploymentCheck = false,
+        CancellationToken ct = default)
+    {
+        return LaunchAccountAsync(account, target, progress, statusCallback, skipDeploymentCheck, skipBetterMatchmaking: false, ct);
     }
 
     public async Task<LaunchResult> LaunchAccountAsync(
@@ -383,7 +436,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         LaunchTarget target,
         IProgress<PackageDownloadProgress>? progress,
         Action<string>? statusCallback,
-        bool skipDeploymentCheck = false,
+        bool skipDeploymentCheck,
+        bool skipBetterMatchmaking,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(account);
@@ -462,7 +516,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             preSpawnSettingsBuilder: async (preparedSettings, innerCt) =>
             {
                 string? jobId = resolution.JobId;
-                if (appSettings.EnableBetterMatchmaking &&
+                if (!skipBetterMatchmaking &&
+                    appSettings.EnableBetterMatchmaking &&
                     resolution.PlaceId > 0 &&
                     string.IsNullOrWhiteSpace(jobId) &&
                     string.IsNullOrWhiteSpace(resolution.LinkCode) &&
@@ -471,7 +526,12 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                     try
                     {
                         string? bestServerId = await _roValraService
-                            .GetBetterMatchmakingServerIdAsync(resolution.PlaceId, appSettings.EnableBetterMatchmakingRandomization, innerCt)
+                            .GetBetterMatchmakingServerIdAsync(
+                                resolution.PlaceId,
+                                appSettings.EnableBetterMatchmakingRandomization,
+                                requiredSlots: 1,
+                                excludedServerIds: null,
+                                innerCt)
                             .ConfigureAwait(false);
                         if (!string.IsNullOrWhiteSpace(bestServerId))
                         {

@@ -37,6 +37,7 @@ public partial class App : Application
         try
         {
             _services = AppServiceConfiguration.CreateCoreServices(initializeGlobalEnvironment: true);
+            _services.GlobalSettingsGuard?.RecoverOnStartup();
             var appSettings = _services.SettingsManager.Prop;
 
             if (appSettings.WPFSoftwareRender)
@@ -391,7 +392,7 @@ public partial class App : Application
         var orchestrator = _services.Orchestrator;
         var settingsManager = _services.SettingsManager;
         var accountStore = _services.AccountStore;
-        var globalSettings = _services.GlobalSettingsManager;
+        var globalSettingsGuard = _services.GlobalSettingsGuard;
 
         bool previousMultiInstance = settingsManager.Prop.MultiInstanceEnabled;
         if (forceDisableMultiInstance)
@@ -403,7 +404,6 @@ public partial class App : Application
             orchestrator.MultiInstanceController.Enable();
         }
 
-        GlobalSettingsBackup? settingsBackup = null;
         using var cts = new CancellationTokenSource();
         IBootstrapperDialog? dialog = null;
 
@@ -413,15 +413,32 @@ public partial class App : Application
             dialog.ShowBootstrapper();
         }
 
+        IAsyncDisposable? guardSession = null;
+        var pidsToProtect = new HashSet<int>();
+        bool shouldProtect = false;
+        bool launchSucceeded = false;
+
         try
         {
+            if (globalSettingsGuard != null)
+            {
+                guardSession = await globalSettingsGuard.BeginLaunchSessionAsync(cts.Token);
+            }
+
             string effectiveTarget = RobloxLauncher.BuildEffectiveTargetInput(rawTarget, jobId);
             var parsedTarget = RobloxLauncher.ParseTargetInput(effectiveTarget);
 
-            if (account.RobloxSettings?.HasOverrides == true)
+            var previousPids = orchestrator.ProcessSupervisor.CaptureRunningClientPids();
+            bool hasOverride = account.RobloxSettings?.HasOverrides == true;
+            shouldProtect = hasOverride || (settingsManager.Prop.MultiInstanceEnabled && previousPids.Count > 0);
+
+            if (shouldProtect && globalSettingsGuard != null)
             {
-                settingsBackup = globalSettings.CaptureBackupState();
-                globalSettings.ApplyProfile(account.RobloxSettings);
+                globalSettingsGuard.EnsureBackupCaptured();
+                if (hasOverride)
+                {
+                    globalSettingsGuard.ApplyProfileForLaunch(account.RobloxSettings!);
+                }
             }
 
             var progress = dialog?.ViewModel;
@@ -431,7 +448,6 @@ public partial class App : Application
                 Dispatcher.InvokeAsync(() => dialog.Message = msg);
             }
 
-            var previousPids = orchestrator.ProcessSupervisor.CaptureRunningClientPids();
             var result = await orchestrator.LaunchAccountAsync(
                 account,
                 parsedTarget,
@@ -444,12 +460,37 @@ public partial class App : Application
 
             if (result.Success)
             {
+                launchSucceeded = true;
                 accountStore.Upsert(account);
                 _mainWindow?.ViewModel.AccountManagement.ReloadAccounts();
 
-                if (settingsBackup.HasValue)
+                if (result.ProcessId.HasValue)
                 {
-                    await orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(previousPids);
+                    pidsToProtect.Add(result.ProcessId.Value);
+                }
+
+                if (shouldProtect)
+                {
+                    var waitResult = await orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(
+                        previousPids,
+                        ct: cts.Token);
+                    if (waitResult.ProcessId.HasValue)
+                    {
+                        pidsToProtect.Add(waitResult.ProcessId.Value);
+                    }
+
+                    if (hasOverride)
+                    {
+                        await Task.Delay(1200, cts.Token);
+                    }
+                }
+
+                if (settingsManager.Prop.MultiInstanceEnabled)
+                {
+                    foreach (int existingPid in previousPids)
+                    {
+                        pidsToProtect.Add(existingPid);
+                    }
                 }
             }
             else if (!quietMode)
@@ -479,9 +520,20 @@ public partial class App : Application
         {
             dialog?.CloseBootstrapper();
             settingsManager.Prop.MultiInstanceEnabled = previousMultiInstance;
-            if (settingsBackup.HasValue)
+            if (globalSettingsGuard != null)
             {
-                try { globalSettings.RestoreBackupState(settingsBackup.Value); } catch { }
+                try
+                {
+                    globalSettingsGuard.RestoreOriginalAndProtect(
+                        pidsToProtect,
+                        enableReadOnlyProtection: shouldProtect && (launchSucceeded || pidsToProtect.Count > 0));
+                }
+                catch { }
+            }
+
+            if (guardSession != null)
+            {
+                try { await guardSession.DisposeAsync(); } catch { }
             }
         }
     }

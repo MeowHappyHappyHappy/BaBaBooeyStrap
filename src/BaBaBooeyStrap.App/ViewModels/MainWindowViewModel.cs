@@ -43,7 +43,8 @@ public class MainWindowViewModel : ViewModelBase
         IJsonManager<RobloxState>? robloxStateManager = null,
         IJoinTargetStore? joinTargetStore = null,
         IJsonManager<Settings>? settingsManager = null,
-        IAppUpdateService? appUpdateService = null)
+        IAppUpdateService? appUpdateService = null,
+        IGlobalSettingsGuard? globalSettingsGuard = null)
     {
         _settings = settings ?? new Settings();
         _paths = paths ?? Core.Paths.Current;
@@ -64,7 +65,8 @@ public class MainWindowViewModel : ViewModelBase
             stateManager,
             robloxStateManager,
             installerService,
-            SetLocalizedStatus);
+            SetLocalizedStatus,
+            globalSettingsGuard);
 
         FastFlags = new FastFlagsViewModel(_settings, _fastFlagManager);
 
@@ -80,7 +82,8 @@ public class MainWindowViewModel : ViewModelBase
             launcher,
             resolvedGlobalSettings,
             stateManager,
-            SetLocalizedStatus);
+            SetLocalizedStatus,
+            globalSettingsGuard: globalSettingsGuard);
 
         WindowIntegrations = new WindowAndIntegrationsViewModel(_settings, _paths, SetLocalizedStatus);
 

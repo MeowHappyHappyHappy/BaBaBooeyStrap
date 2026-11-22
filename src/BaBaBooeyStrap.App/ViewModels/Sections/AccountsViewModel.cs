@@ -32,6 +32,8 @@ public sealed class AccountsViewModel : ViewModelBase
     private readonly IProcessSupervisor? _processSupervisor;
     private readonly IRobloxLauncher? _launcher;
     private readonly IGlobalSettingsManager _globalSettingsManager;
+    private readonly IGlobalSettingsGuard _globalSettingsGuard;
+    private readonly TimeSpan _settingsApplySettleDelay;
     private readonly IJsonManager<State>? _stateManager;
     private readonly IRobloxAuthService? _injectedAuthService;
     private readonly Action<string, object?[]> _setLocalizedStatus;
@@ -86,7 +88,9 @@ public sealed class AccountsViewModel : ViewModelBase
         IGlobalSettingsManager globalSettingsManager,
         IJsonManager<State>? stateManager,
         Action<string, object?[]> setLocalizedStatus,
-        IRobloxAuthService? authService = null)
+        IRobloxAuthService? authService = null,
+        IGlobalSettingsGuard? globalSettingsGuard = null,
+        TimeSpan? settingsApplySettleDelay = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -96,6 +100,8 @@ public sealed class AccountsViewModel : ViewModelBase
         _processSupervisor = processSupervisor;
         _launcher = launcher;
         _globalSettingsManager = globalSettingsManager ?? throw new ArgumentNullException(nameof(globalSettingsManager));
+        _globalSettingsGuard = globalSettingsGuard ?? new GlobalSettingsGuard(_globalSettingsManager, _paths.Base);
+        _settingsApplySettleDelay = settingsApplySettleDelay ?? TimeSpan.FromMilliseconds(1200);
         _stateManager = stateManager;
         _injectedAuthService = authService;
         _setLocalizedStatus = setLocalizedStatus ?? throw new ArgumentNullException(nameof(setLocalizedStatus));
@@ -1506,21 +1512,32 @@ public sealed class AccountsViewModel : ViewModelBase
         var ct = _launchCts.Token;
 
         bool hasAnySettingsOverride = targets.Any(t => t.Account.RobloxSettings?.HasOverrides == true);
-        GlobalSettingsBackup? settingsBackup = null;
-        if (hasAnySettingsOverride)
+        var initialRunningPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
+        bool shouldProtectSettings = hasAnySettingsOverride ||
+                                     (_settings.MultiInstanceEnabled && (targets.Count > 1 || initialRunningPids.Count > 0));
+        var pidsToProtect = new HashSet<int>(initialRunningPids);
+
+        IAsyncDisposable? guardSession = null;
+        try
         {
-            try
+            guardSession = await _globalSettingsGuard.BeginLaunchSessionAsync(ct);
+
+            if (shouldProtectSettings)
             {
-                settingsBackup = _globalSettingsManager.CaptureBackupState();
-                if (settingsBackup.Value.Existed)
+                try
                 {
+                    _globalSettingsGuard.EnsureBackupCaptured();
                     AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsBackedUp"));
                 }
+                catch (Exception ex)
+                {
+                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsBackupFailedFormat", ex.Message));
+                }
             }
-            catch (Exception ex)
-            {
-                AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsBackupFailedFormat", ex.Message));
-            }
+        }
+        catch (OperationCanceledException)
+        {
+            return (0, new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, "Operation canceled."));
         }
 
         IsLaunching = true;
@@ -1528,6 +1545,7 @@ public sealed class AccountsViewModel : ViewModelBase
 
         int successCount = 0;
         LaunchResult? lastResult = null;
+        bool lastAppliedOverride = false;
 
         try
         {
@@ -1535,6 +1553,26 @@ public sealed class AccountsViewModel : ViewModelBase
             {
                 _setLocalizedStatus("Str_Accounts_StatusPreparingBatch", Array.Empty<object?>());
                 await orchestrator.PrepareForBatchLaunchAsync(ct);
+            }
+
+            IReadOnlyList<string?>? allocatedJobIds = null;
+            if (targets.Count > 1 &&
+                _settings.EnableBetterMatchmaking &&
+                parsedTarget.Kind == LaunchTargetKind.Standard &&
+                parsedTarget.PlaceId is > 0 &&
+                string.IsNullOrWhiteSpace(parsedTarget.JobId) &&
+                string.IsNullOrWhiteSpace(parsedTarget.LinkCode) &&
+                _launcher is BootstrapperOrchestrator batchMatchmakingOrchestrator)
+            {
+                allocatedJobIds = await batchMatchmakingOrchestrator.AllocateBatchMatchmakingServersAsync(
+                    parsedTarget.PlaceId.Value,
+                    targets.Count,
+                    ct);
+
+                int matchedCount = allocatedJobIds.Count(id => !string.IsNullOrWhiteSpace(id));
+                AppendActivityLog(matchedCount > 0
+                    ? LocalizationService.Instance.Format("Str_Accounts_LogBatchMatchmakingAllocatedFormat", matchedCount, targets.Count)
+                    : LocalizationService.Instance.GetString("Str_Accounts_LogBatchMatchmakingFallbackNative"));
             }
 
             for (int i = 0; i < targets.Count; i++)
@@ -1545,23 +1583,17 @@ public sealed class AccountsViewModel : ViewModelBase
                 _setLocalizedStatus("Str_Accounts_StatusLaunchingItemFormat", [item.Username, i + 1, targets.Count]);
                 AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_StatusLaunchingItemFormat", item.Username, i + 1, targets.Count));
 
-                if (settingsBackup.HasValue && i > 0)
-                {
-                    try
-                    {
-                        _globalSettingsManager.RestoreBackupState(settingsBackup.Value);
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsRestoreFailedFormat", ex.Message));
-                    }
-                }
-
                 if (item.Account.RobloxSettings?.HasOverrides == true)
                 {
                     try
                     {
-                        _globalSettingsManager.ApplyProfile(item.Account.RobloxSettings);
+                        if (lastAppliedOverride)
+                        {
+                            _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
+                        }
+
+                        _globalSettingsGuard.ApplyProfileForLaunch(item.Account.RobloxSettings);
+                        lastAppliedOverride = true;
                         AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogAppliedSettingsFormat", item.Username, item.SettingsSummary));
                     }
                     catch (Exception ex)
@@ -1569,15 +1601,41 @@ public sealed class AccountsViewModel : ViewModelBase
                         AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogApplySettingsFailedFormat", item.Username, ex.Message));
                     }
                 }
+                else if (lastAppliedOverride)
+                {
+                    try
+                    {
+                        _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
+                        lastAppliedOverride = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsRestoreFailedFormat", ex.Message));
+                    }
+                }
 
                 var previousPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
                 bool launchSucceeded = false;
 
+                var itemTarget = allocatedJobIds != null &&
+                                 i < allocatedJobIds.Count &&
+                                 !string.IsNullOrWhiteSpace(allocatedJobIds[i])
+                    ? parsedTarget with { JobId = allocatedJobIds[i] }
+                    : parsedTarget;
+                bool skipMatchmakingForItem = allocatedJobIds != null;
+
                 try
                 {
                     LaunchResult result = _launcher is BootstrapperOrchestrator orch
-                        ? await orch.LaunchAccountAsync(item.Account, parsedTarget, skipDeploymentCheck: true, ct)
-                        : await _launcher.LaunchAccountAsync(item.Account, parsedTarget, ct);
+                        ? await orch.LaunchAccountAsync(
+                            item.Account,
+                            itemTarget,
+                            null,
+                            null,
+                            skipDeploymentCheck: true,
+                            skipBetterMatchmaking: skipMatchmakingForItem,
+                            ct)
+                        : await _launcher.LaunchAccountAsync(item.Account, itemTarget, ct);
 
                     lastResult = result;
                     if (result.Success)
@@ -1587,6 +1645,11 @@ public sealed class AccountsViewModel : ViewModelBase
                         item.SetCookieHealth(AccountCookieHealth.Valid);
                         successCount++;
                         launchSucceeded = true;
+
+                        if (result.ProcessId.HasValue)
+                        {
+                            pidsToProtect.Add(result.ProcessId.Value);
+                        }
 
                         AppendActivityLog(LocalizationService.Instance.Format(
                             "Str_Accounts_LogLaunchedItemFormat",
@@ -1617,16 +1680,17 @@ public sealed class AccountsViewModel : ViewModelBase
                     {
                         item.SetCookieHealth(AccountCookieHealth.Invalid, detail);
                     }
-                    lastResult = new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, ex.Message);
+                    lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
                     AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, detail));
                 }
                 catch (Exception ex)
                 {
-                    lastResult = new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, ex.Message);
+                    lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
                     AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, ex.Message));
                 }
 
-                bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || settingsBackup.HasValue);
+                bool hasOverrideForItem = item.Account.RobloxSettings?.HasOverrides == true;
+                bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || hasOverrideForItem);
                 if (shouldWaitForWindow)
                 {
                     int timeoutSeconds = Math.Max(1, (int)Math.Ceiling(WindowWaitTimeout.TotalSeconds));
@@ -1639,11 +1703,21 @@ public sealed class AccountsViewModel : ViewModelBase
                         ProcessSupervisor.DefaultWindowPollInterval,
                         ct);
 
+                    if (waitResult.ProcessId.HasValue)
+                    {
+                        pidsToProtect.Add(waitResult.ProcessId.Value);
+                    }
+
                     if (waitResult.WindowReady)
                     {
                         AppendActivityLog(i < targets.Count - 1
                             ? LocalizationService.Instance.Format("Str_Accounts_LogWindowReadyNextFormat", item.Username, waitResult.ProcessId)
                             : LocalizationService.Instance.Format("Str_Accounts_LogWindowReadySingleFormat", item.Username, waitResult.ProcessId));
+
+                        if (hasOverrideForItem && _settingsApplySettleDelay > TimeSpan.Zero)
+                        {
+                            await Task.Delay(_settingsApplySettleDelay, ct);
+                        }
                     }
                     else if (waitResult.TimedOut)
                     {
@@ -1663,17 +1737,26 @@ public sealed class AccountsViewModel : ViewModelBase
         }
         finally
         {
-            if (settingsBackup.HasValue)
+            if (shouldProtectSettings)
             {
                 try
                 {
-                    _globalSettingsManager.RestoreBackupState(settingsBackup.Value);
-                    AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsRestored"));
+                    bool enableReadOnly = successCount > 0 || pidsToProtect.Count > 0;
+                    _globalSettingsGuard.RestoreOriginalAndProtect(pidsToProtect, enableReadOnlyProtection: enableReadOnly);
+                    AppendActivityLog(LocalizationService.Instance.GetString(
+                        enableReadOnly && _globalSettingsGuard.IsProtectionActive
+                            ? "Str_Accounts_LogSettingsProtectedReadOnly"
+                            : "Str_Accounts_LogSettingsRestored"));
                 }
                 catch (Exception ex)
                 {
                     AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsRestoreFailedFormat", ex.Message));
                 }
+            }
+
+            if (guardSession != null)
+            {
+                try { await guardSession.DisposeAsync(); } catch { }
             }
 
             _launchCts?.Dispose();

@@ -19,4 +19,17 @@ public interface IRoValraService
         long placeId,
         bool randomize = false,
         CancellationToken ct = default) => Task.FromResult<string?>(null);
+
+    Task<string?> GetBetterMatchmakingServerIdAsync(
+        long placeId,
+        bool randomize,
+        int requiredSlots,
+        IReadOnlySet<string>? excludedServerIds = null,
+        CancellationToken ct = default) => GetBetterMatchmakingServerIdAsync(placeId, randomize, ct);
+
+    Task<IReadOnlyList<string?>> AllocateBetterMatchmakingServersAsync(
+        long placeId,
+        int accountCount,
+        bool randomize = false,
+        CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string?>>(new string?[Math.Max(0, accountCount)]);
 }

@@ -21,6 +21,7 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     private readonly IJsonManager<State>? _stateManager;
     private readonly IJsonManager<RobloxState>? _robloxStateManager;
     private readonly InstallerService _installerService;
+    private readonly IGlobalSettingsGuard? _globalSettingsGuard;
     private readonly Action<string, object?[]> _setLocalizedStatus;
 
     private string _cdnTestResult = LocalizationService.Instance.GetString("Str_Common_NotTestedYet");
@@ -42,7 +43,8 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
         IJsonManager<State>? stateManager,
         IJsonManager<RobloxState>? robloxStateManager,
         InstallerService installerService,
-        Action<string, object?[]> setLocalizedStatus)
+        Action<string, object?[]> setLocalizedStatus,
+        IGlobalSettingsGuard? globalSettingsGuard = null)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
@@ -51,6 +53,7 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
         _robloxStateManager = robloxStateManager;
         _installerService = installerService ?? throw new ArgumentNullException(nameof(installerService));
         _setLocalizedStatus = setLocalizedStatus ?? throw new ArgumentNullException(nameof(setLocalizedStatus));
+        _globalSettingsGuard = globalSettingsGuard;
 
         if (_stateManager != null)
         {
@@ -405,6 +408,7 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     public void SaveGlobalSettings()
     {
         _globalSettingsManager.Save();
+        _globalSettingsGuard?.UpdateOriginalContentFromCurrentFile();
         HasUnsavedGlobalSettings = false;
         _setLocalizedStatus("Str_GlobalSettings_StatusSaved", Array.Empty<object?>());
     }
