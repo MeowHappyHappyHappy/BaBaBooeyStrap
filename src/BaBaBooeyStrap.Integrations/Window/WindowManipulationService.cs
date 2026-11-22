@@ -444,7 +444,7 @@ public sealed class WindowManipulationService : IWindowManipulation
             }
             else
             {
-                originalTitle = currentTitle;
+                originalTitle = WindowTitleFormatter.ExtractOriginalTitle(currentTitle);
                 _originalTitles[hWnd] = originalTitle;
             }
 

@@ -538,7 +538,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             return stored;
         }
 
-        string safeTitle = string.IsNullOrWhiteSpace(currentTitle) ? "Roblox" : currentTitle;
+        string safeTitle = WindowTitleFormatter.ExtractOriginalTitle(currentTitle);
         _originalTitles[hwnd] = safeTitle;
         return safeTitle;
     }

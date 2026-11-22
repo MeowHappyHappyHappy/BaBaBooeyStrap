@@ -305,6 +305,15 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             int pid = result.ProcessId.Value;
             _processSupervisor.RegisterProcess(pid);
             _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
+
+            bool willManageTitleExternally = appSettings.EnableActivityTracking &&
+                                            !isStudio &&
+                                            appSettings.EnableWindowManipulation;
+            if (willManageTitleExternally)
+            {
+                _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
+            }
+
             if (launchedAccount != null)
             {
                 _runningInstanceTracker?.RegisterLaunchedAccount(pid, launchedAccount);
@@ -699,6 +708,10 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 _activeWindowManips[pid] = windowManip;
                 _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
             }
+            else
+            {
+                _runningInstanceTracker?.MarkTitleManagedExternally(pid, false);
+            }
 
             activityWatcher.GameJoined += async (_, joinArgs) =>
             {
@@ -764,6 +777,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
         catch (Exception ex)
         {
+            _runningInstanceTracker?.MarkTitleManagedExternally(pid, false);
             _logger.Warn("BootstrapperOrchestrator", $"Failed to start WatcherSession for PID {pid}: {ex.Message}");
         }
     }

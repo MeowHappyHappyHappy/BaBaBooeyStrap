@@ -263,6 +263,67 @@ public sealed class Integrations_RunningInstanceTrackerTests
         interop.GetWindowText(hwnd3).Should().Be("[#2] AccThree - Roblox");
     }
 
+    [Theory]
+    [InlineData("Roblox", "Roblox")]
+    [InlineData("[#1] Roblox", "Roblox")]
+    [InlineData("[#1] [US] TestUser - Roblox", "Roblox")]
+    [InlineData("[#1] [JP] TestUser - [#1] [JP] TestUser - Roblox", "Roblox")]
+    [InlineData("[#2] [US] User - My Custom Game", "My Custom Game")]
+    [InlineData("[#1] [US] TestUser - ", "Roblox")]
+    [InlineData("[#1] [US]", "Roblox")]
+    public void WindowTitleFormatter_ExtractOriginalTitle_StripsStackedTagPrefixes(string rawTitle, string expected)
+    {
+        WindowTitleFormatter.ExtractOriginalTitle(rawTitle).Should().Be(expected);
+    }
+
+    [Fact]
+    public void WindowManipulationService_SetCustomTitle_DoesNotStackExistingPrefixOnInitialTitle()
+    {
+        var interop = new TrackerMockInterop();
+        nint hwnd = 0x9001;
+        interop.SetWindowText(hwnd, "[#1] [US] TestUser - Roblox");
+
+        using var service = new WindowManipulationService(interop);
+        var placeholders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Index"] = "1",
+            ["Server"] = "US",
+            ["Account"] = "TestUser"
+        };
+
+        bool updated = service.SetCustomTitle(hwnd, Settings.DefaultMultiInstanceWindowTitleTemplate, placeholders);
+        updated.Should().BeTrue();
+        interop.GetWindowText(hwnd).Should().Be("[#1] [US] TestUser - Roblox");
+    }
+
+    [Fact]
+    public void RunningInstanceTracker_PreTaggedWindowTitle_NormalizesWithoutStacking()
+    {
+        var settings = new Settings { AutoTagMultiInstanceWindowTitle = true };
+        var interop = new TrackerMockInterop();
+        var mon1 = new MonitorInfo(1, @"\\.\DISPLAY1", true,
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 },
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 });
+
+        nint hwnd = 0x9002;
+        interop.SetWindowText(hwnd, "[#1] [US] TestUser - Roblox");
+        var observed = new List<ObservedRobloxWindow>
+        {
+            new(7777, hwnd, "[#1] [US] TestUser - Roblox", false, false, mon1)
+        };
+
+        using var tracker = new RunningInstanceTracker(
+            () => settings,
+            interop,
+            new SingleMonitorProvider(mon1),
+            windowProbe: () => observed.Select(w => w with { WindowTitle = interop.GetWindowText(w.WindowHandle) }).ToList());
+
+        tracker.RegisterLaunchedAccount(7777, new RobloxAccount { UserId = 77, Username = "TestUser" });
+        tracker.UpdateServerCode(7777, "US");
+
+        interop.GetWindowText(hwnd).Should().Be("[#1] [US] TestUser - Roblox");
+    }
+
     private sealed class SingleMonitorProvider(MonitorInfo monitor) : IMonitorProvider
     {
         public IReadOnlyList<MonitorInfo> GetMonitors() => [monitor];
