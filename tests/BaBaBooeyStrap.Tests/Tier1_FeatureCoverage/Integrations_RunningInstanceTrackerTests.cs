@@ -144,6 +144,15 @@ public sealed class Integrations_RunningInstanceTrackerTests
         settings.AutoTagMultiInstanceWindowTitle = false;
         tracker.RefreshNow();
         interop.GetWindowText(hwnd).Should().Be("Roblox");
+
+        // Re-enabling AutoTag and simulating Roblox resetting title to "Roblox" re-tags cleanly
+        settings.AutoTagMultiInstanceWindowTitle = true;
+        tracker.RefreshNow();
+        interop.GetWindowText(hwnd).Should().Be("[#1] Hero - Roblox");
+
+        interop.SetWindowText(hwnd, "Roblox");
+        tracker.RefreshNow();
+        interop.GetWindowText(hwnd).Should().Be("[#1] Hero - Roblox");
     }
 
     private sealed class SingleMonitorProvider(MonitorInfo monitor) : IMonitorProvider

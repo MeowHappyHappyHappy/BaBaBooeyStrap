@@ -29,7 +29,26 @@ public sealed class Win32WindowInterop : IWin32WindowInterop
         return read > 0 ? sb.ToString(0, read) : string.Empty;
     }
 
-    public bool SetWindowText(nint hWnd, string text) => User32.SetWindowTextW(hWnd, text);
+    public bool SetWindowText(nint hWnd, string text)
+    {
+        bool ok = User32.SetWindowTextW(hWnd, text);
+        if (ok && string.Equals(GetWindowText(hWnd), text, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        nint sent = User32.SendMessageTimeoutW(
+            hWnd,
+            User32.WM_SETTEXT,
+            nint.Zero,
+            text,
+            User32.SMTO_NORMAL | User32.SMTO_ABORTIFHUNG,
+            250,
+            out nint result);
+
+        return (sent != nint.Zero && result != nint.Zero) ||
+               string.Equals(GetWindowText(hWnd), text, StringComparison.Ordinal);
+    }
 
     public nint GetWindowLongPtr(nint hWnd, int nIndex) => User32.GetWindowLongPtr(hWnd, nIndex);
 

@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Storage;
@@ -23,6 +24,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
 
     private QuickSwitcherWindow? _quickSwitcher;
     private FloatingSwitcherBarWindow? _floatingBar;
+    private WindowFocusHighlightOverlay? _highlightOverlay;
     private int? _lastFocusedRobloxPid;
     private bool _floatingBarManuallyHidden;
     private bool _floatingBarManuallyShown;
@@ -60,6 +62,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         {
             _hotkeyService.QuickSwitcherRequested += OnHotkeyQuickSwitcher;
             _hotkeyService.CycleNextWindowRequested += OnHotkeyCycleNext;
+            _hotkeyService.CyclePreviousWindowRequested += OnHotkeyCyclePrevious;
             _hotkeyService.DirectSlotRequested += OnHotkeyDirectSlot;
         }
     }
@@ -120,7 +123,11 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         });
     }
 
-    public void CycleNextInstance()
+    public void CycleNextInstance() => CycleByOffset(1);
+
+    public void CyclePreviousInstance() => CycleByOffset(-1);
+
+    private void CycleByOffset(int delta)
     {
         if (_disposed) return;
 
@@ -155,7 +162,10 @@ public sealed class WindowSwitcherCoordinator : IDisposable
             }
         }
 
-        int nextIdx = currentIdx < 0 ? 0 : (currentIdx + 1) % instances.Count;
+        int count = instances.Count;
+        int nextIdx = currentIdx < 0
+            ? (delta >= 0 ? 0 : count - 1)
+            : (currentIdx + delta % count + count) % count;
         FocusProcess(instances[nextIdx].ProcessId);
     }
 
@@ -177,11 +187,18 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var inst = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid);
         if (inst == null) return;
 
-        if (_focusHelper.ActivateWindow(inst.WindowHandle))
+        bool activated = _focusHelper.ActivateWindow(inst.WindowHandle);
+        if (activated)
         {
             _lastFocusedRobloxPid = pid;
         }
         _tracker.RefreshNow();
+
+        if (activated)
+        {
+            var latest = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid) ?? inst;
+            ShowSwitchHighlightIfEnabled(latest);
+        }
     }
 
     public void MoveProcessToMonitor(int pid, string deviceName)
@@ -192,11 +209,18 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var monitor = _monitorProvider.FindMonitorByDeviceName(deviceName);
         if (inst == null || monitor == null) return;
 
-        if (_focusHelper.MoveWindowToMonitor(inst.WindowHandle, monitor, activateAfterMove: true))
+        bool moved = _focusHelper.MoveWindowToMonitor(inst.WindowHandle, monitor, activateAfterMove: true);
+        if (moved)
         {
             _lastFocusedRobloxPid = pid;
         }
         _tracker.RefreshNow();
+
+        if (moved)
+        {
+            var latest = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid) ?? inst;
+            ShowSwitchHighlightIfEnabled(latest);
+        }
     }
 
     public void MoveProcessToNextMonitor(int pid)
@@ -423,7 +447,51 @@ public sealed class WindowSwitcherCoordinator : IDisposable
 
     private void OnHotkeyQuickSwitcher(object? sender, EventArgs e) => ShowQuickSwitcher();
     private void OnHotkeyCycleNext(object? sender, EventArgs e) => CycleNextInstance();
-    private void OnHotkeyDirectSlot(object? sender, int slot) => FocusSlot(slot);
+    private void OnHotkeyCyclePrevious(object? sender, EventArgs e) => CyclePreviousInstance();
+
+    private void OnHotkeyDirectSlot(object? sender, int slot)
+    {
+        if (_disposed || slot is < 1 or > 9) return;
+        _ = WaitForDigitReleaseAndFocusSlotAsync(slot);
+    }
+
+    private async Task WaitForDigitReleaseAndFocusSlotAsync(int slot)
+    {
+        int mainDigitVk = '0' + slot;
+        int numpadDigitVk = 0x60 + slot;
+
+        for (int i = 0; i < 16; i++)
+        {
+            if (_disposed) return;
+            bool mainDown = (User32.GetAsyncKeyState(mainDigitVk) & 0x8000) != 0;
+            bool numpadDown = (User32.GetAsyncKeyState(numpadDigitVk) & 0x8000) != 0;
+            if (!mainDown && !numpadDown)
+            {
+                break;
+            }
+            await Task.Delay(15).ConfigureAwait(false);
+        }
+
+        if (!_disposed)
+        {
+            RunOnUi(() => FocusSlot(slot));
+        }
+    }
+
+    private void ShowSwitchHighlightIfEnabled(RunningRobloxInstance instance)
+    {
+        if (!_enableFloatingWindows || _disposed || !_settingsManager.Prop.EnableWindowSwitchHighlight)
+        {
+            return;
+        }
+
+        RunOnUi(() =>
+        {
+            if (_disposed) return;
+            _highlightOverlay ??= new WindowFocusHighlightOverlay();
+            _highlightOverlay.ShowForWindow(instance.WindowHandle, instance);
+        });
+    }
 
     private void EvaluateFloatingBarVisibility(IReadOnlyList<RunningRobloxInstance> instances)
     {
@@ -511,6 +579,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         {
             _hotkeyService.QuickSwitcherRequested -= OnHotkeyQuickSwitcher;
             _hotkeyService.CycleNextWindowRequested -= OnHotkeyCycleNext;
+            _hotkeyService.CyclePreviousWindowRequested -= OnHotkeyCyclePrevious;
             _hotkeyService.DirectSlotRequested -= OnHotkeyDirectSlot;
         }
 
@@ -518,8 +587,10 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         {
             try { _quickSwitcher?.ForceClose(); } catch { }
             try { _floatingBar?.ForceClose(); } catch { }
+            try { _highlightOverlay?.ForceClose(); } catch { }
             _quickSwitcher = null;
             _floatingBar = null;
+            _highlightOverlay = null;
         });
 
         GC.SuppressFinalize(this);

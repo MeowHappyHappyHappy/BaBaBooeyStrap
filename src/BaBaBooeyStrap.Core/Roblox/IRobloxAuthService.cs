@@ -23,6 +23,7 @@ public interface IRobloxAuthService : IDisposable
     Task<ResolvedShareLink> ResolveShareLinkAsync(string cookie, string shareCode, CancellationToken ct = default);
     Task<string?> GetAvatarThumbnailUrlAsync(long userId, string size = "150x150", bool isCircular = true, CancellationToken ct = default);
     Task<long> ResolveUserIdByUsernameAsync(string username, CancellationToken ct = default);
+    Task<AuthenticatedUser?> GetUserByIdAsync(long userId, CancellationToken ct = default) => Task.FromResult<AuthenticatedUser?>(null);
     Task<RobloxUserPresence> GetUserPresenceAsync(string cookie, long userId, CancellationToken ct = default);
     Task<RobloxGameInfo?> GetGameInfoByPlaceIdAsync(long placeId, CancellationToken ct = default);
 }

@@ -113,7 +113,6 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="170"/>
                                 <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <CheckBox x:Name="CycleHotkeyEnabledCheck" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
@@ -126,6 +125,27 @@
                                         PreviewKeyDown="CycleHotkeyBox_PreviewKeyDown"
                                         Margin="0,0,6,0"/>
                             <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Reset}" Click="ResetCycleHotkey_Click"/>
+                        </Grid>
+
+                        <!-- Cycle Previous Hotkey -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="170"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <CheckBox x:Name="CyclePrevHotkeyEnabledCheck" Grid.Column="0" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
+                                <TextBlock Text="{DynamicResource Str_SwitcherSettings_HotkeyCyclePrevLabel}" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="CyclePrevHotkeyStatusText" FontSize="11" Opacity="0.75"/>
+                            </StackPanel>
+                            <ui:TextBox x:Name="CyclePrevHotkeyBox"
+                                        Grid.Column="2"
+                                        IsReadOnly="True"
+                                        PreviewKeyDown="CyclePrevHotkeyBox_PreviewKeyDown"
+                                        Margin="0,0,6,0"/>
+                            <ui:Button Grid.Column="3" Content="{DynamicResource Str_Common_Reset}" Click="ResetCyclePrevHotkey_Click"/>
                         </Grid>
 
                         <!-- Direct Slots Modifier -->
@@ -163,6 +183,11 @@
                                    FontSize="14"
                                    FontWeight="SemiBold"
                                    Margin="0,0,0,8"/>
+
+                        <DockPanel Margin="0,0,0,8">
+                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_SwitchHighlight}" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="SwitchHighlightToggle" HorizontalAlignment="Right"/>
+                        </DockPanel>
 
                         <DockPanel Margin="0,0,0,8">
                             <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingEnabled}" VerticalAlignment="Center"/>

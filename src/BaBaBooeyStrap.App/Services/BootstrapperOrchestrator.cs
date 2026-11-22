@@ -665,13 +665,21 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 };
             }
 
+            string effectiveTitleTemplate = appSettings.RobloxTitle;
+            if (appSettings.AutoTagMultiInstanceWindowTitle &&
+                (string.IsNullOrWhiteSpace(effectiveTitleTemplate) ||
+                 string.Equals(effectiveTitleTemplate.Trim(), "Roblox", StringComparison.OrdinalIgnoreCase)))
+            {
+                effectiveTitleTemplate = appSettings.MultiInstanceWindowTitleTemplate;
+            }
+
             IWindowManipulation? windowManip = appSettings.EnableWindowManipulation
                 ? new WindowManipulationService(
                     new Win32WindowInterop(),
                     new WindowManipulationOptions
                     {
                         TargetProcessId = (uint)pid,
-                        CustomTitleTemplate = appSettings.RobloxTitle,
+                        CustomTitleTemplate = effectiveTitleTemplate,
                         TitlePlaceholders = titlePlaceholders,
                         CustomIconPath = appSettings.RobloxIcon == RobloxIcon.IconCustom ? appSettings.RobloxIconCustomLocation : null,
                         BorderlessFullscreen = appSettings.FakeBorderlessFullscreen

@@ -43,6 +43,10 @@ public partial class AccountsPage : Page
         ViewModel?.AccountManagement.RefreshProtocolStatus();
         ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
         ViewModel?.AccountManagement.RefreshRunningInstances();
+        if (ViewModel?.AccountManagement is { } accVm)
+        {
+            _ = accVm.BackfillMissingTargetThumbnailsAsync();
+        }
         _statusTimer.Start();
         LogTextBox.ScrollToEnd();
     }

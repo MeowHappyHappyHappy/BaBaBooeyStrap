@@ -260,6 +260,46 @@ public sealed class RobloxAuthService : IRobloxAuthService
         throw new RobloxApiException(HttpStatusCode.NotFound, $"Roblox user '{cleanUsername}' was not found.", body);
     }
 
+    public async Task<AuthenticatedUser?> GetUserByIdAsync(long userId, CancellationToken ct = default)
+    {
+        if (userId <= 0)
+        {
+            return null;
+        }
+
+        string url = $"https://users.roblox.com/v1/users/{userId}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Add("User-Agent", "BaBaBooeyStrap/1.0");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        string json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+
+        long id = root.TryGetProperty("id", out var idProp) && idProp.TryGetInt64(out long parsedId)
+            ? parsedId
+            : userId;
+        string name = root.TryGetProperty("name", out var nameProp)
+            ? nameProp.GetString() ?? string.Empty
+            : string.Empty;
+        string displayName = root.TryGetProperty("displayName", out var dispProp)
+            ? dispProp.GetString() ?? name
+            : name;
+
+        if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(displayName))
+        {
+            return null;
+        }
+
+        return new AuthenticatedUser(id, name, displayName);
+    }
+
     public async Task<RobloxUserPresence> GetUserPresenceAsync(string cookie, long userId, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(cookie);

@@ -12,6 +12,8 @@
         SizeToContent="Height"
         MaxHeight="560"
         PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewKeyUp="Window_PreviewKeyUp"
+        PreviewTextInput="Window_PreviewTextInput"
         Deactivated="Window_Deactivated">
     <Border Margin="12"
             CornerRadius="12"

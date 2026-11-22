@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Integrations.Window;
@@ -61,6 +62,9 @@ public partial class QuickSwitcherWindow : Window
     private int _monitorCount = 1;
     private bool _allowClose;
     private bool _suppressDeactivateHide;
+    private int? _pendingDigitPid;
+    private Key? _pendingDigitKey;
+    private readonly DispatcherTimer _digitReleaseFallbackTimer;
 
     public QuickSwitcherWindow(
         Action<int> onFocusInstance,
@@ -76,10 +80,21 @@ public partial class QuickSwitcherWindow : Window
         _onTileAll = onTileAll ?? throw new ArgumentNullException(nameof(onTileAll));
 
         InitializeComponent();
+
+        _digitReleaseFallbackTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(220)
+        };
+        _digitReleaseFallbackTimer.Tick += (_, _) =>
+        {
+            _digitReleaseFallbackTimer.Stop();
+            CompletePendingDigitActivation();
+        };
     }
 
     public void UpdateAndShow(IReadOnlyList<RunningRobloxInstance> instances, MonitorInfo targetMonitor, int monitorCount)
     {
+        ClearPendingDigitActivation();
         _monitorCount = Math.Max(1, monitorCount);
         _allInstances = instances.ToList();
 
@@ -210,16 +225,32 @@ public partial class QuickSwitcherWindow : Window
 
     private void Window_Deactivated(object? sender, EventArgs e)
     {
+        ClearPendingDigitActivation();
         if (!_suppressDeactivateHide && IsVisible)
         {
             Hide();
         }
     }
 
+    private void Window_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (_pendingDigitPid.HasValue)
+        {
+            e.Handled = true;
+        }
+    }
+
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_pendingDigitPid.HasValue && e.Key == _pendingDigitKey)
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape)
         {
+            ClearPendingDigitActivation();
             e.Handled = true;
             Hide();
             return;
@@ -246,7 +277,8 @@ public partial class QuickSwitcherWindow : Window
             return;
         }
 
-        // Number keys 1-9 jump directly when search box is empty
+        // Number keys 1-9 jump directly when search box is empty, deferring focus until KeyUp
+        // so the target Roblox window does not receive the pressed digit key.
         if (string.IsNullOrEmpty(SearchBox.Text))
         {
             int? slot = e.Key switch
@@ -262,10 +294,39 @@ public partial class QuickSwitcherWindow : Window
                 if (match != null)
                 {
                     e.Handled = true;
-                    ActivateInstance(match.ProcessId);
+                    _pendingDigitPid = match.ProcessId;
+                    _pendingDigitKey = e.Key;
+                    _digitReleaseFallbackTimer.Stop();
+                    _digitReleaseFallbackTimer.Start();
                 }
             }
         }
+    }
+
+    private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
+    {
+        if (_pendingDigitPid.HasValue && e.Key == _pendingDigitKey)
+        {
+            e.Handled = true;
+            CompletePendingDigitActivation();
+        }
+    }
+
+    private void CompletePendingDigitActivation()
+    {
+        int? pid = _pendingDigitPid;
+        ClearPendingDigitActivation();
+        if (pid.HasValue)
+        {
+            ActivateInstance(pid.Value);
+        }
+    }
+
+    private void ClearPendingDigitActivation()
+    {
+        _digitReleaseFallbackTimer.Stop();
+        _pendingDigitPid = null;
+        _pendingDigitKey = null;
     }
 
     private void MoveSelection(int delta)

@@ -406,6 +406,10 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                     _lastAppliedTitles[hwnd] = targetTitle;
                 }
             }
+            else
+            {
+                _logger.Debug("RunningInstanceTracker", $"Failed to set window title for HWND 0x{hwnd:X}.");
+            }
         }
 
         if (changedSnapshot != null)
@@ -650,6 +654,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         {
             nint fgHook = nint.Zero;
             nint destroyHook = nint.Zero;
+            nint nameChangeHook = nint.Zero;
 
             try
             {
@@ -667,6 +672,14 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 destroyHook = _interop.SetWinEventHook(
                     User32.EVENT_OBJECT_DESTROY,
                     User32.EVENT_OBJECT_DESTROY,
+                    localDelegate,
+                    0,
+                    0,
+                    flags);
+
+                nameChangeHook = _interop.SetWinEventHook(
+                    User32.EVENT_OBJECT_NAMECHANGE,
+                    User32.EVENT_OBJECT_NAMECHANGE,
                     localDelegate,
                     0,
                     0,
@@ -691,6 +704,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             {
                 if (fgHook != nint.Zero) _interop.UnhookWinEvent(fgHook);
                 if (destroyHook != nint.Zero) _interop.UnhookWinEvent(destroyHook);
+                if (nameChangeHook != nint.Zero) _interop.UnhookWinEvent(nameChangeHook);
                 if (localHandle.IsAllocated) localHandle.Free();
 
                 lock (_stateLock)
@@ -728,7 +742,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 return;
             }
 
-            if (eventType == User32.EVENT_OBJECT_DESTROY &&
+            if ((eventType == User32.EVENT_OBJECT_DESTROY || eventType == User32.EVENT_OBJECT_NAMECHANGE) &&
                 hwnd != nint.Zero &&
                 idObject == User32.OBJID_WINDOW &&
                 idChild == User32.CHILDID_SELF)

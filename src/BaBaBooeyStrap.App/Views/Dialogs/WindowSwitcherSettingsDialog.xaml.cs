@@ -51,11 +51,15 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
         CycleHotkeyEnabledCheck.IsChecked = _settings.EnableCycleWindowHotkey;
         CycleHotkeyBox.Text = _settings.CycleWindowHotkey;
 
+        CyclePrevHotkeyEnabledCheck.IsChecked = _settings.EnableCyclePreviousWindowHotkey;
+        CyclePrevHotkeyBox.Text = _settings.CyclePreviousWindowHotkey;
+
         DirectSlotsEnabledCheck.IsChecked = _settings.EnableDirectSlotHotkeys;
         DirectSlotModifierBox.Text = _settings.DirectSlotHotkeyModifier;
 
         UpdateHotkeyStatusTexts();
 
+        SwitchHighlightToggle.IsChecked = _settings.EnableWindowSwitchHighlight;
         FloatingBarEnabledToggle.IsChecked = _settings.FloatingSwitcherBarEnabled;
         FloatingBarAutoShowToggle.IsChecked = _settings.FloatingSwitcherBarAutoShow;
 
@@ -126,6 +130,10 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
             hotkeySvc,
             GlobalHotkeyService.KeyCycleWindow,
             CycleHotkeyEnabledCheck.IsChecked == true);
+        CyclePrevHotkeyStatusText.Text = FormatHotkeyStatus(
+            hotkeySvc,
+            GlobalHotkeyService.KeyCyclePreviousWindow,
+            CyclePrevHotkeyEnabledCheck.IsChecked == true);
         DirectSlotsStatusText.Text = FormatHotkeyStatus(
             hotkeySvc,
             GlobalHotkeyService.KeyDirectSlots,
@@ -177,6 +185,17 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
         }
     }
 
+    private void CyclePrevHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        e.Handled = true;
+        Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        string? formatted = HotkeyParser.FormatKeyGesture(Keyboard.Modifiers, actualKey);
+        if (!string.IsNullOrEmpty(formatted))
+        {
+            CyclePrevHotkeyBox.Text = formatted;
+        }
+    }
+
     private void DirectSlotModifierBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         e.Handled = true;
@@ -189,6 +208,7 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
 
     private void ResetQuickHotkey_Click(object sender, RoutedEventArgs e) => QuickHotkeyBox.Text = "Ctrl+Alt+Space";
     private void ResetCycleHotkey_Click(object sender, RoutedEventArgs e) => CycleHotkeyBox.Text = "Ctrl+Alt+Right";
+    private void ResetCyclePrevHotkey_Click(object sender, RoutedEventArgs e) => CyclePrevHotkeyBox.Text = "Ctrl+Alt+Left";
     private void ResetDirectSlots_Click(object sender, RoutedEventArgs e) => DirectSlotModifierBox.Text = "Ctrl+Alt";
 
     private void ResetFloatingBarPos_Click(object sender, RoutedEventArgs e)
@@ -221,12 +241,19 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
             _settings.CycleWindowHotkey = parsedCycle.NormalizedText;
         }
 
+        _settings.EnableCyclePreviousWindowHotkey = CyclePrevHotkeyEnabledCheck.IsChecked == true;
+        if (HotkeyParser.TryParse(CyclePrevHotkeyBox.Text, out var parsedCyclePrev))
+        {
+            _settings.CyclePreviousWindowHotkey = parsedCyclePrev.NormalizedText;
+        }
+
         _settings.EnableDirectSlotHotkeys = DirectSlotsEnabledCheck.IsChecked == true;
         if (HotkeyParser.TryParseModifiersOnly(DirectSlotModifierBox.Text, out _, out string normMods))
         {
             _settings.DirectSlotHotkeyModifier = normMods;
         }
 
+        _settings.EnableWindowSwitchHighlight = SwitchHighlightToggle.IsChecked == true;
         _settings.FloatingSwitcherBarEnabled = FloatingBarEnabledToggle.IsChecked == true;
         _settings.FloatingSwitcherBarAutoShow = FloatingBarAutoShowToggle.IsChecked == true;
 

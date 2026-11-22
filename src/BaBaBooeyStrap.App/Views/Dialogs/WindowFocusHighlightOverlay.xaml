@@ -1,0 +1,60 @@
+<Window x:Class="BaBaBooeyStrap.App.Views.Dialogs.WindowFocusHighlightOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Focusable="False"
+        IsHitTestVisible="False"
+        ResizeMode="NoResize">
+    <Grid>
+        <!-- Outer Glow Frame -->
+        <Border CornerRadius="6"
+                BorderThickness="4"
+                BorderBrush="#FF38BDF8"
+                Background="#0838BDF8">
+            <Border.Effect>
+                <DropShadowEffect Color="#38BDF8" BlurRadius="16" ShadowDepth="0" Opacity="0.95"/>
+            </Border.Effect>
+        </Border>
+
+        <!-- Top-Center Account Badge -->
+        <Border HorizontalAlignment="Center"
+                VerticalAlignment="Top"
+                Margin="0,18,0,0"
+                Padding="16,8"
+                CornerRadius="18"
+                Background="#E6121722"
+                BorderBrush="#CC38BDF8"
+                BorderThickness="1.5">
+            <Border.Effect>
+                <DropShadowEffect Color="#000000" BlurRadius="16" ShadowDepth="3" Opacity="0.6"/>
+            </Border.Effect>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Border CornerRadius="8"
+                        Padding="8,2"
+                        Margin="0,0,10,0"
+                        Background="#FF2563EB"
+                        VerticalAlignment="Center">
+                    <TextBlock x:Name="SlotText"
+                               Foreground="White"
+                               FontSize="13"
+                               FontWeight="Bold"/>
+                </Border>
+                <TextBlock x:Name="AccountNameText"
+                           Foreground="White"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"/>
+                <TextBlock x:Name="ExtraInfoText"
+                           Foreground="#B8FFFFFF"
+                           FontSize="12"
+                           Margin="10,0,0,0"
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

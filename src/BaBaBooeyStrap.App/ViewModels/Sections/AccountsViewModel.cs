@@ -40,15 +40,26 @@ public sealed class AccountsViewModel : ViewModelBase
     private readonly IRobloxAuthService? _injectedAuthService;
     private readonly WindowSwitcherCoordinator? _switcherCoordinator;
     private readonly Action<string, object?[]> _setLocalizedStatus;
+    private sealed record UserPreviewInfo(
+        long UserId,
+        string Username,
+        string DisplayName,
+        string? AvatarUrl,
+        string? FormattedLabel = null);
+
     private readonly StringBuilder _activityLogBuilder = new();
     private readonly ConcurrentDictionary<long, RobloxGameInfo?> _gameInfoCache = new();
+    private readonly ConcurrentDictionary<string, UserPreviewInfo> _userPreviewCache = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _gameInfoCts;
     private string _resolvedGameName = string.Empty;
     private string _resolvedGamePlaceIdText = string.Empty;
     private string? _resolvedGameThumbnailUrl;
     private bool _hasResolvedGameInfo;
     private bool _isResolvingGameInfo;
+    private bool _isResolvedPreviewCircular;
     private long? _resolvedPlaceId;
+    private long? _resolvedUserId;
+    private int _isBackfillingTargets;
 
     private RobloxAccount? _selectedAccount;
     private AccountItem? _selectedAccountItem;
@@ -322,6 +333,22 @@ public sealed class AccountsViewModel : ViewModelBase
                     }
                     ApplyResolvedGameInfo(info);
                 }
+                else if (value.UserId is > 0 &&
+                         !string.IsNullOrWhiteSpace(value.GameName) &&
+                         !string.IsNullOrWhiteSpace(value.ThumbnailUrl))
+                {
+                    _gameInfoCts?.Cancel();
+                    _gameInfoCts?.Dispose();
+                    _gameInfoCts = null;
+
+                    var userInfo = new UserPreviewInfo(
+                        value.UserId.Value,
+                        value.Name,
+                        value.GameName,
+                        value.ThumbnailUrl,
+                        FormattedLabel: value.GameName);
+                    ApplyResolvedUserInfo(userInfo);
+                }
             }
         }
     }
@@ -438,6 +465,12 @@ public sealed class AccountsViewModel : ViewModelBase
     {
         get => _isResolvingGameInfo;
         private set => SetProperty(ref _isResolvingGameInfo, value);
+    }
+
+    public bool IsResolvedPreviewCircular
+    {
+        get => _isResolvedPreviewCircular;
+        private set => SetProperty(ref _isResolvedPreviewCircular, value);
     }
 
     public string LaunchJobId
@@ -1113,18 +1146,20 @@ public sealed class AccountsViewModel : ViewModelBase
 
         string savedTargetInput;
         string? savedJobId;
+        LaunchTarget parsedSaved;
         try
         {
             if (_isFollowUserTargetMode)
             {
                 savedTargetInput = RobloxLauncher.BuildEffectiveTargetInput(targetInput, null, followUserMode: true);
+                parsedSaved = RobloxLauncher.ParseTargetInput(savedTargetInput, followUserMode: true);
                 savedJobId = null;
             }
             else
             {
-                var parsed = RobloxLauncher.ParseTargetInput(targetInput, followUserMode: false);
+                parsedSaved = RobloxLauncher.ParseTargetInput(targetInput, followUserMode: false);
                 savedTargetInput = targetInput;
-                savedJobId = parsed.Kind == LaunchTargetKind.FollowUser ? null : jobId;
+                savedJobId = parsedSaved.Kind == LaunchTargetKind.FollowUser ? null : jobId;
             }
         }
         catch (Exception ex)
@@ -1133,6 +1168,10 @@ public sealed class AccountsViewModel : ViewModelBase
             AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSaveTargetFailedFormat", ex.Message));
             return false;
         }
+
+        bool isUserTarget = parsedSaved.Kind == LaunchTargetKind.FollowUser;
+        long? resolvedPlaceForSave = isUserTarget ? null : (_resolvedPlaceId ?? parsedSaved.PlaceId);
+        long? resolvedUserForSave = isUserTarget ? (_resolvedUserId ?? parsedSaved.UserId) : null;
 
         var existing = SavedTargets.FirstOrDefault(t =>
             string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase));
@@ -1143,7 +1182,8 @@ public sealed class AccountsViewModel : ViewModelBase
             existing.Name = name;
             existing.TargetInput = savedTargetInput;
             existing.JobId = savedJobId;
-            existing.PlaceId = _resolvedPlaceId ?? existing.PlaceId;
+            existing.PlaceId = isUserTarget ? null : (resolvedPlaceForSave ?? existing.PlaceId);
+            existing.UserId = isUserTarget ? (resolvedUserForSave ?? existing.UserId) : null;
             existing.GameName = !string.IsNullOrWhiteSpace(_resolvedGameName) ? _resolvedGameName : existing.GameName;
             existing.ThumbnailUrl = !string.IsNullOrWhiteSpace(_resolvedGameThumbnailUrl) ? _resolvedGameThumbnailUrl : existing.ThumbnailUrl;
             existing.UpdatedAt = DateTimeOffset.UtcNow;
@@ -1161,7 +1201,8 @@ public sealed class AccountsViewModel : ViewModelBase
                 Name = name,
                 TargetInput = savedTargetInput,
                 JobId = savedJobId,
-                PlaceId = _resolvedPlaceId,
+                PlaceId = resolvedPlaceForSave,
+                UserId = resolvedUserForSave,
                 GameName = string.IsNullOrWhiteSpace(_resolvedGameName) ? null : _resolvedGameName,
                 ThumbnailUrl = string.IsNullOrWhiteSpace(_resolvedGameThumbnailUrl) ? null : _resolvedGameThumbnailUrl,
                 UpdatedAt = DateTimeOffset.UtcNow
@@ -1183,33 +1224,60 @@ public sealed class AccountsViewModel : ViewModelBase
         _gameInfoCts?.Dispose();
         _gameInfoCts = null;
 
-        if (_isFollowUserTargetMode || string.IsNullOrWhiteSpace(rawInput))
+        if (string.IsNullOrWhiteSpace(rawInput))
         {
             ClearResolvedGameInfo();
             return;
         }
 
-        long? placeId = null;
+        LaunchTarget? parsed = null;
         try
         {
-            var parsed = RobloxLauncher.ParseTargetInput(rawInput.Trim(), followUserMode: false);
-            if (parsed.Kind != LaunchTargetKind.FollowUser && parsed.PlaceId is > 0)
-            {
-                placeId = parsed.PlaceId.Value;
-            }
+            parsed = RobloxLauncher.ParseTargetInput(rawInput.Trim(), followUserMode: _isFollowUserTargetMode);
         }
         catch
         {
-            placeId = null;
+            parsed = null;
         }
 
-        if (!placeId.HasValue)
+        if (parsed == null)
         {
             ClearResolvedGameInfo();
             return;
         }
 
-        if (_gameInfoCache.TryGetValue(placeId.Value, out var cached))
+        if (parsed.Kind == LaunchTargetKind.FollowUser)
+        {
+            long? targetUid = parsed.UserId is > 0 ? parsed.UserId : null;
+            string? targetUsername = !string.IsNullOrWhiteSpace(parsed.Username) ? parsed.Username.Trim().TrimStart('@') : null;
+            if (!targetUid.HasValue && string.IsNullOrWhiteSpace(targetUsername))
+            {
+                ClearResolvedGameInfo();
+                return;
+            }
+
+            string cacheKey = targetUid.HasValue ? $"id:{targetUid.Value}" : $"name:{targetUsername}";
+            if (_userPreviewCache.TryGetValue(cacheKey, out var cachedUser))
+            {
+                ApplyResolvedUserInfo(cachedUser);
+                return;
+            }
+
+            var userCts = new CancellationTokenSource();
+            _gameInfoCts = userCts;
+            var userSyncContext = SynchronizationContext.Current;
+            _ = ResolveUserPreviewDebouncedAsync(targetUid, targetUsername, cacheKey, userSyncContext, userCts.Token);
+            return;
+        }
+
+        if (parsed.PlaceId is not > 0)
+        {
+            ClearResolvedGameInfo();
+            return;
+        }
+
+        long placeId = parsed.PlaceId.Value;
+        if (_gameInfoCache.TryGetValue(placeId, out var cached))
         {
             ApplyResolvedGameInfo(cached);
             return;
@@ -1218,7 +1286,254 @@ public sealed class AccountsViewModel : ViewModelBase
         var cts = new CancellationTokenSource();
         _gameInfoCts = cts;
         var syncContext = SynchronizationContext.Current;
-        _ = ResolveGameInfoDebouncedAsync(placeId.Value, syncContext, cts.Token);
+        _ = ResolveGameInfoDebouncedAsync(placeId, syncContext, cts.Token);
+    }
+
+    private async Task ResolveUserPreviewDebouncedAsync(
+        long? userId,
+        string? username,
+        string cacheKey,
+        SynchronizationContext? syncContext,
+        CancellationToken ct)
+    {
+        void PostToCaller(Action action)
+        {
+            if (syncContext != null)
+            {
+                syncContext.Post(_ => action(), null);
+            }
+            else
+            {
+                action();
+            }
+        }
+
+        try
+        {
+            await Task.Delay(350, ct).ConfigureAwait(false);
+            PostToCaller(() => IsResolvingGameInfo = true);
+
+            UserPreviewInfo? info;
+            if (_injectedAuthService != null)
+            {
+                info = await ResolveUserPreviewCoreAsync(_injectedAuthService, userId, username, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                using var auth = new RobloxAuthService();
+                info = await ResolveUserPreviewCoreAsync(auth, userId, username, ct).ConfigureAwait(false);
+            }
+
+            if (ct.IsCancellationRequested) return;
+
+            if (info != null)
+            {
+                _userPreviewCache[cacheKey] = info;
+                _userPreviewCache[$"id:{info.UserId}"] = info;
+                if (!string.IsNullOrWhiteSpace(info.Username))
+                {
+                    _userPreviewCache[$"name:{info.Username}"] = info;
+                }
+            }
+
+            PostToCaller(() =>
+            {
+                if (!ct.IsCancellationRequested)
+                {
+                    ApplyResolvedUserInfo(info);
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch
+        {
+            PostToCaller(() =>
+            {
+                if (!ct.IsCancellationRequested)
+                {
+                    ClearResolvedGameInfo();
+                }
+            });
+        }
+        finally
+        {
+            PostToCaller(() => IsResolvingGameInfo = false);
+        }
+    }
+
+    private static async Task<UserPreviewInfo?> ResolveUserPreviewCoreAsync(
+        IRobloxAuthService auth,
+        long? userId,
+        string? username,
+        CancellationToken ct)
+    {
+        long resolvedUid = userId ?? 0;
+        if (resolvedUid <= 0)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return null;
+            resolvedUid = await auth.ResolveUserIdByUsernameAsync(username, ct).ConfigureAwait(false);
+        }
+
+        if (resolvedUid <= 0) return null;
+
+        var userTask = auth.GetUserByIdAsync(resolvedUid, ct);
+        var avatarTask = auth.GetAvatarThumbnailUrlAsync(resolvedUid, "150x150", isCircular: true, ct);
+        await Task.WhenAll(userTask, avatarTask).ConfigureAwait(false);
+
+        AuthenticatedUser? user = userTask.Result;
+        string? avatarUrl = avatarTask.Result;
+
+        string finalUsername = !string.IsNullOrWhiteSpace(user?.Name)
+            ? user!.Name
+            : (!string.IsNullOrWhiteSpace(username) ? username.Trim() : $"User{resolvedUid}");
+        string finalDisplayName = !string.IsNullOrWhiteSpace(user?.DisplayName)
+            ? user!.DisplayName
+            : finalUsername;
+
+        return new UserPreviewInfo(resolvedUid, finalUsername, finalDisplayName, avatarUrl);
+    }
+
+    public async Task BackfillMissingTargetThumbnailsAsync(CancellationToken ct = default)
+    {
+        if (Interlocked.CompareExchange(ref _isBackfillingTargets, 1, 0) != 0)
+        {
+            return;
+        }
+
+        var syncContext = SynchronizationContext.Current;
+        void PostToUi(Action action)
+        {
+            if (syncContext != null)
+            {
+                syncContext.Post(_ => action(), null);
+            }
+            else if (Application.Current?.Dispatcher != null && !Application.Current.Dispatcher.CheckAccess())
+            {
+                Application.Current.Dispatcher.BeginInvoke(action);
+            }
+            else
+            {
+                action();
+            }
+        }
+
+        try
+        {
+            var candidates = SavedTargets
+                .Where(t => string.IsNullOrWhiteSpace(t.ThumbnailUrl) || (!t.UserId.HasValue && !t.PlaceId.HasValue))
+                .ToList();
+
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            IRobloxAuthService? ownedAuth = _injectedAuthService == null ? new RobloxAuthService() : null;
+            var auth = _injectedAuthService ?? ownedAuth!;
+
+            try
+            {
+                foreach (var target in candidates)
+                {
+                    if (ct.IsCancellationRequested) break;
+
+                    LaunchTarget parsed;
+                    try
+                    {
+                        parsed = RobloxLauncher.ParseTargetInput(target.TargetInput, followUserMode: false);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    bool changed = false;
+                    if (parsed.Kind == LaunchTargetKind.FollowUser)
+                    {
+                        try
+                        {
+                            var info = await ResolveUserPreviewCoreAsync(auth, parsed.UserId, parsed.Username, ct).ConfigureAwait(false);
+                            if (info != null)
+                            {
+                                string formattedName = FormatUserPreviewName(info);
+                                target.UserId = info.UserId;
+                                target.PlaceId = null;
+                                if (string.IsNullOrWhiteSpace(target.GameName))
+                                {
+                                    target.GameName = formattedName;
+                                }
+                                if (!string.IsNullOrWhiteSpace(info.AvatarUrl))
+                                {
+                                    target.ThumbnailUrl = info.AvatarUrl;
+                                }
+                                changed = true;
+                            }
+                        }
+                        catch { }
+                    }
+                    else if (parsed.PlaceId is > 0 && string.IsNullOrWhiteSpace(target.ThumbnailUrl))
+                    {
+                        try
+                        {
+                            var gameInfo = await auth.GetGameInfoByPlaceIdAsync(parsed.PlaceId.Value, ct).ConfigureAwait(false);
+                            if (gameInfo != null)
+                            {
+                                target.PlaceId = gameInfo.PlaceId;
+                                if (string.IsNullOrWhiteSpace(target.GameName))
+                                {
+                                    target.GameName = gameInfo.Name;
+                                }
+                                if (!string.IsNullOrWhiteSpace(gameInfo.ThumbnailUrl))
+                                {
+                                    target.ThumbnailUrl = gameInfo.ThumbnailUrl;
+                                }
+                                changed = true;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (changed)
+                    {
+                        _joinTargetStore.Upsert(target);
+                        var captured = target;
+                        PostToUi(() =>
+                        {
+                            int idx = SavedTargets.IndexOf(captured);
+                            if (idx >= 0)
+                            {
+                                SavedTargets[idx] = captured;
+                            }
+
+                            if (SelectedSavedTarget?.Id == captured.Id)
+                            {
+                                _selectedSavedTarget = captured;
+                                OnPropertyChanged(nameof(SelectedSavedTarget));
+                                if (captured.UserId is > 0 && !string.IsNullOrWhiteSpace(captured.GameName))
+                                {
+                                    ApplyResolvedUserInfo(new UserPreviewInfo(
+                                        captured.UserId.Value,
+                                        captured.Name,
+                                        captured.GameName,
+                                        captured.ThumbnailUrl,
+                                        FormattedLabel: captured.GameName));
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            finally
+            {
+                ownedAuth?.Dispose();
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isBackfillingTargets, 0);
+        }
     }
 
     private async Task ResolveGameInfoDebouncedAsync(long placeId, SynchronizationContext? syncContext, CancellationToken ct)
@@ -1294,15 +1609,44 @@ public sealed class AccountsViewModel : ViewModelBase
         }
 
         _resolvedPlaceId = info.PlaceId;
+        _resolvedUserId = null;
+        IsResolvedPreviewCircular = false;
         ResolvedGameName = info.Name;
         ResolvedGamePlaceIdText = LocalizationService.Instance.Format("Str_Accounts_PlaceIdFormat", info.PlaceId);
         ResolvedGameThumbnailUrl = info.ThumbnailUrl;
         HasResolvedGameInfo = true;
     }
 
+    private void ApplyResolvedUserInfo(UserPreviewInfo? info)
+    {
+        if (info == null)
+        {
+            ClearResolvedGameInfo();
+            return;
+        }
+
+        _resolvedPlaceId = null;
+        _resolvedUserId = info.UserId;
+        IsResolvedPreviewCircular = true;
+        ResolvedGameName = !string.IsNullOrWhiteSpace(info.FormattedLabel)
+            ? info.FormattedLabel!
+            : FormatUserPreviewName(info);
+        ResolvedGamePlaceIdText = LocalizationService.Instance.Format("Str_Accounts_UserIdFormat", info.UserId);
+        ResolvedGameThumbnailUrl = info.AvatarUrl;
+        HasResolvedGameInfo = true;
+    }
+
+    private static string FormatUserPreviewName(UserPreviewInfo info) =>
+        !string.IsNullOrWhiteSpace(info.DisplayName) &&
+        !string.Equals(info.DisplayName, info.Username, StringComparison.OrdinalIgnoreCase)
+            ? $"{info.DisplayName} (@{info.Username})"
+            : $"@{info.Username}";
+
     private void ClearResolvedGameInfo()
     {
         _resolvedPlaceId = null;
+        _resolvedUserId = null;
+        IsResolvedPreviewCircular = false;
         ResolvedGameName = string.Empty;
         ResolvedGamePlaceIdText = string.Empty;
         ResolvedGameThumbnailUrl = null;

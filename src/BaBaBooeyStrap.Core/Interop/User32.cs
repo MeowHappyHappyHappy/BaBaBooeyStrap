@@ -26,9 +26,12 @@ public static class User32
     public const int GWL_STYLE = -16;
     public const int GWL_EXSTYLE = -20;
 
+    public const uint WM_SETTEXT = 0x000C;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_SETICON = 0x0080;
     public const uint WM_HOTKEY = 0x0312;
+    public const uint SMTO_NORMAL = 0x0000;
+    public const uint SMTO_ABORTIFHUNG = 0x0002;
     public const nint ICON_SMALL = 0;
     public const nint ICON_BIG = 1;
 
@@ -135,10 +138,12 @@ public static class User32
 
     // Extended styles (GWL_EXSTYLE)
     public const uint WS_EX_DLGMODALFRAME = 0x00000001;
+    public const uint WS_EX_TRANSPARENT = 0x00000020;
     public const uint WS_EX_TOOLWINDOW = 0x00000080;
     public const uint WS_EX_WINDOWEDGE = 0x00000100;
     public const uint WS_EX_CLIENTEDGE = 0x00000200;
     public const uint WS_EX_STATICEDGE = 0x00020000;
+    public const uint WS_EX_LAYERED = 0x00080000;
     public const uint WS_EX_NOACTIVATE = 0x08000000;
 
     public const uint MONITORINFOF_PRIMARY = 0x00000001;
@@ -346,4 +351,17 @@ public static class User32
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool UnregisterHotKey(nint hWnd, int id);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern nint SendMessageTimeoutW(
+        nint hWnd,
+        uint Msg,
+        nint wParam,
+        string lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out nint lpdwResult);
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vKey);
 }

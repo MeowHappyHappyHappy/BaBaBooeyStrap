@@ -9,10 +9,12 @@ public sealed class GlobalHotkeyService : IDisposable
 {
     public const string KeyQuickSwitcher = "QuickSwitcher";
     public const string KeyCycleWindow = "CycleWindow";
+    public const string KeyCyclePreviousWindow = "CyclePreviousWindow";
     public const string KeyDirectSlots = "DirectSlots";
 
     private const int QuickSwitcherHotkeyId = 100;
     private const int CycleWindowHotkeyId = 101;
+    private const int CyclePreviousWindowHotkeyId = 102;
     private const int DirectSlotBaseHotkeyId = 200;
 
     private readonly ILogger _logger;
@@ -23,6 +25,7 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public event EventHandler? QuickSwitcherRequested;
     public event EventHandler? CycleNextWindowRequested;
+    public event EventHandler? CyclePreviousWindowRequested;
     public event EventHandler<int>? DirectSlotRequested;
 
     public GlobalHotkeyService(ILogger? logger = null)
@@ -116,6 +119,28 @@ public sealed class GlobalHotkeyService : IDisposable
             _registrationResults[KeyCycleWindow] = true;
         }
 
+        if (settings.EnableCyclePreviousWindowHotkey)
+        {
+            bool ok = false;
+            if (HotkeyParser.TryParse(settings.CyclePreviousWindowHotkey, out var parsed))
+            {
+                ok = User32.RegisterHotKey(hwnd, CyclePreviousWindowHotkeyId, parsed.Modifiers, parsed.VirtualKey);
+                if (ok)
+                {
+                    _registeredIds.Add(CyclePreviousWindowHotkeyId);
+                }
+                else
+                {
+                    _logger.Warn("GlobalHotkeyService", $"Failed to register CyclePreviousWindow hotkey '{settings.CyclePreviousWindowHotkey}'.");
+                }
+            }
+            _registrationResults[KeyCyclePreviousWindow] = ok;
+        }
+        else
+        {
+            _registrationResults[KeyCyclePreviousWindow] = true;
+        }
+
         if (settings.EnableDirectSlotHotkeys)
         {
             bool allSlotsOk = false;
@@ -160,6 +185,11 @@ public sealed class GlobalHotkeyService : IDisposable
             {
                 handled = true;
                 CycleNextWindowRequested?.Invoke(this, EventArgs.Empty);
+            }
+            else if (id == CyclePreviousWindowHotkeyId)
+            {
+                handled = true;
+                CyclePreviousWindowRequested?.Invoke(this, EventArgs.Empty);
             }
             else if (id is >= DirectSlotBaseHotkeyId + 1 and <= DirectSlotBaseHotkeyId + 9)
             {

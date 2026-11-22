@@ -1,9 +1,17 @@
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using BaBaBooeyStrap.App.Services;
+using BaBaBooeyStrap.App.ViewModels.Sections;
+using BaBaBooeyStrap.Bootstrapper.Settings;
+using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
+using BaBaBooeyStrap.Core.Roblox;
 using BaBaBooeyStrap.Core.Storage;
 using BaBaBooeyStrap.Integrations.Window;
+using BaBaBooeyStrap.MultiInstance;
 using BaBaBooeyStrap.Tests.Mocks;
 
 namespace BaBaBooeyStrap.Tests.Tier1_FeatureCoverage;
@@ -15,6 +23,7 @@ public sealed class App_WindowSwitcherTests : IDisposable
     [Theory]
     [InlineData("Ctrl+Alt+Space", User32.MOD_CONTROL | User32.MOD_ALT | User32.MOD_NOREPEAT, 0x20u, "Ctrl+Alt+Space")]
     [InlineData("ctrl + alt + right", User32.MOD_CONTROL | User32.MOD_ALT | User32.MOD_NOREPEAT, 0x27u, "Ctrl+Alt+Right")]
+    [InlineData("Ctrl+Alt+Left", User32.MOD_CONTROL | User32.MOD_ALT | User32.MOD_NOREPEAT, 0x25u, "Ctrl+Alt+Left")]
     [InlineData("Alt+~", User32.MOD_ALT | User32.MOD_NOREPEAT, 0xC0u, "Alt+~")]
     [InlineData("Ctrl+Shift+F5", User32.MOD_CONTROL | User32.MOD_SHIFT | User32.MOD_NOREPEAT, 0x74u, "Ctrl+Shift+F5")]
     public void HotkeyParser_ValidCombinations_ParseCorrectly(
@@ -123,11 +132,17 @@ public sealed class App_WindowSwitcherTests : IDisposable
 
         coordinator.Initialize();
 
-        // Cycle advances from focused h1 -> h2 -> h1
+        // Cycle advances from focused h1 -> h2 -> h1, and backward h1 -> h2 -> h1
         coordinator.CycleNextInstance();
         interop.GetForegroundWindow().Should().Be(h2);
 
         coordinator.CycleNextInstance();
+        interop.GetForegroundWindow().Should().Be(h1);
+
+        coordinator.CyclePreviousInstance();
+        interop.GetForegroundWindow().Should().Be(h2);
+
+        coordinator.CyclePreviousInstance();
         interop.GetForegroundWindow().Should().Be(h1);
 
         // Direct slot focus
@@ -139,6 +154,103 @@ public sealed class App_WindowSwitcherTests : IDisposable
         tiled.Should().Be(2);
         interop.GetBounds(h2).Should().Be(mon1.WorkArea);
         interop.GetBounds(h1).Should().Be(mon2.WorkArea);
+    }
+
+    [Fact]
+    public async Task FollowUserPreviewAndLegacyBackfill_ResolvesCircularAvatarAndPersists()
+    {
+        var paths = new PathProvider(_env.RootPath);
+        paths.EnsureDirectoriesExist();
+        var targetStore = new JoinTargetStore(paths.TargetsFile);
+
+        // Pre-seed a legacy FollowUser target without ThumbnailUrl or UserId
+        targetStore.Upsert(new SavedJoinTarget
+        {
+            Name = "LegacyFriend",
+            TargetInput = "@LegacyPal"
+        });
+
+        using var httpClient = new HttpClient(new StubHandler(req =>
+        {
+            string uri = req.RequestUri!.ToString();
+            if (uri.Contains("usernames/users"))
+            {
+                return JsonResponse("{\"data\":[{\"id\":777888,\"name\":\"LegacyPal\"}]}");
+            }
+            if (uri.Contains("/v1/users/777888"))
+            {
+                return JsonResponse("{\"id\":777888,\"name\":\"LegacyPal\",\"displayName\":\"Legacy Bestie\"}");
+            }
+            if (uri.Contains("avatar-headshot") && uri.Contains("777888"))
+            {
+                return JsonResponse("{\"data\":[{\"targetId\":777888,\"imageUrl\":\"https://tr.rbxcdn.com/legacy777.png\"}]}");
+            }
+            if (uri.Contains("/v1/users/123456"))
+            {
+                return JsonResponse("{\"id\":123456,\"name\":\"CoolFriend\",\"displayName\":\"Cool Display\"}");
+            }
+            if (uri.Contains("avatar-headshot") && uri.Contains("123456"))
+            {
+                return JsonResponse("{\"data\":[{\"targetId\":123456,\"imageUrl\":\"https://tr.rbxcdn.com/cool123.png\"}]}");
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        using var authService = new RobloxAuthService(httpClient);
+        var vm = new AccountsViewModel(
+            new Settings(),
+            paths,
+            accountStore: null,
+            joinTargetStore: targetStore,
+            multiInstanceController: null,
+            processSupervisor: new ProcessSupervisor(),
+            launcher: null,
+            globalSettingsManager: new GlobalSettingsManager(paths.RobloxGlobalSettings),
+            stateManager: new JsonManager<State>(paths.StateFile),
+            setLocalizedStatus: (_, _) => { },
+            authService: authService);
+
+        // 1. Backfill resolves legacy saved FollowUser target
+        await vm.BackfillMissingTargetThumbnailsAsync();
+        vm.SavedTargets.Should().ContainSingle();
+        vm.SavedTargets[0].UserId.Should().Be(777888);
+        vm.SavedTargets[0].ThumbnailUrl.Should().Be("https://tr.rbxcdn.com/legacy777.png");
+        vm.SavedTargets[0].IsUserTarget.Should().BeTrue();
+
+        // 2. Typing a FollowUser ID in FollowUser mode resolves circular avatar + display name
+        vm.TargetName = string.Empty;
+        vm.IsFollowUserTargetMode = true;
+        vm.LaunchTargetInput = "123456";
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!vm.HasResolvedGameInfo && sw.Elapsed < TimeSpan.FromSeconds(3))
+        {
+            await Task.Delay(30);
+        }
+
+        vm.HasResolvedGameInfo.Should().BeTrue();
+        vm.IsResolvedPreviewCircular.Should().BeTrue();
+        vm.ResolvedGameName.Should().Be("Cool Display (@CoolFriend)");
+        vm.ResolvedGameThumbnailUrl.Should().Be("https://tr.rbxcdn.com/cool123.png");
+
+        // 3. Saving target persists avatar & UserId & auto-fills name when blank
+        vm.SaveCurrentJoinTarget().Should().BeTrue();
+        var saved = vm.SavedTargets.FirstOrDefault(t => t.UserId == 123456);
+        saved.Should().NotBeNull();
+        saved!.Name.Should().Be("Cool Display (@CoolFriend)");
+        saved.ThumbnailUrl.Should().Be("https://tr.rbxcdn.com/cool123.png");
+        saved.IsUserTarget.Should().BeTrue();
+    }
+
+    private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(json, Encoding.UTF8, "application/json")
+    };
+
+    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(handler(request));
     }
 
     public void Dispose() => _env.Dispose();

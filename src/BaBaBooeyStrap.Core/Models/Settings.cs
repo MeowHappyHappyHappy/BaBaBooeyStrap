@@ -81,8 +81,11 @@ public class Settings
     public string QuickSwitcherHotkey { get; set; } = "Ctrl+Alt+Space";
     public bool EnableCycleWindowHotkey { get; set; } = true;
     public string CycleWindowHotkey { get; set; } = "Ctrl+Alt+Right";
+    public bool EnableCyclePreviousWindowHotkey { get; set; } = true;
+    public string CyclePreviousWindowHotkey { get; set; } = "Ctrl+Alt+Left";
     public bool EnableDirectSlotHotkeys { get; set; } = true;
     public string DirectSlotHotkeyModifier { get; set; } = "Ctrl+Alt";
+    public bool EnableWindowSwitchHighlight { get; set; } = true;
     public bool FloatingSwitcherBarEnabled { get; set; } = true;
     public bool FloatingSwitcherBarAutoShow { get; set; } = true;
     public WindowTilingMode DefaultWindowTilingMode { get; set; } = WindowTilingMode.SingleMonitorGrid;

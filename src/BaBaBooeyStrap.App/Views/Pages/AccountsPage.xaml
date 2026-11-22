@@ -458,15 +458,18 @@
                                         <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                             <Border Width="20"
                                                     Height="20"
-                                                    CornerRadius="4"
                                                     ClipToBounds="True"
                                                     Margin="0,0,8,0"
                                                     Background="{DynamicResource ControlFillColorDefaultBrush}">
                                                 <Border.Style>
                                                     <Style TargetType="Border">
+                                                        <Setter Property="CornerRadius" Value="4"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding ThumbnailUrl}" Value="{x:Null}">
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsUserTarget}" Value="True">
+                                                                <Setter Property="CornerRadius" Value="10"/>
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -533,10 +536,19 @@
                                 <Border Grid.Column="0"
                                         Width="40"
                                         Height="40"
-                                        CornerRadius="6"
                                         ClipToBounds="True"
                                         Margin="0,0,10,0"
                                         Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="CornerRadius" Value="6"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AccountManagement.IsResolvedPreviewCircular}" Value="True">
+                                                    <Setter Property="CornerRadius" Value="20"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
                                     <Image Source="{Binding AccountManagement.ResolvedGameThumbnailUrl}" Stretch="UniformToFill"/>
                                 </Border>
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
