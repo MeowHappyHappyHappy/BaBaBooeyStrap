@@ -17,6 +17,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
     private readonly IMonitorProvider _monitorProvider;
     private readonly IJsonManager<Settings> _settingsManager;
     private readonly IJsonManager<State> _stateManager;
+    private readonly AccountWindowLayoutService _accountLayoutService;
     private readonly GlobalHotkeyService? _hotkeyService;
     private readonly NotifyIconWrapper? _trayWrapper;
     private readonly Dispatcher? _dispatcher;
@@ -42,7 +43,8 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         GlobalHotkeyService? hotkeyService = null,
         NotifyIconWrapper? trayWrapper = null,
         Dispatcher? dispatcher = null,
-        bool enableFloatingWindows = true)
+        bool enableFloatingWindows = true,
+        AccountWindowLayoutService? accountLayoutService = null)
     {
         _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
         _focusHelper = focusHelper ?? throw new ArgumentNullException(nameof(focusHelper));
@@ -50,12 +52,14 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         _monitorProvider = monitorProvider ?? throw new ArgumentNullException(nameof(monitorProvider));
         _settingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
         _stateManager = stateManager ?? throw new ArgumentNullException(nameof(stateManager));
+        _accountLayoutService = accountLayoutService ?? new AccountWindowLayoutService(monitorProvider: _monitorProvider);
         _hotkeyService = hotkeyService;
         _trayWrapper = trayWrapper;
         _dispatcher = dispatcher ?? Application.Current?.Dispatcher;
         _enableFloatingWindows = enableFloatingWindows;
 
         _tracker.InstancesChanged += OnTrackerInstancesChanged;
+        _tracker.InstancesRefreshed += OnTrackerInstancesRefreshed;
         _tracker.FocusedInstanceChanged += OnTrackerFocusedChanged;
 
         if (_hotkeyService != null)
@@ -437,6 +441,12 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         }
     }
 
+    private void OnTrackerInstancesRefreshed(object? sender, IReadOnlyList<RunningRobloxInstance> instances)
+    {
+        if (_disposed) return;
+        _accountLayoutService.ProcessInstances(instances, _settingsManager.Prop, _stateManager.Prop, () => _stateManager.Save());
+    }
+
     private void OnTrackerFocusedChanged(object? sender, RunningRobloxInstance? focused)
     {
         if (focused != null)
@@ -550,7 +560,10 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         _disposed = true;
 
         _tracker.InstancesChanged -= OnTrackerInstancesChanged;
+        _tracker.InstancesRefreshed -= OnTrackerInstancesRefreshed;
         _tracker.FocusedInstanceChanged -= OnTrackerFocusedChanged;
+
+        _accountLayoutService.FlushIfDirty(() => _stateManager.Save());
 
         if (_hotkeyService != null)
         {

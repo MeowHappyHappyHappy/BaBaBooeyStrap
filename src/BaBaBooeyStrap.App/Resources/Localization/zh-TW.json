@@ -771,6 +771,8 @@
   "Str_SwitcherSettings_TitleSection": "自動視窗標題帳號識別",
   "Str_SwitcherSettings_AutoTagTitle": "在 Roblox 視窗標題自動顯示帳號識別",
   "Str_SwitcherSettings_AutoTagDesc": "自動在視窗標題欄、工作列與 Alt+Tab 加上編號與帳號名稱（不依賴活動追蹤功能）。",
+  "Str_SwitcherSettings_RestoreAccountBoundsTitle": "記住每個帳號的視窗位置與大小",
+  "Str_SwitcherSettings_RestoreAccountBoundsDesc": "多開時自動將每個帳號的視窗回復至上次關閉前的位置、尺寸與最大化狀態。",
   "Str_SwitcherSettings_TemplateLabel": "視窗標題模板：",
   "Str_SwitcherSettings_PlaceholdersHint": "可用變數：{Index}（編號 1,2..）、{Server}（伺服器縮寫如 JP, US..）、{Account}（帳號名）、{DisplayName}、{Notes}（備註）、{OriginalTitle}",
   "Str_SwitcherSettings_PreviewFormat": "預覽效果：{0}",

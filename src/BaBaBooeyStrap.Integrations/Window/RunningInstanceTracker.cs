@@ -59,6 +59,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
     private bool _disposed;
 
     public event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesChanged;
+    public event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesRefreshed;
     public event EventHandler<RunningRobloxInstance?>? FocusedInstanceChanged;
 
     public RunningInstanceTracker(
@@ -170,7 +171,6 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
         lock (_stateLock)
         {
-            EnsureSlotAssignedLocked(pid);
             _firstSeenUtc.TryAdd(pid, DateTimeOffset.UtcNow);
             _registrations[pid] = new AccountRegistration
             {
@@ -220,7 +220,6 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 return false;
             }
 
-            EnsureSlotAssignedLocked(pid);
             _firstSeenUtc.TryAdd(pid, DateTimeOffset.UtcNow);
             _registrations[pid] = new AccountRegistration
             {
@@ -324,6 +323,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
         Settings settings = _getSettings();
         IReadOnlyList<RunningRobloxInstance>? changedSnapshot = null;
+        IReadOnlyList<RunningRobloxInstance> currentSnapshot;
         RunningRobloxInstance? focusedChange = null;
         bool focusChanged = false;
         var titleUpdates = new List<(nint HWnd, string TargetTitle)>();
@@ -332,9 +332,9 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         {
             var observedPids = new HashSet<int>();
             var observedHwnds = new HashSet<nint>();
+            var validObserved = new List<ObservedRobloxWindow>(observed.Count);
             var now = DateTimeOffset.UtcNow;
 
-            var newInstances = new List<RunningRobloxInstance>(observed.Count);
             foreach (var win in observed)
             {
                 if (win.ProcessId <= 0 || win.WindowHandle == nint.Zero)
@@ -348,13 +348,28 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 }
 
                 observedHwnds.Add(win.WindowHandle);
-                int slot = EnsureSlotAssignedLocked(win.ProcessId);
-                if (!_firstSeenUtc.TryGetValue(win.ProcessId, out var startedAt))
-                {
-                    startedAt = now;
-                    _firstSeenUtc[win.ProcessId] = startedAt;
-                }
+                validObserved.Add(win);
+            }
 
+            // Immediately release slots for any PID that no longer has an observed visible window
+            foreach (int staleSlotPid in _pidSlots.Keys.Where(p => !observedPids.Contains(p)).ToList())
+            {
+                _pidSlots.Remove(staleSlotPid);
+            }
+
+            foreach (var win in validObserved)
+            {
+                _firstSeenUtc.TryAdd(win.ProcessId, now);
+                EnsureSlotAssignedLocked(win.ProcessId);
+            }
+
+            CompactSlotsLocked();
+
+            var newInstances = new List<RunningRobloxInstance>(validObserved.Count);
+            foreach (var win in validObserved)
+            {
+                int slot = _pidSlots[win.ProcessId];
+                var startedAt = _firstSeenUtc[win.ProcessId];
                 _registrations.TryGetValue(win.ProcessId, out var reg);
                 var monitor = win.Monitor ?? _monitorProvider.GetPrimaryMonitor();
 
@@ -386,8 +401,15 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 }
             }
 
-            // Cleanup exited PIDs (preserving recent pre-registrations within grace window)
-            foreach (int pid in _pidSlots.Keys.ToList())
+            // Cleanup exited PIDs metadata (preserving recent pre-registrations within grace window)
+            var trackedPids = _registrations.Keys
+                .Concat(_firstSeenUtc.Keys)
+                .Concat(_pidServerCodes.Keys)
+                .Concat(_externallyManagedTitlePids)
+                .Distinct()
+                .ToList();
+
+            foreach (int pid in trackedPids)
             {
                 if (observedPids.Contains(pid))
                 {
@@ -400,7 +422,6 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                     continue;
                 }
 
-                _pidSlots.Remove(pid);
                 _pidServerCodes.Remove(pid);
                 _registrations.Remove(pid);
                 _firstSeenUtc.Remove(pid);
@@ -421,6 +442,8 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 _currentInstances = newInstances;
                 changedSnapshot = newInstances.ToList().AsReadOnly();
             }
+
+            currentSnapshot = changedSnapshot ?? _currentInstances.ToList().AsReadOnly();
 
             if (_currentFocused?.ProcessId != newFocused?.ProcessId ||
                 _currentFocused?.WindowHandle != newFocused?.WindowHandle)
@@ -451,6 +474,8 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         {
             InstancesChanged?.Invoke(this, changedSnapshot);
         }
+
+        InstancesRefreshed?.Invoke(this, currentSnapshot);
 
         if (focusChanged)
         {
@@ -577,6 +602,26 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
         _pidSlots[pid] = candidate;
         return candidate;
+    }
+
+    private void CompactSlotsLocked()
+    {
+        if (_pidSlots.Count == 0)
+        {
+            return;
+        }
+
+        var ordered = _pidSlots
+            .OrderBy(kvp => kvp.Value)
+            .ThenBy(kvp => _firstSeenUtc.TryGetValue(kvp.Key, out var started) ? started : DateTimeOffset.MaxValue)
+            .ThenBy(kvp => kvp.Key)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            _pidSlots[ordered[i]] = i + 1;
+        }
     }
 
     private static bool InstancesEqual(IReadOnlyList<RunningRobloxInstance> a, IReadOnlyList<RunningRobloxInstance> b)

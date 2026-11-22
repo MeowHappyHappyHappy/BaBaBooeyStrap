@@ -42,6 +42,7 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
     private void LoadFromSettings()
     {
         AutoTagToggle.IsChecked = _settings.AutoTagMultiInstanceWindowTitle;
+        RestoreAccountBoundsToggle.IsChecked = _settings.RestoreAccountWindowBounds;
         TitleTemplateBox.Text = _settings.MultiInstanceWindowTitleTemplate;
         UpdateTitlePreview();
 
@@ -227,6 +228,7 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         _settings.AutoTagMultiInstanceWindowTitle = AutoTagToggle.IsChecked == true;
+        _settings.RestoreAccountWindowBounds = RestoreAccountBoundsToggle.IsChecked == true;
         _settings.MultiInstanceWindowTitleTemplate = string.IsNullOrWhiteSpace(TitleTemplateBox.Text)
             ? Settings.DefaultMultiInstanceWindowTitleTemplate
             : TitleTemplateBox.Text.Trim();

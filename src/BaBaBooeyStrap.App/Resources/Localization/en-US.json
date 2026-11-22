@@ -771,6 +771,8 @@
   "Str_SwitcherSettings_TitleSection": "Automatic Window Title Identification",
   "Str_SwitcherSettings_AutoTagTitle": "Show account name in Roblox window titles",
   "Str_SwitcherSettings_AutoTagDesc": "Automatically tags Roblox titlebars & Alt+Tab thumbnails (works even if Activity Tracking is off).",
+  "Str_SwitcherSettings_RestoreAccountBoundsTitle": "Remember window position & size per account",
+  "Str_SwitcherSettings_RestoreAccountBoundsDesc": "Restores each account's previous window position, size, and maximized state when launching multiple instances.",
   "Str_SwitcherSettings_TemplateLabel": "Window Title Template:",
   "Str_SwitcherSettings_PlaceholdersHint": "Placeholders: {Index} (1,2..), {Server} (JP, US..), {Account}, {DisplayName}, {Notes}, {OriginalTitle}",
   "Str_SwitcherSettings_PreviewFormat": "Preview: {0}",

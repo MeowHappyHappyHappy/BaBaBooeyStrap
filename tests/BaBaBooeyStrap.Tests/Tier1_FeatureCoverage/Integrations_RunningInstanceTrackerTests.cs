@@ -210,6 +210,59 @@ public sealed class Integrations_RunningInstanceTrackerTests
         interop.GetWindowText(hwnd).Should().Be("[#1] PlayerOne - Roblox");
     }
 
+    [Fact]
+    public void PreRegisteredWindowlessPid_DoesNotReserveSlot_AndClosingMiddleSlotCompactsImmediately()
+    {
+        var settings = new Settings { AutoTagMultiInstanceWindowTitle = true };
+        var interop = new TrackerMockInterop();
+        var mon1 = new MonitorInfo(1, @"\\.\DISPLAY1", true,
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1080 },
+            new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 });
+
+        nint hwnd1 = 0x8001;
+        nint hwnd2 = 0x8002;
+        nint hwnd3 = 0x8003;
+        interop.SetWindowText(hwnd1, "Roblox");
+        interop.SetWindowText(hwnd2, "Roblox");
+        interop.SetWindowText(hwnd3, "Roblox");
+
+        var observed = new List<ObservedRobloxWindow>();
+        using var tracker = new RunningInstanceTracker(
+            () => settings,
+            interop,
+            new SingleMonitorProvider(mon1),
+            windowProbe: () => observed.Select(w => w with { WindowTitle = interop.GetWindowText(w.WindowHandle) }).ToList());
+
+        // Simulate a launcher/stub PID that was pre-registered but never opened a visible window
+        tracker.RegisterLaunchedAccount(1000, new RobloxAccount { UserId = 1, Username = "StubPid" });
+
+        // First real visible window opens on PID 1001 -> must receive #1, not #2
+        observed.Add(new ObservedRobloxWindow(1001, hwnd1, "Roblox", false, true, mon1));
+        tracker.RegisterLaunchedAccount(1001, new RobloxAccount { UserId = 1, Username = "AccOne" });
+
+        tracker.GetRunningInstances().Select(i => (i.ProcessId, i.SlotIndex))
+            .Should().Equal((1001, 1));
+        interop.GetWindowText(hwnd1).Should().Be("[#1] AccOne - Roblox");
+
+        // Second and third real windows open
+        observed.Add(new ObservedRobloxWindow(1002, hwnd2, "Roblox", false, false, mon1));
+        tracker.RegisterLaunchedAccount(1002, new RobloxAccount { UserId = 2, Username = "AccTwo" });
+        observed.Add(new ObservedRobloxWindow(1003, hwnd3, "Roblox", false, false, mon1));
+        tracker.RegisterLaunchedAccount(1003, new RobloxAccount { UserId = 3, Username = "AccThree" });
+
+        tracker.GetRunningInstances().Select(i => (i.ProcessId, i.SlotIndex))
+            .Should().Equal((1001, 1), (1002, 2), (1003, 3));
+
+        // Close #1 -> #2 and #3 immediately compact to #1 and #2 and update window titles
+        observed.RemoveAll(w => w.ProcessId == 1001);
+        tracker.RefreshNow();
+
+        tracker.GetRunningInstances().Select(i => (i.ProcessId, i.SlotIndex))
+            .Should().Equal((1002, 1), (1003, 2));
+        interop.GetWindowText(hwnd2).Should().Be("[#1] AccTwo - Roblox");
+        interop.GetWindowText(hwnd3).Should().Be("[#2] AccThree - Roblox");
+    }
+
     private sealed class SingleMonitorProvider(MonitorInfo monitor) : IMonitorProvider
     {
         public IReadOnlyList<MonitorInfo> GetMonitors() => [monitor];

@@ -204,7 +204,8 @@ public static class AppServiceConfiguration
             services.StateManager,
             headlessMode ? null : services.GlobalHotkeyService,
             services.TrayWrapper,
-            enableFloatingWindows: !headlessMode);
+            enableFloatingWindows: !headlessMode,
+            accountLayoutService: new AccountWindowLayoutService(windowInterop, monitorProvider, Logger.Current));
 
         services.WindowSwitcherCoordinator = coordinator;
         return coordinator;

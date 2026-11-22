@@ -13,6 +13,7 @@ public sealed record ObservedRobloxWindow(
 public interface IRunningInstanceTracker : IDisposable
 {
     event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesChanged;
+    event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesRefreshed { add { } remove { } }
     event EventHandler<RunningRobloxInstance?>? FocusedInstanceChanged;
 
     IReadOnlyList<RunningRobloxInstance> GetRunningInstances();

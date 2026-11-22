@@ -78,6 +78,7 @@ public class Settings
     public const string DefaultMultiInstanceWindowTitleTemplate = "[#{Index}] [{Server}] {Account} - {OriginalTitle}";
 
     // Multi-Instance Window Switcher & Tiling
+    public bool RestoreAccountWindowBounds { get; set; } = true;
     public bool AutoTagMultiInstanceWindowTitle { get; set; } = true;
     public string MultiInstanceWindowTitleTemplate { get; set; } = DefaultMultiInstanceWindowTitleTemplate;
     public bool EnableQuickSwitcherHotkey { get; set; } = true;
