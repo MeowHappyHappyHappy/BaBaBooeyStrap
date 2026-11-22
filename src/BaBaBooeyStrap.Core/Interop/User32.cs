@@ -7,6 +7,7 @@ public static class User32
 {
     public delegate bool EnumWindowsProc(nint hWnd, nint lParam);
     public delegate bool MonitorEnumDelegate(nint hMonitor, nint hdcMonitor, ref RECT lprcMonitor, nint dwData);
+    public delegate nint LowLevelKeyboardProc(int nCode, nint wParam, nint lParam);
 
     public static readonly nint HWND_TOPMOST = new(-1);
     public static readonly nint HWND_NOTOPMOST = new(-2);
@@ -29,11 +30,25 @@ public static class User32
     public const uint WM_SETTEXT = 0x000C;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_SETICON = 0x0080;
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const uint WM_SYSKEYDOWN = 0x0104;
+    public const uint WM_SYSKEYUP = 0x0105;
     public const uint WM_HOTKEY = 0x0312;
     public const uint SMTO_NORMAL = 0x0000;
     public const uint SMTO_ABORTIFHUNG = 0x0002;
     public const nint ICON_SMALL = 0;
     public const nint ICON_BIG = 1;
+
+    // Low-level keyboard hook constants
+    public const int WH_KEYBOARD_LL = 13;
+    public const uint LLKHF_LOWER_IL_INJECTED = 0x00000002;
+    public const uint LLKHF_INJECTED = 0x00000010;
+    public const int VK_SHIFT = 0x10;
+    public const int VK_CONTROL = 0x11;
+    public const int VK_MENU = 0x12;
+    public const int VK_LWIN = 0x5B;
+    public const int VK_RWIN = 0x5C;
 
     // Hotkey modifiers
     public const uint MOD_ALT = 0x0001;
@@ -362,6 +377,26 @@ public static class User32
         uint uTimeout,
         out nint lpdwResult);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public nuint dwExtraInfo;
+    }
+
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint SetWindowsHookExW(int idHook, LowLevelKeyboardProc lpfn, nint hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(nint hhk);
+
+    [DllImport("user32.dll")]
+    public static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
 }

@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels.Sections;
+using BaBaBooeyStrap.App.Views.Dialogs;
 using BaBaBooeyStrap.Bootstrapper.Settings;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Interop;
@@ -240,6 +241,106 @@ public sealed class App_WindowSwitcherTests : IDisposable
         saved!.Name.Should().Be("Cool Display (@CoolFriend)");
         saved.ThumbnailUrl.Should().Be("https://tr.rbxcdn.com/cool123.png");
         saved.IsUserTarget.Should().BeTrue();
+    }
+
+    [Fact]
+    public void GlobalHotkeyService_TryMatchDirectSlotKey_SwallowsPressRepeatAndReleaseAcrossMainAndNumpad()
+    {
+        uint configured = User32.MOD_CONTROL | User32.MOD_ALT | User32.MOD_NOREPEAT;
+        uint exactMods = User32.MOD_CONTROL | User32.MOD_ALT;
+        var swallowed = new HashSet<uint>();
+
+        // Initial press of '3' with exact modifiers -> matches slot 3 and swallows
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, exactMods, 0x33u, isKeyDown: true, swallowed, out int slot, out bool swallow)
+            .Should().BeTrue();
+        slot.Should().Be(3);
+        swallow.Should().BeTrue();
+        swallowed.Should().Contain(0x33u);
+
+        // Auto-repeat KeyDown -> still swallowed, does not re-trigger slot
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, exactMods, 0x33u, isKeyDown: true, swallowed, out slot, out swallow)
+            .Should().BeTrue();
+        slot.Should().Be(0);
+        swallow.Should().BeTrue();
+
+        // KeyUp after modifiers were already released -> still swallowed and cleared from set
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, currentModifiers: 0u, 0x33u, isKeyDown: false, swallowed, out slot, out swallow)
+            .Should().BeTrue();
+        slot.Should().Be(0);
+        swallow.Should().BeTrue();
+        swallowed.Should().NotContain(0x33u);
+
+        // Numpad 7 -> matches slot 7 and swallows
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, exactMods, 0x67u, isKeyDown: true, swallowed, out slot, out swallow)
+            .Should().BeTrue();
+        slot.Should().Be(7);
+        swallow.Should().BeTrue();
+
+        // Wrong modifiers or non-digit key -> ignored & not swallowed
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, exactMods | User32.MOD_SHIFT, 0x31u, isKeyDown: true, swallowed, out slot, out swallow)
+            .Should().BeFalse();
+        slot.Should().Be(0);
+        swallow.Should().BeFalse();
+
+        GlobalHotkeyService.TryMatchDirectSlotKey(
+                configured, exactMods, (uint)'A', isKeyDown: true, swallowed, out slot, out swallow)
+            .Should().BeFalse();
+        slot.Should().Be(0);
+        swallow.Should().BeFalse();
+    }
+
+    [Fact]
+    public void TrayMenuPositioner_ClampsWithinWorkAreaAndFlipsSubmenuAtEdges()
+    {
+        var primaryWork = new User32.RECT { Left = 0, Top = 0, Right = 1920, Bottom = 1040 };
+
+        // Bottom-right taskbar click opens upward & leftward inside work area (6px margin)
+        var (popX, popY) = TrayMenuPositioner.ComputePopupPosition(
+            cursorX: 1880,
+            cursorY: 1055,
+            menuWidth: 300,
+            menuHeight: 400,
+            primaryWork);
+        popX.Should().BeLessThanOrEqualTo(primaryWork.Right - 6 - 300);
+        popY.Should().Be(primaryWork.Bottom - 6 - 400);
+
+        // Negative secondary monitor coordinates clamp strictly inside negative bounds
+        var leftMonWork = new User32.RECT { Left = -1920, Top = 0, Right = 0, Bottom = 1040 };
+        var (negX, negY) = TrayMenuPositioner.ComputePopupPosition(
+            cursorX: -20,
+            cursorY: 1050,
+            menuWidth: 300,
+            menuHeight: 360,
+            leftMonWork);
+        negX.Should().BeInRange(leftMonWork.Left + 6, leftMonWork.Right - 6 - 300);
+        negY.Should().Be(leftMonWork.Bottom - 6 - 360);
+
+        // Submenu opens to the right when room exists (4px overlap)
+        var (subRightX, subRightY) = TrayMenuPositioner.ComputeSubMenuPosition(
+            parentLeft: 400,
+            parentRight: 700,
+            itemTop: 300,
+            subWidth: 260,
+            subHeight: 220,
+            primaryWork);
+        subRightX.Should().Be(700 - 4);
+        subRightY.Should().Be(300);
+
+        // Submenu near right edge flips cleanly to the left of parent menu
+        var (subFlipX, subFlipY) = TrayMenuPositioner.ComputeSubMenuPosition(
+            parentLeft: 1600,
+            parentRight: 1900,
+            itemTop: 950,
+            subWidth: 260,
+            subHeight: 220,
+            primaryWork);
+        subFlipX.Should().Be(1600 - 260 + 4);
+        subFlipY.Should().Be(primaryWork.Bottom - 6 - 220);
     }
 
     private static HttpResponseMessage JsonResponse(string json) => new(HttpStatusCode.OK)

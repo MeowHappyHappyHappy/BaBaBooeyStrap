@@ -1,4 +1,7 @@
+using System.Runtime.InteropServices;
+using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
@@ -15,12 +18,17 @@ public sealed class GlobalHotkeyService : IDisposable
     private const int QuickSwitcherHotkeyId = 100;
     private const int CycleWindowHotkeyId = 101;
     private const int CyclePreviousWindowHotkeyId = 102;
-    private const int DirectSlotBaseHotkeyId = 200;
 
     private readonly ILogger _logger;
     private readonly List<int> _registeredIds = new();
     private readonly Dictionary<string, bool> _registrationResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<uint> _swallowedDirectSlotVks = new();
+    private Dispatcher? _dispatcher;
     private HwndSource? _hwndSource;
+    private User32.LowLevelKeyboardProc? _keyboardHookProc;
+    private nint _keyboardHookHandle;
+    private uint _directSlotModifiers;
+    private bool _directSlotsEnabled;
     private bool _disposed;
 
     public event EventHandler? QuickSwitcherRequested;
@@ -28,9 +36,10 @@ public sealed class GlobalHotkeyService : IDisposable
     public event EventHandler? CyclePreviousWindowRequested;
     public event EventHandler<int>? DirectSlotRequested;
 
-    public GlobalHotkeyService(ILogger? logger = null)
+    public GlobalHotkeyService(ILogger? logger = null, Dispatcher? dispatcher = null)
     {
         _logger = logger ?? Logger.Current;
+        _dispatcher = dispatcher ?? Application.Current?.Dispatcher;
     }
 
     public IReadOnlyDictionary<string, bool> RegistrationResults => _registrationResults;
@@ -41,6 +50,7 @@ public sealed class GlobalHotkeyService : IDisposable
     public void Initialize()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _dispatcher ??= Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
         if (_hwndSource != null) return;
 
         var parameters = new HwndSourceParameters("BaBaBooeyStrap.GlobalHotkeySink")
@@ -143,32 +153,148 @@ public sealed class GlobalHotkeyService : IDisposable
 
         if (settings.EnableDirectSlotHotkeys)
         {
-            bool allSlotsOk = false;
+            bool hookOk = false;
             if (HotkeyParser.TryParseModifiersOnly(settings.DirectSlotHotkeyModifier, out uint mods, out _))
             {
-                int successCount = 0;
-                for (int slot = 1; slot <= 9; slot++)
+                _directSlotModifiers = mods & ~User32.MOD_NOREPEAT;
+                _directSlotsEnabled = true;
+                _keyboardHookProc ??= KeyboardHookCallback;
+                _keyboardHookHandle = User32.SetWindowsHookExW(User32.WH_KEYBOARD_LL, _keyboardHookProc, nint.Zero, 0);
+                hookOk = _keyboardHookHandle != nint.Zero;
+                if (!hookOk)
                 {
-                    int id = DirectSlotBaseHotkeyId + slot;
-                    uint vk = (uint)('0' + slot);
-                    if (User32.RegisterHotKey(hwnd, id, mods, vk))
-                    {
-                        _registeredIds.Add(id);
-                        successCount++;
-                    }
-                    else
-                    {
-                        _logger.Warn("GlobalHotkeyService", $"Failed to register direct slot hotkey '{settings.DirectSlotHotkeyModifier}+{slot}'.");
-                    }
+                    _directSlotsEnabled = false;
+                    _directSlotModifiers = 0;
+                    _logger.Warn("GlobalHotkeyService", $"Failed to install direct slot keyboard hook for '{settings.DirectSlotHotkeyModifier}+1..9'.");
                 }
-                allSlotsOk = successCount == 9;
             }
-            _registrationResults[KeyDirectSlots] = allSlotsOk;
+            _registrationResults[KeyDirectSlots] = hookOk;
         }
         else
         {
             _registrationResults[KeyDirectSlots] = true;
         }
+    }
+
+    internal static bool TryMatchDirectSlotKey(
+        uint configuredModifiers,
+        uint currentModifiers,
+        uint vkCode,
+        bool isKeyDown,
+        ISet<uint> swallowedKeys,
+        out int matchedSlot,
+        out bool shouldSwallow)
+    {
+        ArgumentNullException.ThrowIfNull(swallowedKeys);
+
+        matchedSlot = 0;
+        shouldSwallow = false;
+
+        int slot = vkCode switch
+        {
+            >= 0x31 and <= 0x39 => (int)(vkCode - 0x30),
+            >= 0x61 and <= 0x69 => (int)(vkCode - 0x60),
+            _ => 0
+        };
+
+        if (slot == 0)
+        {
+            return false;
+        }
+
+        uint requiredMods = configuredModifiers & ~User32.MOD_NOREPEAT;
+
+        if (isKeyDown)
+        {
+            if (requiredMods != 0 && currentModifiers == requiredMods)
+            {
+                shouldSwallow = true;
+                if (swallowedKeys.Add(vkCode))
+                {
+                    matchedSlot = slot;
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        if (swallowedKeys.Remove(vkCode))
+        {
+            shouldSwallow = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private nint KeyboardHookCallback(int nCode, nint wParam, nint lParam)
+    {
+        if (nCode >= 0 && _directSlotsEnabled && !_disposed && lParam != nint.Zero)
+        {
+            long msg = wParam.ToInt64();
+            bool isKeyDown = msg is User32.WM_KEYDOWN or User32.WM_SYSKEYDOWN;
+            bool isKeyUp = msg is User32.WM_KEYUP or User32.WM_SYSKEYUP;
+
+            if (isKeyDown || isKeyUp)
+            {
+                var info = Marshal.PtrToStructure<User32.KBDLLHOOKSTRUCT>(lParam);
+                bool isInjected = (info.flags & (User32.LLKHF_INJECTED | User32.LLKHF_LOWER_IL_INJECTED)) != 0;
+                if (!isInjected)
+                {
+                    uint currentMods = isKeyDown ? ReadCurrentAsyncModifiers() : 0;
+                    if (TryMatchDirectSlotKey(
+                            _directSlotModifiers,
+                            currentMods,
+                            info.vkCode,
+                            isKeyDown,
+                            _swallowedDirectSlotVks,
+                            out int matchedSlot,
+                            out bool shouldSwallow))
+                    {
+                        if (matchedSlot > 0)
+                        {
+                            var dispatcher = _dispatcher ?? Application.Current?.Dispatcher;
+                            if (dispatcher != null)
+                            {
+                                _ = dispatcher.BeginInvoke(() =>
+                                {
+                                    if (!_disposed)
+                                    {
+                                        DirectSlotRequested?.Invoke(this, matchedSlot);
+                                    }
+                                });
+                            }
+                            else
+                            {
+                                DirectSlotRequested?.Invoke(this, matchedSlot);
+                            }
+                        }
+
+                        if (shouldSwallow)
+                        {
+                            return (nint)1;
+                        }
+                    }
+                }
+            }
+        }
+
+        return User32.CallNextHookEx(_keyboardHookHandle, nCode, wParam, lParam);
+    }
+
+    private static uint ReadCurrentAsyncModifiers()
+    {
+        uint mods = 0;
+        if ((User32.GetAsyncKeyState(User32.VK_CONTROL) & 0x8000) != 0) mods |= User32.MOD_CONTROL;
+        if ((User32.GetAsyncKeyState(User32.VK_MENU) & 0x8000) != 0) mods |= User32.MOD_ALT;
+        if ((User32.GetAsyncKeyState(User32.VK_SHIFT) & 0x8000) != 0) mods |= User32.MOD_SHIFT;
+        if ((User32.GetAsyncKeyState(User32.VK_LWIN) & 0x8000) != 0 ||
+            (User32.GetAsyncKeyState(User32.VK_RWIN) & 0x8000) != 0)
+        {
+            mods |= User32.MOD_WIN;
+        }
+        return mods;
     }
 
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
@@ -191,11 +317,6 @@ public sealed class GlobalHotkeyService : IDisposable
                 handled = true;
                 CyclePreviousWindowRequested?.Invoke(this, EventArgs.Empty);
             }
-            else if (id is >= DirectSlotBaseHotkeyId + 1 and <= DirectSlotBaseHotkeyId + 9)
-            {
-                handled = true;
-                DirectSlotRequested?.Invoke(this, id - DirectSlotBaseHotkeyId);
-            }
         }
 
         return nint.Zero;
@@ -203,6 +324,16 @@ public sealed class GlobalHotkeyService : IDisposable
 
     private void UnregisterAll()
     {
+        _directSlotsEnabled = false;
+        _directSlotModifiers = 0;
+        _swallowedDirectSlotVks.Clear();
+
+        if (_keyboardHookHandle != nint.Zero)
+        {
+            try { User32.UnhookWindowsHookEx(_keyboardHookHandle); } catch { }
+            _keyboardHookHandle = nint.Zero;
+        }
+
         if (_hwndSource == null || _hwndSource.Handle == nint.Zero)
         {
             _registeredIds.Clear();

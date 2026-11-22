@@ -452,30 +452,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
     private void OnHotkeyDirectSlot(object? sender, int slot)
     {
         if (_disposed || slot is < 1 or > 9) return;
-        _ = WaitForDigitReleaseAndFocusSlotAsync(slot);
-    }
-
-    private async Task WaitForDigitReleaseAndFocusSlotAsync(int slot)
-    {
-        int mainDigitVk = '0' + slot;
-        int numpadDigitVk = 0x60 + slot;
-
-        for (int i = 0; i < 16; i++)
-        {
-            if (_disposed) return;
-            bool mainDown = (User32.GetAsyncKeyState(mainDigitVk) & 0x8000) != 0;
-            bool numpadDown = (User32.GetAsyncKeyState(numpadDigitVk) & 0x8000) != 0;
-            if (!mainDown && !numpadDown)
-            {
-                break;
-            }
-            await Task.Delay(15).ConfigureAwait(false);
-        }
-
-        if (!_disposed)
-        {
-            RunOnUi(() => FocusSlot(slot));
-        }
+        RunOnUi(() => FocusSlot(slot));
     }
 
     private void ShowSwitchHighlightIfEnabled(RunningRobloxInstance instance)

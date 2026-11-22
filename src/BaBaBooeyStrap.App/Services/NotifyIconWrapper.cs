@@ -1,15 +1,20 @@
 using System.ComponentModel;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Interop;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 using BaBaBooeyStrap.Integrations.Window;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
+using Wpf.Ui.Controls;
 using WinForms = System.Windows.Forms;
 using Drawing = System.Drawing;
 
@@ -38,22 +43,13 @@ public sealed class NotifyIconWrapper : IDisposable
     private Dispatcher? _uiDispatcher;
 
     private WinForms.NotifyIcon? _notifyIcon;
-    private WinForms.ContextMenuStrip? _contextMenu;
-    private WinForms.ToolStripMenuItem? _settingsMenuItem;
-    private WinForms.ToolStripMenuItem? _launchMenuItem;
-    private WinForms.ToolStripMenuItem? _quickLaunchMenuItem;
-    private WinForms.ToolStripMenuItem? _runningWindowsMenuItem;
-    private WinForms.ToolStripMenuItem? _tileWindowsMenuItem;
-    private WinForms.ToolStripMenuItem? _floatingBarMenuItem;
-    private WinForms.ToolStripMenuItem? _multiInstanceMenuItem;
-    private WinForms.ToolStripMenuItem? _serverLocationMenuItem;
-    private WinForms.ToolStripMenuItem? _exitMenuItem;
-    private ActiveServerSessionInfo? _singleActiveServer;
+    private TrayContextMenuWindow? _trayMenuWindow;
     private Drawing.Icon? _ownedIcon;
     private BootstrapperIcon _iconKind = BootstrapperIcon.IconBloxstrap;
     private string? _customIconPath;
     private IReadOnlyList<RobloxAccount> _cachedAccounts = Array.Empty<RobloxAccount>();
     private IReadOnlyList<SavedJoinTarget> _cachedTargets = Array.Empty<SavedJoinTarget>();
+    private IReadOnlyList<ActiveServerSessionInfo> _latestActiveServers = Array.Empty<ActiveServerSessionInfo>();
     private int _quickLaunchCacheRefreshing;
     private bool _quickLaunchCacheWarmed;
     private HwndSource? _hwndSource;
@@ -217,10 +213,6 @@ public sealed class NotifyIconWrapper : IDisposable
             {
                 dispatcher.BeginInvoke(new Action(ShowCore));
             }
-            else if (_contextMenu != null && _contextMenu.IsHandleCreated && _contextMenu.InvokeRequired)
-            {
-                _contextMenu.BeginInvoke(new Action(ShowCore));
-            }
             else
             {
                 ShowCore();
@@ -298,56 +290,14 @@ public sealed class NotifyIconWrapper : IDisposable
 
     public void RefreshMultiInstanceMenuStatus()
     {
-        if (_headlessMode || _multiInstanceMenuItem == null || _getMultiInstanceStatus == null)
-            return;
-
-        try
-        {
-            var status = _getMultiInstanceStatus();
-            string mutexState = status.OwnsMutex
-                ? LocalizationService.Instance.GetString("Str_Tray_StateActive")
-                : (status.WaitingForMutex
-                    ? LocalizationService.Instance.GetString("Str_Tray_StateBlocked")
-                    : LocalizationService.Instance.GetString("Str_Tray_StateOff"));
-            _multiInstanceMenuItem.Text = LocalizationService.Instance.Format(
-                "Str_Tray_MultiInstanceMenuFormat",
-                mutexState,
-                status.RunningRobloxPids.Count);
-            _multiInstanceMenuItem.Checked = status.Enabled;
-        }
-        catch { }
+        // Multi-instance status is now read dynamically when opening the WPF Fluent tray menu.
     }
 
     public void RefreshLocalizedMenuTexts()
     {
-        if (_headlessMode)
-        {
-            RefreshServerLocationStatus();
-            RefreshQuickLaunchMenu();
-            RefreshRunningInstancesMenu();
-            return;
-        }
-
-        if (_settingsMenuItem != null)
-            _settingsMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_Settings");
-
-        if (_launchMenuItem != null)
-            _launchMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_LaunchRoblox");
-
+        RefreshServerLocationStatusCore(forceTooltipUpdate: true);
         RefreshQuickLaunchMenu();
         RefreshRunningInstancesMenu();
-        RefreshTileAndFloatingBarMenuItems();
-
-        if (_multiInstanceMenuItem != null)
-        {
-            _multiInstanceMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_MultiInstanceStatus");
-            RefreshMultiInstanceMenuStatus();
-        }
-
-        RefreshServerLocationStatusCore(forceMenuUpdate: true, forceTooltipUpdate: true);
-
-        if (_exitMenuItem != null)
-            _exitMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_Exit");
     }
 
     public void RefreshRunningInstancesMenu()
@@ -367,94 +317,6 @@ public sealed class NotifyIconWrapper : IDisposable
         LastRunningWindowLabels = instances
             .Select(i => $"#{i.SlotIndex} {i.EffectiveLabel} [{i.MonitorBadge}]")
             .ToList();
-
-        if (_headlessMode) return;
-
-        var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
-        if (dispatcher != null && !dispatcher.CheckAccess())
-        {
-            try { dispatcher.BeginInvoke(new Action(RefreshRunningInstancesMenu)); } catch { }
-            return;
-        }
-
-        if (_runningWindowsMenuItem == null) return;
-
-        _runningWindowsMenuItem.Text = LocalizationService.Instance.Format(
-            "Str_Tray_RunningWindowsFormat",
-            instances.Count);
-        ClearDropDownItems(_runningWindowsMenuItem);
-
-        if (instances.Count == 0)
-        {
-            var emptyItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tray_RunningWindowsEmpty"))
-            {
-                Enabled = false
-            };
-            _runningWindowsMenuItem.DropDownItems.Add(emptyItem);
-            return;
-        }
-
-        foreach (var inst in instances)
-        {
-            int capturedPid = inst.ProcessId;
-            string minSuffix = inst.IsMinimized
-                ? $" ({LocalizationService.Instance.GetString("Str_QuickSwitcher_MinimizedState")})"
-                : string.Empty;
-            string label = $"#{inst.SlotIndex} {inst.EffectiveLabel} [{inst.MonitorBadge}]{minSuffix}";
-
-            var winItem = new WinForms.ToolStripMenuItem(
-                label,
-                null,
-                (_, _) => InvokeOnUiDispatcher(() => _onFocusRunningInstance?.Invoke(capturedPid)))
-            {
-                Checked = inst.IsFocused
-            };
-            _runningWindowsMenuItem.DropDownItems.Add(winItem);
-        }
-
-        _runningWindowsMenuItem.DropDownItems.Add(new WinForms.ToolStripSeparator());
-        var minAllItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_MinimizeAllWindows"),
-            null,
-            (_, _) => InvokeOnUiDispatcher(_onMinimizeAllInstances));
-        _runningWindowsMenuItem.DropDownItems.Add(minAllItem);
-    }
-
-    private void RefreshTileAndFloatingBarMenuItems()
-    {
-        if (_headlessMode || _disposed) return;
-
-        if (_tileWindowsMenuItem != null)
-        {
-            _tileWindowsMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_TileWindows");
-            ClearDropDownItems(_tileWindowsMenuItem);
-
-            var gridItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid"),
-                null,
-                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SingleMonitorGrid)));
-            var spreadItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors"),
-                null,
-                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SpreadAcrossMonitors)));
-            var mainSideItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tiling_MainAndSide"),
-                null,
-                (_, _) => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.MainAndSide)));
-
-            _tileWindowsMenuItem.DropDownItems.Add(gridItem);
-            _tileWindowsMenuItem.DropDownItems.Add(spreadItem);
-            _tileWindowsMenuItem.DropDownItems.Add(mainSideItem);
-        }
-
-        if (_floatingBarMenuItem != null)
-        {
-            bool visible = false;
-            try { visible = _isFloatingBarVisible?.Invoke() == true; } catch { }
-            _floatingBarMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_ToggleFloatingBar");
-            _floatingBarMenuItem.Checked = visible;
-        }
     }
 
     public void RefreshQuickLaunchMenu()
@@ -476,10 +338,7 @@ public sealed class NotifyIconWrapper : IDisposable
         }
 
         var accounts = Volatile.Read(ref _cachedAccounts);
-        var targets = Volatile.Read(ref _cachedTargets);
         LastQuickLaunchAccountNames = accounts.Select(a => a.Username).ToList();
-
-        RebuildQuickLaunchMenuItems(accounts, targets);
         TriggerAsyncQuickLaunchCacheRefresh();
     }
 
@@ -499,27 +358,10 @@ public sealed class NotifyIconWrapper : IDisposable
                 try { loadedAccounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>(); } catch { loadedAccounts = Array.Empty<RobloxAccount>(); }
                 try { loadedTargets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>(); } catch { loadedTargets = Array.Empty<SavedJoinTarget>(); }
 
-                var prevAccounts = Volatile.Read(ref _cachedAccounts);
-                var prevTargets = Volatile.Read(ref _cachedTargets);
-                bool changed = !_quickLaunchCacheWarmed ||
-                               !AccountsSnapshotEquals(prevAccounts, loadedAccounts) ||
-                               !TargetsSnapshotEquals(prevTargets, loadedTargets);
-
                 Volatile.Write(ref _cachedAccounts, loadedAccounts);
                 Volatile.Write(ref _cachedTargets, loadedTargets);
                 _quickLaunchCacheWarmed = true;
-
-                if (changed && !_disposed)
-                {
-                    InvokeOnUiDispatcher(() =>
-                    {
-                        if (_disposed) return;
-                        var accSnap = Volatile.Read(ref _cachedAccounts);
-                        var tgtSnap = Volatile.Read(ref _cachedTargets);
-                        LastQuickLaunchAccountNames = accSnap.Select(a => a.Username).ToList();
-                        RebuildQuickLaunchMenuItems(accSnap, tgtSnap);
-                    });
-                }
+                LastQuickLaunchAccountNames = loadedAccounts.Select(a => a.Username).ToList();
             }
             catch { }
             finally
@@ -529,111 +371,12 @@ public sealed class NotifyIconWrapper : IDisposable
         });
     }
 
-    private static bool AccountsSnapshotEquals(IReadOnlyList<RobloxAccount> a, IReadOnlyList<RobloxAccount> b)
-    {
-        if (a.Count != b.Count) return false;
-        for (int i = 0; i < a.Count; i++)
-        {
-            if (a[i].Id != b[i].Id || !string.Equals(a[i].Username, b[i].Username, StringComparison.Ordinal))
-                return false;
-        }
-        return true;
-    }
-
-    private static bool TargetsSnapshotEquals(IReadOnlyList<SavedJoinTarget> a, IReadOnlyList<SavedJoinTarget> b)
-    {
-        if (a.Count != b.Count) return false;
-        for (int i = 0; i < a.Count; i++)
-        {
-            if (a[i].Id != b[i].Id ||
-                !string.Equals(a[i].Name, b[i].Name, StringComparison.Ordinal) ||
-                !string.Equals(a[i].GameName, b[i].GameName, StringComparison.Ordinal) ||
-                !string.Equals(a[i].TargetInput, b[i].TargetInput, StringComparison.Ordinal))
-                return false;
-        }
-        return true;
-    }
-
-    private void RebuildQuickLaunchMenuItems(IReadOnlyList<RobloxAccount> accounts, IReadOnlyList<SavedJoinTarget> targets)
-    {
-        if (_headlessMode || _quickLaunchMenuItem == null || _disposed)
-        {
-            return;
-        }
-
-        _quickLaunchMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_QuickLaunch");
-        ClearDropDownItems(_quickLaunchMenuItem);
-
-        if (accounts.Count == 0)
-        {
-            var emptyItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tray_QuickLaunchEmpty"))
-            {
-                Enabled = false
-            };
-            _quickLaunchMenuItem.DropDownItems.Add(emptyItem);
-            return;
-        }
-
-        foreach (var account in accounts)
-        {
-            var capturedAccount = account;
-            if (targets.Count == 0)
-            {
-                var accItem = new WinForms.ToolStripMenuItem(
-                    capturedAccount.Username,
-                    null,
-                    (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null)));
-                _quickLaunchMenuItem.DropDownItems.Add(accItem);
-                continue;
-            }
-
-            var accParent = new WinForms.ToolStripMenuItem(capturedAccount.Username);
-            var lastTargetItem = new WinForms.ToolStripMenuItem(
-                LocalizationService.Instance.GetString("Str_Tray_QuickLaunchLastTarget"),
-                null,
-                (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null)));
-            accParent.DropDownItems.Add(lastTargetItem);
-            accParent.DropDownItems.Add(new WinForms.ToolStripSeparator());
-
-            foreach (var target in targets)
-            {
-                var capturedTarget = target;
-                string label = !string.IsNullOrWhiteSpace(capturedTarget.GameName) &&
-                               !string.Equals(capturedTarget.GameName, capturedTarget.Name, StringComparison.OrdinalIgnoreCase)
-                    ? $"{capturedTarget.Name} ({capturedTarget.GameName})"
-                    : capturedTarget.Name;
-                var targetItem = new WinForms.ToolStripMenuItem(
-                    label,
-                    null,
-                    (_, _) => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, capturedTarget)));
-                accParent.DropDownItems.Add(targetItem);
-            }
-
-            _quickLaunchMenuItem.DropDownItems.Add(accParent);
-        }
-    }
-
-    private static void ClearDropDownItems(WinForms.ToolStripMenuItem parent)
-    {
-        while (parent.DropDownItems.Count > 0)
-        {
-            var item = parent.DropDownItems[0];
-            parent.DropDownItems.RemoveAt(0);
-            if (item is WinForms.ToolStripMenuItem menuItem)
-            {
-                ClearDropDownItems(menuItem);
-            }
-            try { item.Dispose(); } catch { }
-        }
-    }
-
     public void RefreshServerLocationStatus()
     {
-        RefreshServerLocationStatusCore(forceMenuUpdate: false);
+        RefreshServerLocationStatusCore();
     }
 
-    private void RefreshServerLocationStatusCore(bool forceMenuUpdate, bool forceTooltipUpdate = false)
+    private void RefreshServerLocationStatusCore(bool forceTooltipUpdate = false)
     {
         if (_disposed) return;
 
@@ -642,13 +385,7 @@ public sealed class NotifyIconWrapper : IDisposable
             var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
             if (dispatcher != null && !dispatcher.CheckAccess())
             {
-                try { dispatcher.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate, forceTooltipUpdate))); } catch { }
-                return;
-            }
-
-            if (_contextMenu != null && _contextMenu.IsHandleCreated && _contextMenu.InvokeRequired)
-            {
-                try { _contextMenu.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate, forceTooltipUpdate))); } catch { }
+                try { dispatcher.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceTooltipUpdate))); } catch { }
                 return;
             }
         }
@@ -663,31 +400,19 @@ public sealed class NotifyIconWrapper : IDisposable
             servers = Array.Empty<ActiveServerSessionInfo>();
         }
 
-        bool canMutateMenu = !_headlessMode &&
-                             _serverLocationMenuItem != null &&
-                             forceMenuUpdate;
+        _latestActiveServers = servers;
 
         if (servers.Count == 0)
         {
-            _singleActiveServer = null;
             string menuText = LocalizationService.Instance.GetString("Str_Tray_ServerLocationNone");
             string tooltipText = "BaBaBooeyStrap";
             LastServerLocationText = menuText;
             LastTooltipText = tooltipText;
             LastServerLocationSubItems = Array.Empty<string>();
 
-            if (!_headlessMode)
+            if (!_headlessMode && _notifyIcon != null)
             {
-                if (canMutateMenu && _serverLocationMenuItem != null)
-                {
-                    ClearServerSubItems();
-                    ClearMenuItemImage(_serverLocationMenuItem);
-                    _serverLocationMenuItem.Text = menuText;
-                }
-                if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
-                {
-                    try { _notifyIcon.Text = tooltipText; } catch { }
-                }
+                try { _notifyIcon.Text = tooltipText; } catch { }
             }
             return;
         }
@@ -695,7 +420,6 @@ public sealed class NotifyIconWrapper : IDisposable
         if (servers.Count == 1)
         {
             var server = servers[0];
-            _singleActiveServer = server;
             string locSummary = FormatServerLocationSummary(server, includeRegionDetail: true);
             string shortLoc = FormatServerLocationSummary(server, includeRegionDetail: false);
             string endpoint = FormatEndpoint(server);
@@ -712,28 +436,21 @@ public sealed class NotifyIconWrapper : IDisposable
             LastTooltipText = tooltipText;
             LastServerLocationSubItems = Array.Empty<string>();
 
-            if (!_headlessMode)
+            PrewarmFlagCache(server.Location?.Country);
+
+            if (!_headlessMode && _notifyIcon != null)
             {
-                if (canMutateMenu && _serverLocationMenuItem != null)
-                {
-                    ClearServerSubItems();
-                    SetMenuItemFlagImage(_serverLocationMenuItem, server.Location?.Country);
-                    _serverLocationMenuItem.Text = menuText;
-                }
-                if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
-                {
-                    try { _notifyIcon.Text = tooltipText; } catch { }
-                }
+                try { _notifyIcon.Text = tooltipText; } catch { }
             }
             return;
         }
 
-        _singleActiveServer = null;
         string multiMenuText = LocalizationService.Instance.Format("Str_Tray_ServerLocationMultiFormat", servers.Count);
         var subLabels = new List<string>(servers.Count);
         foreach (var s in servers)
         {
             subLabels.Add(FormatMultiSessionMenuItemText(s));
+            PrewarmFlagCache(s.Location?.Country);
         }
 
         var latest = servers[^1];
@@ -745,72 +462,33 @@ public sealed class NotifyIconWrapper : IDisposable
         LastTooltipText = multiTooltip;
         LastServerLocationSubItems = subLabels;
 
-        if (!_headlessMode)
+        if (!_headlessMode && _notifyIcon != null)
         {
-            if (canMutateMenu && _serverLocationMenuItem != null)
-            {
-                ClearServerSubItems();
-                ClearMenuItemImage(_serverLocationMenuItem);
-                for (int i = 0; i < servers.Count; i++)
-                {
-                    var captured = servers[i];
-                    var subItem = new WinForms.ToolStripMenuItem(
-                        subLabels[i],
-                        null,
-                        (_, _) => CopyServerSessionDetails(captured));
-                    SetMenuItemFlagImage(subItem, captured.Location?.Country);
-                    _serverLocationMenuItem.DropDownItems.Add(subItem);
-                }
-                _serverLocationMenuItem.Text = multiMenuText;
-            }
-            if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
-            {
-                try { _notifyIcon.Text = multiTooltip; } catch { }
-            }
+            try { _notifyIcon.Text = multiTooltip; } catch { }
         }
     }
 
-    private static void ClearMenuItemImage(WinForms.ToolStripMenuItem item)
+    private static void PrewarmFlagCache(string? country)
     {
-        if (item.Image != null)
-        {
-            var old = item.Image;
-            item.Image = null;
-            try { old.Dispose(); } catch { }
-        }
-    }
-
-    private static void SetMenuItemFlagImage(WinForms.ToolStripMenuItem item, string? country)
-    {
-        ClearMenuItemImage(item);
         if (string.IsNullOrWhiteSpace(country)) return;
-
         byte[]? cachedBytes = FlagImageService.TryGetCachedFlagPngBytes(country);
-        item.Image = FlagImageService.CreateMenuFlagBitmap(country, cachedBytes);
-
         if (cachedBytes == null && !string.IsNullOrEmpty(FlagImageService.ResolveIsoCode(country)))
         {
             _ = FlagImageService.GetFlagPngBytesAsync(country);
         }
     }
 
-    private void ClearServerSubItems()
+    private static ImageSource? ResolveFlagImageSource(string? country)
     {
-        if (_serverLocationMenuItem == null || !_serverLocationMenuItem.HasDropDownItems)
-            return;
-
-        while (_serverLocationMenuItem.DropDownItems.Count > 0)
+        if (string.IsNullOrWhiteSpace(country)) return null;
+        byte[]? cachedBytes = FlagImageService.TryGetCachedFlagPngBytes(country);
+        if (cachedBytes != null)
         {
-            var oldItem = _serverLocationMenuItem.DropDownItems[0];
-            _serverLocationMenuItem.DropDownItems.RemoveAt(0);
-            if (oldItem.Image != null)
-            {
-                var oldImg = oldItem.Image;
-                oldItem.Image = null;
-                try { oldImg.Dispose(); } catch { }
-            }
-            try { oldItem.Dispose(); } catch { }
+            return FlagImageService.CreateWpfFlagImage(cachedBytes);
         }
+
+        PrewarmFlagCache(country);
+        return null;
     }
 
     internal static string TruncateTrayTooltip(string text, int maxLength = MaxTrayTooltipLength)
@@ -900,7 +578,7 @@ public sealed class NotifyIconWrapper : IDisposable
 
     private void OnLanguageChanged(object? sender, string _)
     {
-        if (_disposed || _headlessMode || _contextMenu == null) return;
+        if (_disposed || _headlessMode) return;
 
         try
         {
@@ -908,10 +586,6 @@ public sealed class NotifyIconWrapper : IDisposable
             if (dispatcher != null && !dispatcher.CheckAccess())
             {
                 dispatcher.BeginInvoke(new Action(RefreshLocalizedMenuTexts));
-            }
-            else if (_contextMenu.IsHandleCreated && _contextMenu.InvokeRequired)
-            {
-                _contextMenu.BeginInvoke(new Action(RefreshLocalizedMenuTexts));
             }
             else
             {
@@ -962,78 +636,359 @@ public sealed class NotifyIconWrapper : IDisposable
         _customIconPath = customIconPath;
         _ownedIcon = IconResolver.ResolveDrawingIcon(iconKind, customIconPath);
 
-        _contextMenu = new WinForms.ContextMenuStrip();
-        _contextMenu.Opening += (_, _) => RefreshLocalizedMenuTexts();
-
-        _settingsMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_Settings"),
-            null,
-            (_, _) => RestoreWindow());
-        _launchMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_LaunchRoblox"),
-            null,
-            (_, _) => InvokeOnUiDispatcher(_onLaunchRoblox));
-
-        _quickLaunchMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_QuickLaunch"));
-
-        _runningWindowsMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.Format("Str_Tray_RunningWindowsFormat", 0));
-
-        _tileWindowsMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_TileWindows"));
-
-        _floatingBarMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_ToggleFloatingBar"),
-            null,
-            (_, _) => InvokeOnUiDispatcher(_onToggleFloatingBar));
-
-        _multiInstanceMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_MultiInstanceStatus"),
-            null,
-            (_, _) => InvokeOnUiDispatcher(() =>
-            {
-                _onToggleMultiInstance?.Invoke();
-                RefreshMultiInstanceMenuStatus();
-            }));
-
-        _serverLocationMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_ServerLocationNone"),
-            null,
-            (_, _) =>
-            {
-                if (_singleActiveServer != null && _serverLocationMenuItem?.DropDownItems.Count == 0)
-                {
-                    CopyServerSessionDetails(_singleActiveServer);
-                }
-            });
-
-        _exitMenuItem = new WinForms.ToolStripMenuItem(
-            LocalizationService.Instance.GetString("Str_Tray_Exit"),
-            null,
-            (_, _) => InvokeOnUiDispatcher(_onExitRequested));
-
-        _contextMenu.Items.Add(_settingsMenuItem);
-        _contextMenu.Items.Add(_launchMenuItem);
-        _contextMenu.Items.Add(_quickLaunchMenuItem);
-        _contextMenu.Items.Add(_runningWindowsMenuItem);
-        _contextMenu.Items.Add(_tileWindowsMenuItem);
-        _contextMenu.Items.Add(_floatingBarMenuItem);
-        _contextMenu.Items.Add(new WinForms.ToolStripSeparator());
-        _contextMenu.Items.Add(_multiInstanceMenuItem);
-        _contextMenu.Items.Add(_serverLocationMenuItem);
-        _contextMenu.Items.Add(new WinForms.ToolStripSeparator());
-        _contextMenu.Items.Add(_exitMenuItem);
-
         _notifyIcon = new WinForms.NotifyIcon(new Container())
         {
             Icon = _ownedIcon,
             Text = "BaBaBooeyStrap",
-            ContextMenuStrip = _contextMenu,
             Visible = true
         };
 
         _notifyIcon.DoubleClick += (_, _) => RestoreWindow();
+        _notifyIcon.MouseUp += OnNotifyIconMouseUp;
+    }
+
+    private void OnNotifyIconMouseUp(object? sender, WinForms.MouseEventArgs e)
+    {
+        if (_disposed || _headlessMode) return;
+        if (e.Button == WinForms.MouseButtons.Right)
+        {
+            InvokeOnUiDispatcher(ShowWpfTrayContextMenu);
+        }
+    }
+
+    private void ShowWpfTrayContextMenu()
+    {
+        if (_disposed || _headlessMode) return;
+
+        RefreshServerLocationStatusCore(forceTooltipUpdate: false);
+        RefreshRunningInstancesMenu();
+        TriggerAsyncQuickLaunchCacheRefresh();
+
+        if (!User32.GetCursorPos(out var cursorPt))
+        {
+            cursorPt = new User32.POINT { X = 100, Y = 100 };
+        }
+
+        User32.RECT workArea = ResolveMonitorWorkAreaFromPoint(cursorPt);
+        TrayMenuSnapshot snapshot = BuildTrayMenuSnapshot();
+
+        _trayMenuWindow ??= new TrayContextMenuWindow();
+        _trayMenuWindow.ShowAtCursor(snapshot, cursorPt.X, cursorPt.Y, workArea);
+    }
+
+    private TrayMenuSnapshot BuildTrayMenuSnapshot()
+    {
+        if (!_quickLaunchCacheWarmed)
+        {
+            try
+            {
+                var syncAccounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>();
+                var syncTargets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>();
+                Volatile.Write(ref _cachedAccounts, syncAccounts);
+                Volatile.Write(ref _cachedTargets, syncTargets);
+                _quickLaunchCacheWarmed = true;
+                LastQuickLaunchAccountNames = syncAccounts.Select(a => a.Username).ToList();
+            }
+            catch { }
+        }
+
+        IReadOnlyList<RunningRobloxInstance> instances;
+        try
+        {
+            instances = _getRunningInstances?.Invoke() ?? Array.Empty<RunningRobloxInstance>();
+        }
+        catch
+        {
+            instances = Array.Empty<RunningRobloxInstance>();
+        }
+
+        MultiInstanceStatus? miStatus = null;
+        try
+        {
+            miStatus = _getMultiInstanceStatus?.Invoke();
+        }
+        catch { }
+
+        TrayMultiInstanceState badgeState = miStatus == null
+            ? TrayMultiInstanceState.Off
+            : (miStatus.OwnsMutex
+                ? TrayMultiInstanceState.Active
+                : (miStatus.WaitingForMutex ? TrayMultiInstanceState.Blocked : TrayMultiInstanceState.Off));
+
+        string stateLabel = badgeState switch
+        {
+            TrayMultiInstanceState.Active => LocalizationService.Instance.GetString("Str_Tray_StateActive"),
+            TrayMultiInstanceState.Blocked => LocalizationService.Instance.GetString("Str_Tray_StateBlocked"),
+            _ => LocalizationService.Instance.GetString("Str_Tray_StateOff")
+        };
+
+        int runningCount = miStatus?.RunningRobloxPids.Count ?? instances.Count;
+        string headerBadgeText = $"{stateLabel} · {runningCount}";
+
+        var items = new List<TrayMenuItemModel>
+        {
+            new(
+                Text: LocalizationService.Instance.GetString("Str_Tray_Settings"),
+                IconSymbol: SymbolRegular.Settings24,
+                OnClick: RestoreWindow),
+            new(
+                Text: LocalizationService.Instance.GetString("Str_Tray_LaunchRoblox"),
+                IconSymbol: SymbolRegular.Play24,
+                OnClick: () => InvokeOnUiDispatcher(_onLaunchRoblox)),
+            new(
+                Text: LocalizationService.Instance.GetString("Str_Tray_QuickLaunch"),
+                IconSymbol: SymbolRegular.Rocket24,
+                Children: BuildQuickLaunchMenuChildren()),
+            new(
+                Text: LocalizationService.Instance.Format("Str_Tray_RunningWindowsFormat", instances.Count),
+                IconSymbol: SymbolRegular.WindowMultiple20,
+                BadgeText: instances.Count > 0 ? instances.Count.ToString() : null,
+                Children: BuildRunningWindowsMenuChildren(instances)),
+            new(
+                Text: LocalizationService.Instance.GetString("Str_Tray_TileWindows"),
+                IconSymbol: SymbolRegular.Grid24,
+                Children: BuildTileWindowsMenuChildren()),
+            new(
+                Text: LocalizationService.Instance.GetString("Str_Tray_ToggleFloatingBar"),
+                IconSymbol: SymbolRegular.PanelBottom20,
+                IsChecked: SafeIsFloatingBarVisible(),
+                OnClick: () => InvokeOnUiDispatcher(_onToggleFloatingBar)),
+            TrayMenuItemModel.Separator()
+        };
+
+        string multiInstanceLabel = miStatus != null
+            ? LocalizationService.Instance.Format("Str_Tray_MultiInstanceMenuFormat", stateLabel, miStatus.RunningRobloxPids.Count)
+            : LocalizationService.Instance.GetString("Str_Tray_MultiInstanceStatus");
+
+        items.Add(new TrayMenuItemModel(
+            Text: multiInstanceLabel,
+            IconSymbol: SymbolRegular.ShieldCheckmark24,
+            IsChecked: miStatus?.Enabled == true,
+            OnClick: () => InvokeOnUiDispatcher(() =>
+            {
+                _onToggleMultiInstance?.Invoke();
+                RefreshMultiInstanceMenuStatus();
+            })));
+
+        items.Add(BuildServerLocationMenuItem());
+        items.Add(TrayMenuItemModel.Separator());
+        items.Add(new TrayMenuItemModel(
+            Text: LocalizationService.Instance.GetString("Str_Tray_Exit"),
+            IconSymbol: SymbolRegular.Power24,
+            IsDanger: true,
+            OnClick: () => InvokeOnUiDispatcher(_onExitRequested)));
+
+        return new TrayMenuSnapshot(
+            AppTitle: "BaBaBooeyStrap",
+            VersionText: ResolveAppVersionLabel(),
+            MultiInstanceBadgeText: headerBadgeText,
+            MultiInstanceBadgeState: badgeState,
+            RunningCount: runningCount,
+            Items: items);
+    }
+
+    private IReadOnlyList<TrayMenuItemModel> BuildQuickLaunchMenuChildren()
+    {
+        var accounts = Volatile.Read(ref _cachedAccounts);
+        var targets = Volatile.Read(ref _cachedTargets);
+
+        if (accounts.Count == 0)
+        {
+            return
+            [
+                new TrayMenuItemModel(
+                    Text: LocalizationService.Instance.GetString("Str_Tray_QuickLaunchEmpty"),
+                    IsEnabled: false)
+            ];
+        }
+
+        var result = new List<TrayMenuItemModel>(accounts.Count);
+        foreach (var account in accounts)
+        {
+            var capturedAccount = account;
+            if (targets.Count == 0)
+            {
+                result.Add(new TrayMenuItemModel(
+                    Text: capturedAccount.Username,
+                    IconSymbol: SymbolRegular.Person24,
+                    OnClick: () => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null))));
+                continue;
+            }
+
+            var targetChildren = new List<TrayMenuItemModel>(targets.Count + 2)
+            {
+                new(
+                    Text: LocalizationService.Instance.GetString("Str_Tray_QuickLaunchLastTarget"),
+                    IconSymbol: SymbolRegular.ArrowClockwise24,
+                    OnClick: () => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, null))),
+                TrayMenuItemModel.Separator()
+            };
+
+            foreach (var target in targets)
+            {
+                var capturedTarget = target;
+                bool hasDistinctGame = !string.IsNullOrWhiteSpace(capturedTarget.GameName) &&
+                                       !string.Equals(capturedTarget.GameName, capturedTarget.Name, StringComparison.OrdinalIgnoreCase);
+                targetChildren.Add(new TrayMenuItemModel(
+                    Text: capturedTarget.Name,
+                    Subtitle: hasDistinctGame ? capturedTarget.GameName : null,
+                    IconSymbol: SymbolRegular.Target24,
+                    OnClick: () => InvokeOnUiDispatcher(() => _onQuickLaunchAccount?.Invoke(capturedAccount, capturedTarget))));
+            }
+
+            result.Add(new TrayMenuItemModel(
+                Text: capturedAccount.Username,
+                IconSymbol: SymbolRegular.Person24,
+                Children: targetChildren));
+        }
+
+        return result;
+    }
+
+    private IReadOnlyList<TrayMenuItemModel> BuildRunningWindowsMenuChildren(IReadOnlyList<RunningRobloxInstance> instances)
+    {
+        if (instances.Count == 0)
+        {
+            return
+            [
+                new TrayMenuItemModel(
+                    Text: LocalizationService.Instance.GetString("Str_Tray_RunningWindowsEmpty"),
+                    IsEnabled: false)
+            ];
+        }
+
+        var children = new List<TrayMenuItemModel>(instances.Count + 2);
+        foreach (var inst in instances)
+        {
+            int capturedPid = inst.ProcessId;
+            string? subtitle = inst.IsMinimized
+                ? LocalizationService.Instance.GetString("Str_QuickSwitcher_MinimizedState")
+                : (!string.IsNullOrWhiteSpace(inst.Notes) ? inst.Notes : null);
+
+            children.Add(new TrayMenuItemModel(
+                Text: $"#{inst.SlotIndex} {inst.EffectiveLabel}",
+                Subtitle: subtitle,
+                BadgeText: inst.MonitorBadge,
+                IsChecked: inst.IsFocused,
+                OnClick: () => InvokeOnUiDispatcher(() => _onFocusRunningInstance?.Invoke(capturedPid))));
+        }
+
+        children.Add(TrayMenuItemModel.Separator());
+        children.Add(new TrayMenuItemModel(
+            Text: LocalizationService.Instance.GetString("Str_Tray_MinimizeAllWindows"),
+            IconSymbol: SymbolRegular.Subtract24,
+            OnClick: () => InvokeOnUiDispatcher(_onMinimizeAllInstances)));
+
+        return children;
+    }
+
+    private IReadOnlyList<TrayMenuItemModel> BuildTileWindowsMenuChildren() =>
+    [
+        new(
+            Text: LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid"),
+            IconSymbol: SymbolRegular.Grid24,
+            OnClick: () => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SingleMonitorGrid))),
+        new(
+            Text: LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors"),
+            IconSymbol: SymbolRegular.Desktop24,
+            OnClick: () => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.SpreadAcrossMonitors))),
+        new(
+            Text: LocalizationService.Instance.GetString("Str_Tiling_MainAndSide"),
+            IconSymbol: SymbolRegular.LayoutRowTwo24,
+            OnClick: () => InvokeOnUiDispatcher(() => _onTileRunningInstances?.Invoke(WindowTilingMode.MainAndSide)))
+    ];
+
+    private TrayMenuItemModel BuildServerLocationMenuItem()
+    {
+        var servers = _latestActiveServers;
+        if (servers.Count == 0)
+        {
+            return new TrayMenuItemModel(
+                Text: LastServerLocationText ?? LocalizationService.Instance.GetString("Str_Tray_ServerLocationNone"),
+                IconSymbol: SymbolRegular.Globe24,
+                IsEnabled: false);
+        }
+
+        if (servers.Count == 1)
+        {
+            var single = servers[0];
+            var flag = ResolveFlagImageSource(single.Location?.Country);
+            return new TrayMenuItemModel(
+                Text: LastServerLocationText ?? FormatMultiSessionMenuItemText(single),
+                IconSymbol: flag == null ? SymbolRegular.Globe24 : null,
+                FlagImage: flag,
+                OnClick: () => CopyServerSessionDetails(single));
+        }
+
+        var children = new List<TrayMenuItemModel>(servers.Count);
+        foreach (var server in servers)
+        {
+            var captured = server;
+            var flag = ResolveFlagImageSource(captured.Location?.Country);
+            children.Add(new TrayMenuItemModel(
+                Text: FormatMultiSessionMenuItemText(captured),
+                IconSymbol: flag == null ? SymbolRegular.Globe24 : null,
+                FlagImage: flag,
+                OnClick: () => CopyServerSessionDetails(captured)));
+        }
+
+        return new TrayMenuItemModel(
+            Text: LastServerLocationText ?? LocalizationService.Instance.Format("Str_Tray_ServerLocationMultiFormat", servers.Count),
+            IconSymbol: SymbolRegular.Globe24,
+            BadgeText: servers.Count.ToString(),
+            Children: children);
+    }
+
+    private bool SafeIsFloatingBarVisible()
+    {
+        try
+        {
+            return _isFloatingBarVisible?.Invoke() == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ResolveAppVersionLabel()
+    {
+        var asm = typeof(NotifyIconWrapper).Assembly;
+        string? infoVer = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(infoVer))
+        {
+            string clean = infoVer.Split('+')[0].Trim();
+            if (!string.IsNullOrWhiteSpace(clean))
+            {
+                return clean.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? clean : $"v{clean}";
+            }
+        }
+
+        Version? v = asm.GetName().Version;
+        return v != null ? $"v{v.Major}.{v.Minor}.{Math.Max(0, v.Build)}" : "v1.0.0";
+    }
+
+    private static User32.RECT ResolveMonitorWorkAreaFromPoint(User32.POINT pt)
+    {
+        nint hMonitor = User32.MonitorFromPoint(pt, User32.MONITOR_DEFAULTTONEAREST);
+        if (hMonitor != nint.Zero)
+        {
+            var mi = new User32.MONITORINFOEX
+            {
+                cbSize = Marshal.SizeOf<User32.MONITORINFOEX>(),
+                szDevice = string.Empty
+            };
+            if (User32.GetMonitorInfoW(hMonitor, ref mi) &&
+                mi.rcWork.Width > 0 &&
+                mi.rcWork.Height > 0)
+            {
+                return mi.rcWork;
+            }
+        }
+
+        int screenW = Math.Max(800, User32.GetSystemMetrics(User32.SM_CXSCREEN));
+        int screenH = Math.Max(600, User32.GetSystemMetrics(User32.SM_CYSCREEN));
+        return new User32.RECT { Left = 0, Top = 0, Right = screenW, Bottom = screenH };
     }
 
     private void EnsureTaskbarCreatedHook()
@@ -1067,49 +1022,12 @@ public sealed class NotifyIconWrapper : IDisposable
         {
             try
             {
+                _notifyIcon.MouseUp -= OnNotifyIconMouseUp;
                 _notifyIcon.Visible = false;
                 _notifyIcon.Dispose();
             }
             catch { }
             _notifyIcon = null;
-        }
-
-        if (_serverLocationMenuItem != null)
-        {
-            ClearServerSubItems();
-            ClearMenuItemImage(_serverLocationMenuItem);
-        }
-
-        if (_quickLaunchMenuItem != null)
-        {
-            ClearDropDownItems(_quickLaunchMenuItem);
-        }
-
-        if (_runningWindowsMenuItem != null)
-        {
-            ClearDropDownItems(_runningWindowsMenuItem);
-        }
-
-        if (_tileWindowsMenuItem != null)
-        {
-            ClearDropDownItems(_tileWindowsMenuItem);
-        }
-
-        _settingsMenuItem = null;
-        _launchMenuItem = null;
-        _quickLaunchMenuItem = null;
-        _runningWindowsMenuItem = null;
-        _tileWindowsMenuItem = null;
-        _floatingBarMenuItem = null;
-        _multiInstanceMenuItem = null;
-        _serverLocationMenuItem = null;
-        _singleActiveServer = null;
-        _exitMenuItem = null;
-
-        if (_contextMenu != null)
-        {
-            try { _contextMenu.Dispose(); } catch { }
-            _contextMenu = null;
         }
 
         if (_ownedIcon != null)
@@ -1131,6 +1049,28 @@ public sealed class NotifyIconWrapper : IDisposable
         {
             try { _hwndSource.RemoveHook(WndProc); } catch { }
             _hwndSource = null;
+        }
+
+        if (_trayMenuWindow != null)
+        {
+            var menuWin = _trayMenuWindow;
+            _trayMenuWindow = null;
+            var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.HasShutdownStarted)
+            {
+                if (dispatcher.CheckAccess())
+                {
+                    try { menuWin.ForceClose(); } catch { }
+                }
+                else
+                {
+                    try { dispatcher.BeginInvoke(() => { try { menuWin.ForceClose(); } catch { } }); } catch { }
+                }
+            }
+            else
+            {
+                try { menuWin.ForceClose(); } catch { }
+            }
         }
 
         DisposeWinFormsObjects();
