@@ -19,6 +19,7 @@ public sealed class ActivityWatcher : IActivityWatcher
     private string? _activeFilePath;
     private long _activeFileGeneration;
     private DateTime _activeFileCreatedUtc;
+    private DateTime _activeFileLastWriteUtc;
     private DateTime _watchStartUtc;
     private long _byteOffset;
     private bool _isWatching;
@@ -95,6 +96,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                     _lastRpcTimeUtc = DateTime.MinValue;
                     _activeFilePath = null;
                     _activeFileCreatedUtc = DateTime.MinValue;
+                    _activeFileLastWriteUtc = DateTime.MinValue;
                     _activeFileGeneration++;
                     _watchStartUtc = DateTime.UtcNow;
 
@@ -238,12 +240,16 @@ public sealed class ActivityWatcher : IActivityWatcher
             try
             {
                 var info = new FileInfo(candidatePath);
-                if (_activeFilePath == null || info.CreationTimeUtc >= _activeFileCreatedUtc)
+                bool isNewer = _activeFilePath == null ||
+                               info.LastWriteTimeUtc > _activeFileLastWriteUtc ||
+                               (info.LastWriteTimeUtc == _activeFileLastWriteUtc &&
+                                info.CreationTimeUtc >= _activeFileCreatedUtc);
+                if (isNewer)
                 {
                     _activeFilePath = candidatePath;
+                    _activeFileLastWriteUtc = info.LastWriteTimeUtc;
                     _activeFileCreatedUtc = info.CreationTimeUtc;
                     _activeFileGeneration++;
-                    _pendingJoin = null;
                 }
             }
             catch { }
@@ -294,7 +300,7 @@ public sealed class ActivityWatcher : IActivityWatcher
             foreach (string file in candidates)
             {
                 var fi = new FileInfo(file);
-                if (newest == null || fi.LastWriteTimeUtc > newest.LastWriteTimeUtc || fi.CreationTimeUtc > newest.CreationTimeUtc)
+                if (newest == null || CompareFileRecency(fi, newest) > 0)
                 {
                     newest = fi;
                 }
@@ -309,14 +315,18 @@ public sealed class ActivityWatcher : IActivityWatcher
                 {
                     lock (_stateLock)
                     {
-                        if (_activeFilePath == null ||
+                        bool isNewerThanActive = _activeFilePath == null ||
                             (!string.Equals(_activeFilePath, newest.FullName, StringComparison.OrdinalIgnoreCase) &&
-                             newest.CreationTimeUtc > _activeFileCreatedUtc))
+                             (newest.LastWriteTimeUtc > _activeFileLastWriteUtc ||
+                              (newest.LastWriteTimeUtc == _activeFileLastWriteUtc &&
+                               newest.CreationTimeUtc > _activeFileCreatedUtc)));
+
+                        if (isNewerThanActive)
                         {
                             _activeFilePath = newest.FullName;
+                            _activeFileLastWriteUtc = newest.LastWriteTimeUtc;
                             _activeFileCreatedUtc = newest.CreationTimeUtc;
                             _activeFileGeneration++;
-                            _pendingJoin = null;
                         }
                     }
                 }
@@ -344,6 +354,16 @@ public sealed class ActivityWatcher : IActivityWatcher
                     if (generation != lastGeneration ||
                         !string.Equals(lastTargetFile, targetFile, StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!string.IsNullOrEmpty(lastTargetFile) && File.Exists(lastTargetFile))
+                        {
+                            ReadAvailableLines(lastTargetFile);
+                        }
+
+                        if (lastTargetFile != null)
+                        {
+                            ResetSessionStateForLogSwitch(DateTime.UtcNow);
+                        }
+
                         _byteOffset = 0;
                         _carryBuffer.Clear();
                         lastTargetFile = targetFile;
@@ -472,10 +492,13 @@ public sealed class ActivityWatcher : IActivityWatcher
         // 1. Teleport tracking
         if (RobloxLogLineParser.TryParseTeleport(line, out bool isReserved))
         {
-            _teleportPending = true;
-            if (isReserved)
+            lock (_stateLock)
             {
-                _reservedTeleportMarker = true;
+                _teleportPending = true;
+                if (isReserved)
+                {
+                    _reservedTeleportMarker = true;
+                }
             }
             return;
         }
@@ -485,14 +508,19 @@ public sealed class ActivityWatcher : IActivityWatcher
         {
             lock (_stateLock)
             {
-                if (!_inGame)
+                bool allowJoin = !_inGame ||
+                                 _teleportPending ||
+                                 !string.Equals(_currentActivity?.JobId, jobId, StringComparison.OrdinalIgnoreCase);
+
+                if (allowJoin)
                 {
+                    bool isTeleport = _inGame || _teleportPending;
                     _pendingJoin = new ActivitySessionData
                     {
                         JobId = jobId,
                         PlaceId = placeId,
                         ServerIp = joinServerIp,
-                        IsTeleport = _teleportPending,
+                        IsTeleport = isTeleport,
                         ServerType = _reservedTeleportMarker ? ServerType.Reserved : ServerType.Public
                     };
                     _teleportPending = false;
@@ -551,6 +579,7 @@ public sealed class ActivityWatcher : IActivityWatcher
         // 5. serverId: <ip>|<port> -> Emit GameJoined
         if (RobloxLogLineParser.TryParseServerId(line, out string serverIp, out int? serverPort))
         {
+            GameLeaveEventArgs? previousLeaveArgs = null;
             GameJoinEventArgs? joinArgs = null;
             lock (_stateLock)
             {
@@ -559,6 +588,13 @@ public sealed class ActivityWatcher : IActivityWatcher
                     if (_pendingJoin.ServerPort == 0 && serverPort.HasValue)
                     {
                         _pendingJoin.ServerPort = serverPort.Value;
+                    }
+
+                    if (_inGame && _currentActivity != null)
+                    {
+                        _currentActivity.TimeLeft = timestamp;
+                        _history.Insert(0, _currentActivity);
+                        previousLeaveArgs = new GameLeaveEventArgs(timestamp);
                     }
 
                     _pendingJoin.TimeJoined = timestamp;
@@ -575,6 +611,11 @@ public sealed class ActivityWatcher : IActivityWatcher
                         _currentActivity.IsUdmux,
                         timestamp);
                 }
+            }
+
+            if (previousLeaveArgs != null)
+            {
+                GameLeft?.Invoke(this, previousLeaveArgs);
             }
 
             if (joinArgs != null)
@@ -619,12 +660,20 @@ public sealed class ActivityWatcher : IActivityWatcher
                 {
                     _currentActivity.TimeLeft = timestamp;
                     _history.Insert(0, _currentActivity);
+
+                    bool keepPendingTeleport = _pendingJoin != null &&
+                        (_pendingJoin.IsTeleport ||
+                         !string.Equals(_pendingJoin.JobId, _currentActivity.JobId, StringComparison.OrdinalIgnoreCase));
+
                     _currentActivity = null;
-                    _pendingJoin = null;
+                    if (!keepPendingTeleport)
+                    {
+                        _pendingJoin = null;
+                    }
                     _inGame = false;
                     leaveArgs = new GameLeaveEventArgs(timestamp);
                 }
-                else if (_pendingJoin != null)
+                else if (_pendingJoin != null && !_pendingJoin.IsTeleport)
                 {
                     _pendingJoin = null;
                 }
@@ -646,8 +695,45 @@ public sealed class ActivityWatcher : IActivityWatcher
                 {
                     _pendingJoin = null;
                 }
+                _teleportPending = false;
+                _reservedTeleportMarker = false;
             }
             AppClosed?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private static int CompareFileRecency(FileInfo a, FileInfo b)
+    {
+        int cmp = a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc);
+        if (cmp != 0) return cmp;
+        cmp = a.CreationTimeUtc.CompareTo(b.CreationTimeUtc);
+        if (cmp != 0) return cmp;
+        return StringComparer.OrdinalIgnoreCase.Compare(a.FullName, b.FullName);
+    }
+
+    private void ResetSessionStateForLogSwitch(DateTime timestamp)
+    {
+        GameLeaveEventArgs? leaveArgs = null;
+        lock (_stateLock)
+        {
+            if (_inGame && _currentActivity != null)
+            {
+                _currentActivity.TimeLeft = timestamp;
+                _history.Insert(0, _currentActivity);
+                leaveArgs = new GameLeaveEventArgs(timestamp);
+            }
+
+            _currentActivity = null;
+            _pendingJoin = null;
+            _inGame = false;
+            _teleportPending = false;
+            _reservedTeleportMarker = false;
+            _lastRpcTimeUtc = DateTime.MinValue;
+        }
+
+        if (leaveArgs != null)
+        {
+            GameLeft?.Invoke(this, leaveArgs);
         }
     }
 

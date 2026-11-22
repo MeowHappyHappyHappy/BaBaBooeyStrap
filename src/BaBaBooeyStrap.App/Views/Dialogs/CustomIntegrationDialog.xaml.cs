@@ -35,7 +35,7 @@ public partial class CustomIntegrationDialog : FluentWindow
     {
         var dlg = new OpenFileDialog
         {
-            Filter = "Programs & Scripts (*.exe;*.bat;*.cmd;*.ps1)|*.exe;*.bat;*.cmd;*.ps1|All Files (*.*)|*.*"
+            Filter = LocalizationService.Instance.GetString("Str_Filter_ProgramsAndScripts")
         };
 
         if (dlg.ShowDialog() == true)

@@ -17,6 +17,7 @@ using Xunit;
 
 namespace BaBaBooeyStrap.Tests.App;
 
+[Collection("LocalizationSingleton")]
 public sealed class Milestone5AppTests : IDisposable
 {
     private readonly string _tempDir;
@@ -240,6 +241,7 @@ public sealed class Milestone5AppTests : IDisposable
     [Fact]
     public void BootstrapperDialogViewModel_ThrottlesRapidUpdates_AndHandlesCancellation()
     {
+        LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
         using var cts = new CancellationTokenSource();
         var vm = new BootstrapperDialogViewModel(cts);
         bool cancelFired = false;

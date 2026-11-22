@@ -8,6 +8,40 @@ namespace BaBaBooeyStrap.App.Services.Pipeline;
 
 internal static class VersionInstallationValidator
 {
+    private static readonly HashSet<string> StudioOnlyPackages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "RobloxStudio.zip",
+        "ApplicationConfig.zip",
+        "BuiltInPlugins.zip",
+        "BuiltInStandalonePlugins.zip",
+        "content-qt_translations.zip",
+        "content-api-docs.zip",
+        "extracontent-scripts.zip",
+        "Libraries.zip",
+        "LibrariesQt5.zip",
+        "Plugins.zip",
+        "Qml.zip",
+        "StudioFonts.zip"
+    };
+
+    private static readonly HashSet<string> PlayerOnlyPackages = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "RobloxApp.zip",
+        "WebView2.zip"
+    };
+
+    public static bool IsPackageApplicable(string packageName, bool isStudio)
+    {
+        if (string.Equals(packageName, "WebView2RuntimeInstaller.zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return isStudio
+            ? !PlayerOnlyPackages.Contains(packageName)
+            : !StudioOnlyPackages.Contains(packageName);
+    }
+
     public static bool IsVersionInstallationComplete(string versionDir, bool isStudio)
     {
         if (string.IsNullOrWhiteSpace(versionDir) || !Directory.Exists(versionDir))
@@ -40,7 +74,15 @@ internal static class VersionInstallationValidator
 
             try
             {
-                if (!File.ReadAllText(appSettingsPath).Contains("http://www.", StringComparison.OrdinalIgnoreCase))
+                var doc = System.Xml.Linq.XDocument.Load(appSettingsPath);
+                string? contentFolder = doc.Root?.Element("ContentFolder")?.Value;
+                string? baseUrl = doc.Root?.Element("BaseUrl")?.Value;
+
+                if (string.IsNullOrWhiteSpace(contentFolder) ||
+                    string.IsNullOrWhiteSpace(baseUrl) ||
+                    !Uri.TryCreate(baseUrl.Trim(), UriKind.Absolute, out Uri? baseUri) ||
+                    (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps) ||
+                    string.IsNullOrWhiteSpace(baseUri.Host))
                 {
                     return false;
                 }
@@ -87,26 +129,56 @@ internal static class VersionInstallationValidator
         }
     }
 
-    public static void TryRepairFromCachedDownloads(IPaths paths, string versionDir, bool isStudio, ILogger logger)
+    public static async Task<bool> TryRepairFromCachedDownloadsAsync(
+        IPaths paths,
+        string versionDir,
+        bool isStudio,
+        ILogger logger,
+        IReadOnlyDictionary<string, string>? expectedHashes = null,
+        CancellationToken ct = default)
     {
-        if (isStudio || !Directory.Exists(paths.Downloads)) return;
+        if (string.IsNullOrWhiteSpace(versionDir) || !Directory.Exists(paths.Downloads))
+        {
+            return IsVersionInstallationComplete(versionDir, isStudio);
+        }
 
         try
         {
             var extractor = new PackageExtractor();
+            var verifier = new PackageVerifier();
+            string versionKey = Path.GetFileName(Path.TrimEndingDirectorySeparator(versionDir));
+            string versionDownloadsDir = !string.IsNullOrWhiteSpace(versionKey)
+                ? Path.Combine(paths.Downloads, versionKey)
+                : string.Empty;
+
             foreach (var (pkgName, relSubdir) in PackageExtractor.PackageDirectoryMap)
             {
-                if (string.Equals(pkgName, "WebView2RuntimeInstaller.zip", StringComparison.OrdinalIgnoreCase))
+                ct.ThrowIfCancellationRequested();
+                if (!IsPackageApplicable(pkgName, isStudio))
+                {
                     continue;
+                }
 
-                string cachedZip = Path.Combine(paths.Downloads, pkgName);
-                if (!File.Exists(cachedZip))
+                string? cachedZip = ResolveValidatedCachedZip(
+                    pkgName,
+                    versionDownloadsDir,
+                    paths.Downloads,
+                    expectedHashes,
+                    verifier,
+                    logger);
+
+                if (cachedZip == null)
+                {
                     continue;
+                }
 
                 try
                 {
-                    extractor.ExtractPackageAsync(cachedZip, versionDir, relSubdir, null, CancellationToken.None)
-                        .GetAwaiter().GetResult();
+                    await extractor.ExtractPackageAsync(cachedZip, versionDir, relSubdir, null, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -114,29 +186,102 @@ internal static class VersionInstallationValidator
                 }
             }
 
-            string targetCacert = Path.Combine(versionDir, "ssl", "cacert.pem");
-            string rootCacert = Path.Combine(versionDir, "cacert.pem");
-            if (!File.Exists(targetCacert) && File.Exists(rootCacert))
+            if (!isStudio)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(targetCacert)!);
-                File.Copy(rootCacert, targetCacert, overwrite: true);
+                string targetCacert = Path.Combine(versionDir, "ssl", "cacert.pem");
+                string rootCacert = Path.Combine(versionDir, "cacert.pem");
+                if (!File.Exists(targetCacert) && File.Exists(rootCacert))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(targetCacert)!);
+                    File.Copy(rootCacert, targetCacert, overwrite: true);
+                }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
             logger.Warn("VersionInstallationValidator", $"Cached repair failed: {ex.Message}");
         }
+
+        return IsVersionInstallationComplete(versionDir, isStudio);
     }
 
-    public static void TryRecoverMissingWebView2Loader(IPaths paths, string versionDir, ILogger logger)
+    private static string? ResolveValidatedCachedZip(
+        string pkgName,
+        string versionDownloadsDir,
+        string flatDownloadsDir,
+        IReadOnlyDictionary<string, string>? expectedHashes,
+        PackageVerifier verifier,
+        ILogger logger)
+    {
+        string? expectedHash = null;
+        bool hasExpectedHashes = expectedHashes != null && expectedHashes.Count > 0;
+        if (hasExpectedHashes)
+        {
+            expectedHashes!.TryGetValue(pkgName, out expectedHash);
+        }
+
+        if (!string.IsNullOrEmpty(versionDownloadsDir))
+        {
+            string versionedZip = Path.Combine(versionDownloadsDir, pkgName);
+            if (File.Exists(versionedZip))
+            {
+                if (!string.IsNullOrWhiteSpace(expectedHash) && !verifier.VerifyFileMd5(versionedZip, expectedHash))
+                {
+                    logger.Warn("VersionInstallationValidator", $"Cached package '{pkgName}' failed MD5 check; skipping repair.");
+                    return null;
+                }
+                return versionedZip;
+            }
+        }
+
+        string flatZip = Path.Combine(flatDownloadsDir, pkgName);
+        if (!File.Exists(flatZip))
+        {
+            return null;
+        }
+
+        if (hasExpectedHashes)
+        {
+            if (string.IsNullOrWhiteSpace(expectedHash) || !verifier.VerifyFileMd5(flatZip, expectedHash))
+            {
+                logger.Warn("VersionInstallationValidator", $"Flat cached package '{pkgName}' does not match expected version hash; skipping.");
+                return null;
+            }
+        }
+
+        return flatZip;
+    }
+
+    public static void TryRecoverMissingWebView2Loader(
+        IPaths paths,
+        string versionDir,
+        ILogger logger,
+        IReadOnlyDictionary<string, string>? expectedHashes = null)
     {
         try
         {
             string targetDll = Path.Combine(versionDir, "WebView2Loader.dll");
             if (File.Exists(targetDll)) return;
 
-            string webViewZip = Path.Combine(paths.Downloads, "WebView2.zip");
-            if (File.Exists(webViewZip))
+            var verifier = new PackageVerifier();
+            string versionKey = Path.GetFileName(Path.TrimEndingDirectorySeparator(versionDir));
+            string versionDownloadsDir = !string.IsNullOrWhiteSpace(versionKey)
+                ? Path.Combine(paths.Downloads, versionKey)
+                : string.Empty;
+
+            string? webViewZip = ResolveValidatedCachedZip(
+                "WebView2.zip",
+                versionDownloadsDir,
+                paths.Downloads,
+                expectedHashes,
+                verifier,
+                logger);
+
+            if (webViewZip != null)
             {
                 var extractor = new PackageExtractor();
                 extractor.ExtractZipFile(webViewZip, versionDir);

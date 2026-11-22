@@ -192,9 +192,9 @@ public sealed class FastFlagsViewModel : ViewModelBase
         }
     }
 
-    public void ApplyFastFlagPresets()
+    public bool ApplyFastFlagPresets()
     {
-        if (!_settings.UseFastFlagManager) return;
+        if (!_settings.UseFastFlagManager) return false;
 
         if (WriteRenderingMode)
         {
@@ -262,6 +262,7 @@ public sealed class FastFlagsViewModel : ViewModelBase
             _fastFlagManager.RemoveFlag("FFlagHandleAltEnterFullscreenManually");
 
         _fastFlagManager.Save();
+        return true;
     }
 
     public void ResetAllFastFlags()

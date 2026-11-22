@@ -28,6 +28,16 @@ public partial class AppearancePage : Page
         }
     }
 
+    private void BrowseRobloxIcon_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Appearance_RobloxIconFileFilter") };
+        if (ofd.ShowDialog() == true)
+        {
+            ViewModel.WindowIntegrations.RobloxIconCustomLocation = ofd.FileName;
+        }
+    }
+
     private void OpenThemesFolder_Click(object sender, RoutedEventArgs e)
     {
         Directory.CreateDirectory(Paths.CustomThemes);

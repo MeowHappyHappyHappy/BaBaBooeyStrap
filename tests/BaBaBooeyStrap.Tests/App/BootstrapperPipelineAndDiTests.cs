@@ -268,7 +268,7 @@ public sealed class BootstrapperPipelineAndDiTests : IDisposable
         Directory.CreateDirectory(versionDir);
         File.WriteAllBytes(Path.Combine(versionDir, "RobloxPlayerBeta.exe"), [0x4D, 0x5A]);
         File.WriteAllBytes(Path.Combine(versionDir, "WebView2Loader.dll"), [0x4D, 0x5A]);
-        File.WriteAllText(Path.Combine(versionDir, "AppSettings.xml"), "<Settings><BaseUrl>http://www.roblox.com</BaseUrl></Settings>");
+        File.WriteAllText(Path.Combine(versionDir, "AppSettings.xml"), "<Settings><ContentFolder>content</ContentFolder><BaseUrl>http://www.roblox.com</BaseUrl></Settings>");
         Directory.CreateDirectory(Path.Combine(versionDir, "ssl"));
         File.WriteAllText(Path.Combine(versionDir, "ssl", "cacert.pem"), "cert");
         Directory.CreateDirectory(Path.Combine(versionDir, "PlatformContent", "pc", "textures"));

@@ -107,7 +107,9 @@
                                    FontSize="12"
                                    VerticalAlignment="Center"
                                    Margin="0,0,8,0"/>
-                        <ui:NumberBox Value="{Binding AccountManagement.MultiInstanceLaunchDelayMs, Mode=TwoWay}"
+                        <ui:NumberBox Value="{Binding AccountManagement.MultiInstanceLaunchDelayMs, Mode=TwoWay, Converter={x:Static conv:NullableDoubleToIntConverter.Instance}}"
+                                      ClearButtonEnabled="False"
+                                      conv:NumberBoxGuard.RestoreOnEmpty="True"
                                       Minimum="500"
                                       Maximum="10000"
                                       SpinButtonPlacementMode="Inline"

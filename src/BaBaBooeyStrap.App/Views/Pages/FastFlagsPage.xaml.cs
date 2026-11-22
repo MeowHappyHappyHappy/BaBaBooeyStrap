@@ -30,6 +30,10 @@ public partial class FastFlagsPage : Page
 
     private void ApplyPresets_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel?.FastFlags.ApplyFastFlagPresets();
+        if (ViewModel == null) return;
+        bool applied = ViewModel.FastFlags.ApplyFastFlagPresets();
+        ViewModel.SetLocalizedStatus(applied
+            ? "Str_FastFlags_StatusPresetsApplied"
+            : "Str_FastFlags_StatusManagerDisabled");
     }
 }

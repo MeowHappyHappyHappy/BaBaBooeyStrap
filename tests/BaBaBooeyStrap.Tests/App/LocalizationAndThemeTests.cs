@@ -17,6 +17,12 @@ using Xunit;
 
 namespace BaBaBooeyStrap.Tests.App;
 
+[CollectionDefinition("LocalizationSingleton", DisableParallelization = true)]
+public sealed class LocalizationSingletonCollection
+{
+}
+
+[Collection("LocalizationSingleton")]
 public sealed partial class LocalizationAndThemeTests : IDisposable
 {
     private readonly string _tempDir;

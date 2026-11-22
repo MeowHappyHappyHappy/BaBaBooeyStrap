@@ -80,10 +80,6 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
 
         try
         {
-            context.ReportStatus(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusFindingCdn"));
-            var selector = _mirrorSelector ?? new CdnMirrorSelector(_httpClient);
-            string cdnBaseUrl = await selector.ResolveOptimalCdnUrlAsync(ct).ConfigureAwait(false);
-
             string channel = !string.IsNullOrWhiteSpace(launchSettings.ChannelFlag.Data)
                 ? launchSettings.ChannelFlag.Data
                 : _settingsManager.Prop.Channel;
@@ -120,6 +116,10 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
                 context.ResolvedVersionGuid = latestGuid;
                 return;
             }
+
+            context.ReportStatus(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusFindingCdn"));
+            var selector = _mirrorSelector ?? new CdnMirrorSelector(_httpClient);
+            string cdnBaseUrl = await selector.ResolveOptimalCdnUrlAsync(ct).ConfigureAwait(false);
 
             context.ResolvedVersionGuid = latestGuid;
             context.LatestVersion = latestVersion;

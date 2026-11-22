@@ -64,7 +64,14 @@ public partial class AboutPage : Page
 
             if (dlg.UpdateInstalledNeedsRestart)
             {
-                Application.Current?.Shutdown();
+                if (Application.Current is App app)
+                {
+                    app.RequestShutdown(0);
+                }
+                else
+                {
+                    Application.Current?.Shutdown();
+                }
             }
         }
         catch (Exception ex)
@@ -166,7 +173,7 @@ public partial class AboutPage : Page
         var dlg = new SaveFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_About_ExportDiagnostics"),
-            Filter = "ZIP Archive (*.zip)|*.zip",
+            Filter = LocalizationService.Instance.GetString("Str_Filter_ZipArchive"),
             FileName = $"BaBaBooeyStrap_Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.zip"
         };
 

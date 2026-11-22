@@ -61,8 +61,19 @@ public class PackageExtractor : IPackageExtractor
 
     public void ExtractZipFile(string zipFilePath, string targetDirectory, string? fileFilter = null)
     {
+        ExtractZipFileInternal(zipFilePath, targetDirectory, fileFilter, exactNormalizedFiles: null, CancellationToken.None);
+    }
+
+    private static int ExtractZipFileInternal(
+        string zipFilePath,
+        string targetDirectory,
+        string? fileFilter,
+        IReadOnlySet<string>? exactNormalizedFiles,
+        CancellationToken ct)
+    {
         ArgumentNullException.ThrowIfNull(zipFilePath);
         ArgumentNullException.ThrowIfNull(targetDirectory);
+        ct.ThrowIfCancellationRequested();
 
         if (!File.Exists(zipFilePath))
         {
@@ -76,10 +87,20 @@ public class PackageExtractor : IPackageExtractor
         }
 
         using var stream = File.OpenRead(zipFilePath);
-        ExtractFromStream(stream, targetDirectory, fileFilter);
+        return ExtractFromStream(stream, targetDirectory, fileFilter, exactNormalizedFiles, ct);
     }
 
-    public async Task ExtractPackageAsync(
+    public Task ExtractPackageAsync(
+        string packageZipPath,
+        string targetVersionDirectory,
+        string relativeSubdirectory,
+        IEnumerable<string>? specificFiles = null,
+        CancellationToken ct = default)
+    {
+        return ExtractPackageWithCountAsync(packageZipPath, targetVersionDirectory, relativeSubdirectory, specificFiles, ct);
+    }
+
+    public Task<int> ExtractPackageWithCountAsync(
         string packageZipPath,
         string targetVersionDirectory,
         string relativeSubdirectory,
@@ -88,23 +109,37 @@ public class PackageExtractor : IPackageExtractor
     {
         ct.ThrowIfCancellationRequested();
 
+        HashSet<string>? exactFiles = null;
+        if (specificFiles != null)
+        {
+            var normalized = specificFiles
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(NormalizeZipRelativePath)
+                .Where(s => s.Length > 0)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (normalized.Count > 0)
+            {
+                exactFiles = normalized;
+            }
+        }
+
         string fullTargetDir = Path.Combine(targetVersionDirectory, relativeSubdirectory ?? string.Empty);
-        Directory.CreateDirectory(fullTargetDir);
-
-        if (specificFiles != null && specificFiles.Any())
+        return Task.Run(() =>
         {
-            string pattern = "^(" + string.Join("|", specificFiles.Select(Regex.Escape)) + ")$";
-            ExtractZipFile(packageZipPath, fullTargetDir, pattern);
-        }
-        else
-        {
-            ExtractZipFile(packageZipPath, fullTargetDir);
-        }
-
-        await Task.CompletedTask;
+            Directory.CreateDirectory(fullTargetDir);
+            return ExtractZipFileInternal(packageZipPath, fullTargetDir, fileFilter: null, exactFiles, ct);
+        }, ct);
     }
 
-    private static void ExtractFromStream(Stream stream, string targetDirectory, string? fileFilter = null)
+    private static string NormalizeZipRelativePath(string path) =>
+        path.Replace('\\', '/').Trim().TrimStart('/');
+
+    private static int ExtractFromStream(
+        Stream stream,
+        string targetDirectory,
+        string? fileFilter = null,
+        IReadOnlySet<string>? exactNormalizedFiles = null,
+        CancellationToken ct = default)
     {
         Directory.CreateDirectory(targetDirectory);
         string fullTargetDir = Path.GetFullPath(targetDirectory);
@@ -124,12 +159,24 @@ public class PackageExtractor : IPackageExtractor
         }
 
         Regex? filterRegex = string.IsNullOrEmpty(fileFilter) ? null : new Regex(fileFilter, RegexOptions.IgnoreCase);
+        int extractedFiles = 0;
 
         try
         {
+            byte[] copyBuffer = new byte[81920];
             foreach (ZipEntry entry in zipFile)
             {
-                if (filterRegex != null && !filterRegex.IsMatch(entry.Name))
+                ct.ThrowIfCancellationRequested();
+
+                string normalizedZipPath = NormalizeZipRelativePath(entry.Name);
+                if (exactNormalizedFiles != null)
+                {
+                    if (!exactNormalizedFiles.Contains(normalizedZipPath))
+                    {
+                        continue;
+                    }
+                }
+                else if (filterRegex != null && !filterRegex.IsMatch(entry.Name))
                 {
                     continue;
                 }
@@ -177,7 +224,13 @@ public class PackageExtractor : IPackageExtractor
 
                     using var entryStream = zipFile.GetInputStream(entry);
                     using var destStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                    entryStream.CopyTo(destStream);
+                    int read;
+                    while ((read = entryStream.Read(copyBuffer, 0, copyBuffer.Length)) > 0)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        destStream.Write(copyBuffer, 0, read);
+                    }
+                    extractedFiles++;
                 }
                 catch (IOException)
                 {
@@ -197,5 +250,7 @@ public class PackageExtractor : IPackageExtractor
         {
             zipFile?.Close();
         }
+
+        return extractedFiles;
     }
 }

@@ -23,7 +23,7 @@ public static class CleanerPolicyMapper
 
         if (settings.CleanerOptions == CleanerOptions.Never)
         {
-            return new CleanerPolicy(TimeSpan.Zero, 0, false, false, false, false);
+            return new CleanerPolicy(TimeSpan.Zero, 0, false, false, false, false, false);
         }
 
         var dirs = settings.CleanerDirectories ?? [];
@@ -31,6 +31,7 @@ public static class CleanerPolicyMapper
         bool cleanCrashDumps = dirs.Contains("RobloxCrashDumps", StringComparer.OrdinalIgnoreCase);
         bool cleanLauncherLogs = dirs.Contains("BaBaBooeyStrapLogs", StringComparer.OrdinalIgnoreCase);
         bool cleanHttpCache = dirs.Contains("RobloxCache", StringComparer.OrdinalIgnoreCase);
+        bool cleanStudioCache = dirs.Contains("RobloxStudioCache", StringComparer.OrdinalIgnoreCase);
 
         return new CleanerPolicy(
             ToAgeThreshold(settings.CleanerOptions),
@@ -38,6 +39,7 @@ public static class CleanerPolicyMapper
             cleanLogs,
             cleanCrashDumps,
             cleanLauncherLogs,
-            cleanHttpCache);
+            cleanHttpCache,
+            cleanStudioCache);
     }
 }

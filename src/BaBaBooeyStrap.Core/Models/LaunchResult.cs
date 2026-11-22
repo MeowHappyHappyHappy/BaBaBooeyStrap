@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace BaBaBooeyStrap.Core.Models;
 
 public sealed record LaunchResult(
@@ -6,5 +8,6 @@ public sealed record LaunchResult(
     LaunchTarget Target,
     DateTimeOffset LaunchedAt,
     int? ProcessId = null,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    HttpStatusCode? AuthHttpStatusCode = null
 );

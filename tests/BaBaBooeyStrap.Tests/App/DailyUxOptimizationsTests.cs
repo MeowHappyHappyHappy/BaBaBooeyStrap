@@ -19,6 +19,7 @@ using Xunit;
 
 namespace BaBaBooeyStrap.Tests.App;
 
+[Collection("LocalizationSingleton")]
 public sealed class DailyUxOptimizationsTests : IDisposable
 {
     private readonly string _tempDir;
@@ -415,8 +416,11 @@ public sealed class DailyUxOptimizationsTests : IDisposable
     [Fact]
     public async Task ViewModels_ChannelResetIntegrationsDirtyTrackingAndGameInfo_WorkAsExpected()
     {
+        LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
+        try
+        {
         var paths = new PathProvider(_tempDir);
-        var settings = new Settings();
+        var settings = new Settings { Language = AppLanguage.English };
         var vm = new MainWindowViewModel(settings, paths: paths);
 
         vm.HasUnsavedChanges.Should().BeFalse();
@@ -489,6 +493,11 @@ public sealed class DailyUxOptimizationsTests : IDisposable
         accountsVm.SaveCurrentJoinTarget().Should().BeTrue();
         accountsVm.TargetName.Should().Be("Blox Fruits");
         targetStore.LoadAll().Should().ContainSingle(t => t.Name == "Blox Fruits" && t.PlaceId == 2753915549);
+        }
+        finally
+        {
+            LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
+        }
     }
 
     private static HttpResponseMessage JsonOk(string json) =>

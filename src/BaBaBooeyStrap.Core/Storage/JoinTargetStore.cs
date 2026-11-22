@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using BaBaBooeyStrap.Core.Models;
 
@@ -14,10 +13,9 @@ public sealed class JoinTargetStore : IJoinTargetStore
         WriteIndented = true
     };
 
-    private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.OrdinalIgnoreCase);
-    private object SyncLock => PathLocks.GetOrAdd(Path.GetFullPath(FilePath), _ => new object());
-
     public string FilePath { get; }
+    public string? LastLoadError { get; private set; }
+    public event Action<string>? OnCorruptionRecovered;
 
     public JoinTargetStore(string? filePath = null)
     {
@@ -28,38 +26,59 @@ public sealed class JoinTargetStore : IJoinTargetStore
 
     public IReadOnlyList<SavedJoinTarget> LoadAll()
     {
-        lock (SyncLock)
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+
+        if (!File.Exists(FilePath))
         {
-            if (!File.Exists(FilePath))
-            {
-                return [];
-            }
+            return [];
+        }
 
-            string json;
-            int retries = 10;
-            while (true)
+        string json;
+        int retries = 10;
+        while (true)
+        {
+            try
             {
-                try
-                {
-                    if (!File.Exists(FilePath)) return [];
-                    using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    using var reader = new StreamReader(stream);
-                    json = reader.ReadToEnd();
-                    break;
-                }
-                catch (IOException) when (retries > 0)
-                {
-                    retries--;
-                    Thread.Sleep(15);
-                }
+                if (!File.Exists(FilePath)) return [];
+                using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+                json = reader.ReadToEnd();
+                break;
             }
-
-            if (string.IsNullOrWhiteSpace(json))
+            catch (IOException) when (retries > 0)
             {
-                return [];
+                retries--;
+                Thread.Sleep(15);
             }
+        }
 
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return [];
+        }
+
+        try
+        {
+            LastLoadError = null;
             return JsonSerializer.Deserialize<List<SavedJoinTarget>>(json, JsonOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            LastLoadError = ex.Message;
+            string backupPath = $"{FilePath}.corrupted.{DateTime.UtcNow:yyyyMMddHHmmss}.bak";
+            try
+            {
+                if (File.Exists(FilePath))
+                {
+                    File.Move(FilePath, backupPath, overwrite: true);
+                }
+            }
+            catch
+            {
+                try { File.Copy(FilePath, backupPath, overwrite: true); } catch { }
+            }
+            OnCorruptionRecovered?.Invoke(backupPath);
+            return [];
         }
     }
 
@@ -67,69 +86,41 @@ public sealed class JoinTargetStore : IJoinTargetStore
     {
         ArgumentNullException.ThrowIfNull(targets);
 
-        lock (SyncLock)
-        {
-            var list = targets.ToList();
-            var dir = Path.GetDirectoryName(FilePath);
-            if (!string.IsNullOrWhiteSpace(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            var json = JsonSerializer.Serialize(list, JsonOptions);
-            var tempPath = $"{FilePath}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllText(tempPath, json);
-
-            int retries = 10;
-            while (true)
-            {
-                try
-                {
-                    File.Move(tempPath, FilePath, overwrite: true);
-                    break;
-                }
-                catch when (retries > 0)
-                {
-                    retries--;
-                    Thread.Sleep(15);
-                }
-            }
-        }
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        var list = targets.ToList();
+        var json = JsonSerializer.Serialize(list, JsonOptions);
+        CrossProcessFileLock.AtomicWrite(FilePath, tempPath => File.WriteAllText(tempPath, json));
     }
 
     public void Upsert(SavedJoinTarget target)
     {
         ArgumentNullException.ThrowIfNull(target);
 
-        lock (SyncLock)
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        var list = LoadAll().ToList();
+        var index = list.FindIndex(t => t.Id == target.Id);
+        if (index >= 0)
         {
-            var list = LoadAll().ToList();
-            var index = list.FindIndex(t => t.Id == target.Id);
-            if (index >= 0)
-            {
-                list[index] = target;
-            }
-            else
-            {
-                list.Add(target);
-            }
-
-            SaveAll(list);
+            list[index] = target;
         }
+        else
+        {
+            list.Add(target);
+        }
+
+        SaveAll(list);
     }
 
     public bool Delete(Guid id)
     {
-        lock (SyncLock)
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        var list = LoadAll().ToList();
+        var removed = list.RemoveAll(t => t.Id == id) > 0;
+        if (removed)
         {
-            var list = LoadAll().ToList();
-            var removed = list.RemoveAll(t => t.Id == id) > 0;
-            if (removed)
-            {
-                SaveAll(list);
-            }
-
-            return removed;
+            SaveAll(list);
         }
+
+        return removed;
     }
 }

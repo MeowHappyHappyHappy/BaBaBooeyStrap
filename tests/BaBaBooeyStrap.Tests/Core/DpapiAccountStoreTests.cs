@@ -169,7 +169,7 @@ public class DpapiAccountStoreTests : IDisposable
     }
 
     [Fact]
-    public void LoadAll_CorruptedBytes_ThrowsCryptographicException()
+    public void LoadAll_CorruptedBytes_RecoversAndBacksUpFile()
     {
         // Write random corrupted bytes that cannot be DPAPI-decrypted
         byte[] garbage = new byte[64];
@@ -177,8 +177,14 @@ public class DpapiAccountStoreTests : IDisposable
         File.WriteAllBytes(_storeFile, garbage);
 
         var store = new DpapiAccountStore(_storeFile);
-        var act = () => store.LoadAll();
-        act.Should().Throw<CryptographicException>();
+        string? backupPath = null;
+        store.OnCorruptionRecovered += p => backupPath = p;
+
+        var accounts = store.LoadAll();
+        accounts.Should().BeEmpty();
+        store.LastLoadError.Should().NotBeNullOrWhiteSpace();
+        backupPath.Should().NotBeNullOrWhiteSpace();
+        File.Exists(backupPath!).Should().BeTrue();
     }
 
     [Fact]

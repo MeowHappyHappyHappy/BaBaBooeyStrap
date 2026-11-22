@@ -37,6 +37,27 @@ public sealed class Win32WindowInterop : IWin32WindowInterop
 
     public bool GetWindowRect(nint hWnd, out User32.RECT rect) => User32.GetWindowRect(hWnd, out rect);
 
+    public bool IsIconic(nint hWnd) => User32.IsIconic(hWnd);
+
+    public bool TryGetNormalWindowRect(nint hWnd, out User32.RECT rect)
+    {
+        var wp = new User32.WINDOWPLACEMENT
+        {
+            length = Marshal.SizeOf<User32.WINDOWPLACEMENT>()
+        };
+        if (User32.GetWindowPlacement(hWnd, ref wp) &&
+            wp.rcNormalPosition.Width > 0 &&
+            wp.rcNormalPosition.Height > 0)
+        {
+            rect = wp.rcNormalPosition;
+            return true;
+        }
+
+        return User32.GetWindowRect(hWnd, out rect);
+    }
+
+    public bool EnumWindows(User32.EnumWindowsProc callback) => User32.EnumWindows(callback, nint.Zero);
+
     public User32.RECT GetMonitorRectFromWindow(nint hWnd)
     {
         nint hMonitor = User32.MonitorFromWindow(hWnd, User32.MONITOR_DEFAULTTONEAREST);

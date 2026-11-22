@@ -6,5 +6,6 @@ public record PackageDownloadProgress(
     long TotalBytes,
     double ProgressPercentage,
     int CompletedPackages,
-    int TotalPackages
+    int TotalPackages,
+    bool IsExtracting = false
 );

@@ -20,6 +20,7 @@ using Wpf.Ui.Markup;
 
 namespace BaBaBooeyStrap.Tests.App;
 
+[Collection("LocalizationSingleton")]
 public sealed class MultiRobloxIntegrationTests : IDisposable
 {
     private readonly string _tempDir;

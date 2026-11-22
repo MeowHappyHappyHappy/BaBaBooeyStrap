@@ -14,4 +14,9 @@ public record ServerLocationInfo(
 public interface IRoValraService
 {
     Task<ServerLocationInfo?> ResolveServerLocationAsync(string ip, CancellationToken ct = default);
+
+    Task<string?> GetBetterMatchmakingServerIdAsync(
+        long placeId,
+        bool randomize = false,
+        CancellationToken ct = default) => Task.FromResult<string?>(null);
 }

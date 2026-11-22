@@ -108,7 +108,7 @@ public sealed class FastFlagManagerTests : IDisposable
     }
 
     [Fact]
-    public void Load_EnforcesAltEnterFullscreenPreset_RestoresToFalseIfMissingOrTrue()
+    public void Load_PreservesUserAltEnterFullscreenValue_WithoutDirtyingState()
     {
         // Arrange
         var manager = new FastFlagManager(_settingsPath);
@@ -119,8 +119,9 @@ public sealed class FastFlagManagerTests : IDisposable
         var reloaded = new FastFlagManager(_settingsPath);
         reloaded.Load();
 
-        // Assert: Restored to "False"
-        reloaded.GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString().Should().Be("False");
+        // Assert: Preserves user value and does not mark state as changed
+        reloaded.GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString().Should().Be("True");
+        reloaded.Changed.Should().BeFalse();
     }
 
     [Fact]

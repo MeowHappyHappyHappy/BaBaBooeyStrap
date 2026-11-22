@@ -480,13 +480,35 @@ public sealed class RobloxAuthService : IRobloxAuthService
         return false;
     }
 
-    private static string NormalizeCookie(string cookie)
+    public static string NormalizeCookie(string cookie)
     {
-        var trimmed = cookie.Trim();
+        if (string.IsNullOrWhiteSpace(cookie))
+        {
+            return string.Empty;
+        }
+
+        string trimmed = cookie.Trim().Trim('"', '\'');
+        const string cookieHeaderPrefix = "Cookie:";
+        if (trimmed.StartsWith(cookieHeaderPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[cookieHeaderPrefix.Length..].Trim().Trim('"', '\'');
+        }
+
+        int semiIdx = trimmed.IndexOf(';');
+        if (semiIdx >= 0)
+        {
+            string[] parts = trimmed.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string? robloPart = parts.FirstOrDefault(p => p.StartsWith(".ROBLOSECURITY=", StringComparison.OrdinalIgnoreCase));
+            trimmed = robloPart ?? parts.FirstOrDefault() ?? string.Empty;
+        }
+
         const string prefix = ".ROBLOSECURITY=";
-        return trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-            ? trimmed[prefix.Length..].Trim()
-            : trimmed;
+        if (trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = trimmed[prefix.Length..];
+        }
+
+        return trimmed.Trim().Trim('"', '\'').TrimEnd(';').Trim();
     }
 
     private static HttpRequestMessage CreateRequest(HttpMethod method, string url, string cookie, string? jsonPayload = null)

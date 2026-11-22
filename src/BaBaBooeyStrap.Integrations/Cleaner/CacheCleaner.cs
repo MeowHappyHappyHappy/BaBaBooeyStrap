@@ -28,13 +28,17 @@ public sealed class CacheCleaner : ICleaner
     {
         ArgumentNullException.ThrowIfNull(policy);
 
-        if (!policy.CleanLogs && !policy.CleanCrashDumps && !policy.CleanLauncherLogs && !policy.CleanHttpCache)
+        if (!policy.CleanLogs &&
+            !policy.CleanCrashDumps &&
+            !policy.CleanLauncherLogs &&
+            !policy.CleanHttpCache &&
+            !policy.CleanStudioCache)
         {
             return new CleanerReport(0, 0, Array.Empty<string>());
         }
 
         var specs = BuildTargetSpecs(policy);
-        return ExecuteSpecs(specs, policy.LogAgeThreshold, policy.MaxTotalSizeBytes);
+        return ExecuteSpecs(specs, policy.LogAgeThreshold, policy.MaxTotalSizeBytes, throwOnSafetyViolation: false);
     }
 
     public CleanerReport CleanDirectories(
@@ -51,7 +55,7 @@ public sealed class CacheCleaner : ICleaner
             .Select(d => new TargetSpec(d, allowedRoot))
             .ToList();
 
-        return ExecuteSpecs(specs, ageThreshold, maxTotalSizeBytes);
+        return ExecuteSpecs(specs, ageThreshold, maxTotalSizeBytes, throwOnSafetyViolation: true);
     }
 
     private List<TargetSpec> BuildTargetSpecs(CleanerPolicy policy)
@@ -96,9 +100,36 @@ public sealed class CacheCleaner : ICleaner
         if (policy.CleanHttpCache)
         {
             specs.Add(new TargetSpec(Path.Combine(_paths.Roblox, "http"), _paths.Roblox));
+
+            if (!string.IsNullOrWhiteSpace(_paths.Temp))
+            {
+                string tempRobloxDir = Path.Combine(_paths.Temp, "Roblox");
+                specs.Add(new TargetSpec(tempRobloxDir, _paths.Temp));
+            }
+
             if (!string.IsNullOrWhiteSpace(_paths.RobloxCache))
             {
-                specs.Add(new TargetSpec(Path.Combine(_paths.RobloxCache, "http"), _paths.RobloxCache));
+                string tempRobloxNorm = !string.IsNullOrWhiteSpace(_paths.Temp)
+                    ? PathSafetyValidator.NormalizePath(Path.Combine(_paths.Temp, "Roblox"))
+                    : string.Empty;
+                string cacheNorm = PathSafetyValidator.NormalizePath(_paths.RobloxCache);
+                if (!string.Equals(cacheNorm, tempRobloxNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    specs.Add(new TargetSpec(Path.Combine(_paths.RobloxCache, "http"), _paths.RobloxCache));
+                }
+            }
+        }
+
+        if (policy.CleanStudioCache)
+        {
+            specs.Add(new TargetSpec(Path.Combine(_paths.Roblox, "StudioCache"), _paths.Roblox));
+            if (!string.IsNullOrWhiteSpace(_paths.Temp))
+            {
+                specs.Add(new TargetSpec(Path.Combine(_paths.Temp, "RobloxStudio"), _paths.Temp));
+            }
+            if (!string.IsNullOrWhiteSpace(_paths.RobloxStudio))
+            {
+                specs.Add(new TargetSpec(Path.Combine(_paths.RobloxStudio, "Cache"), _paths.RobloxStudio));
             }
         }
 
@@ -108,24 +139,36 @@ public sealed class CacheCleaner : ICleaner
     private CleanerReport ExecuteSpecs(
         List<TargetSpec> specs,
         TimeSpan logAgeThreshold,
-        long maxTotalSizeBytes)
+        long maxTotalSizeBytes,
+        bool throwOnSafetyViolation)
     {
+        var errors = new List<string>();
+        var safeSpecs = new List<TargetSpec>(specs.Count);
+
         // Validate every target directory strictly before modifying any file
         foreach (var spec in specs)
         {
-            PathSafetyValidator.AssertSafeTargetDirectory(spec.TargetDirectory, spec.AllowedRoot);
+            try
+            {
+                PathSafetyValidator.AssertSafeTargetDirectory(spec.TargetDirectory, spec.AllowedRoot);
+                safeSpecs.Add(spec);
+            }
+            catch (Exception ex) when (!throwOnSafetyViolation)
+            {
+                _logger.Warn("CacheCleaner", $"Skipped unsafe cleanup target '{spec.TargetDirectory}': {ex.Message}");
+                errors.Add(ex.Message);
+            }
         }
 
         int filesDeleted = 0;
         long bytesFreed = 0;
-        var errors = new List<string>();
         DateTime cutoffUtc = _utcNowProvider() - logAgeThreshold;
 
         var survivingFiles = new List<(FileInfo File, string TargetRoot)>();
         var visitedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Phase 1: Age Threshold Cleanup
-        foreach (var spec in specs)
+        foreach (var spec in safeSpecs)
         {
             string fullTarget = PathSafetyValidator.NormalizePath(spec.TargetDirectory);
             if (!Directory.Exists(fullTarget)) continue;
@@ -195,7 +238,7 @@ public sealed class CacheCleaner : ICleaner
         }
 
         // Phase 3: Empty Subdirectory Pruning (never deletes target root itself)
-        foreach (var spec in specs)
+        foreach (var spec in safeSpecs)
         {
             string fullTarget = PathSafetyValidator.NormalizePath(spec.TargetDirectory);
             if (!Directory.Exists(fullTarget)) continue;

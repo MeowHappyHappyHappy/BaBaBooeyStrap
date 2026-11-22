@@ -86,8 +86,17 @@ public partial class FastFlagEditorWindow : FluentWindow
 
     private void ExportJson_Click(object sender, RoutedEventArgs e)
     {
+        CommitPendingGridEdits();
         string json = ViewModel.ExportJson();
-        Clipboard.SetText(json);
+        string? clipboardWarning = null;
+        try
+        {
+            Clipboard.SetText(json);
+        }
+        catch (Exception ex)
+        {
+            clipboardWarning = LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportClipboardFailedFormat", ex.Message);
+        }
 
         var sfd = new SaveFileDialog
         {
@@ -97,8 +106,22 @@ public partial class FastFlagEditorWindow : FluentWindow
 
         if (sfd.ShowDialog() == true)
         {
-            File.WriteAllText(sfd.FileName, json);
-            ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportedFileFormat", sfd.FileName), InfoBarSeverity.Success);
+            try
+            {
+                File.WriteAllText(sfd.FileName, json);
+                string message = clipboardWarning == null
+                    ? LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportedFileFormat", sfd.FileName)
+                    : $"{LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportedFileFormat", sfd.FileName)} ({clipboardWarning})";
+                ShowBanner(message, clipboardWarning == null ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+            }
+            catch (Exception ex)
+            {
+                ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportFileFailedFormat", ex.Message), InfoBarSeverity.Error);
+            }
+        }
+        else if (clipboardWarning != null)
+        {
+            ShowBanner(clipboardWarning, InfoBarSeverity.Warning);
         }
         else
         {
@@ -141,9 +164,16 @@ public partial class FastFlagEditorWindow : FluentWindow
 
     private void SaveAndClose_Click(object sender, RoutedEventArgs e)
     {
+        CommitPendingGridEdits();
         ViewModel.SaveToManager();
         DialogResult = true;
         Close();
+    }
+
+    private void CommitPendingGridEdits()
+    {
+        FlagsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Cell, true);
+        FlagsDataGrid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)

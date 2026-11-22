@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -19,8 +18,6 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private static readonly ConcurrentDictionary<string, object> PathLocks = new(StringComparer.OrdinalIgnoreCase);
-
     private readonly string? _customFileLocation;
 
     public T OriginalProp { get; private set; } = new();
@@ -31,8 +28,6 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
     public virtual string ClassName => typeof(T).Name;
     public virtual string FileLocation => _customFileLocation ?? Path.Combine(Paths.Base, $"{ClassName}.json");
 
-    private object SyncLock => PathLocks.GetOrAdd(Path.GetFullPath(FileLocation), _ => new object());
-
     public event EventHandler<JsonLoadErrorEventArgs>? OnLoadError;
 
     public JsonManager(string? customFileLocation = null)
@@ -42,103 +37,88 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
 
     public virtual void Load(bool alertFailure = true)
     {
-        lock (SyncLock)
+        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+
+        if (!File.Exists(FileLocation))
         {
-            if (!File.Exists(FileLocation))
-            {
-                Prop = new T();
-                OriginalProp = Clone(Prop);
-                Loaded = true;
-                Save();
-                return;
-            }
-
-            try
-            {
-                string text;
-                using (var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-                using (var reader = new StreamReader(stream, Encoding.UTF8))
-                {
-                    text = reader.ReadToEnd();
-                }
-
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    throw new InvalidDataException("Configuration file is empty.");
-                }
-
-                T? val = JsonSerializer.Deserialize<T>(text, DefaultJsonOptions);
-                Prop = val ?? throw new InvalidDataException("Deserialization returned null.");
-                OriginalProp = Clone(Prop);
-                Loaded = true;
-                LastFileHash = ComputeHash(text);
-            }
-            catch (Exception ex)
-            {
-                string? backupPath = null;
-                try
-                {
-                    backupPath = $"{FileLocation}.corrupted.{DateTime.UtcNow:yyyyMMddHHmmss}.bak";
-                    File.Copy(FileLocation, backupPath, overwrite: true);
-                }
-                catch { }
-
-                OnLoadError?.Invoke(this, new JsonLoadErrorEventArgs(FileLocation, ex, backupPath));
-
-                // Fall back to new defaults
-                Prop = new T();
-                OriginalProp = Clone(Prop);
-                Loaded = true;
-                Save();
-            }
+            Prop = new T();
+            OriginalProp = Clone(Prop);
+            Loaded = true;
+            Save();
+            return;
         }
-    }
 
-    public virtual void Save()
-    {
-        lock (SyncLock)
+        try
         {
-            var dir = Path.GetDirectoryName(FileLocation);
-            if (!string.IsNullOrEmpty(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
-            string text = JsonSerializer.Serialize(Prop, DefaultJsonOptions);
-            string tempPath = $"{FileLocation}.{Guid.NewGuid():N}.tmp";
-
-            File.WriteAllText(tempPath, text, Encoding.UTF8);
-
+            string text;
             int retries = 10;
             while (true)
             {
                 try
                 {
-                    File.Move(tempPath, FileLocation, overwrite: true);
+                    using var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    text = reader.ReadToEnd();
                     break;
                 }
-                catch when (retries > 0)
+                catch (IOException) when (retries > 0)
                 {
                     retries--;
                     Thread.Sleep(15);
                 }
             }
 
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                throw new InvalidDataException("Configuration file is empty.");
+            }
+
+            T? val = JsonSerializer.Deserialize<T>(text, DefaultJsonOptions);
+            Prop = val ?? throw new InvalidDataException("Deserialization returned null.");
+            OriginalProp = Clone(Prop);
+            Loaded = true;
             LastFileHash = ComputeHash(text);
         }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or NotSupportedException)
+        {
+            string? backupPath = null;
+            try
+            {
+                backupPath = $"{FileLocation}.corrupted.{DateTime.UtcNow:yyyyMMddHHmmss}.bak";
+                File.Copy(FileLocation, backupPath, overwrite: true);
+            }
+            catch { }
+
+            OnLoadError?.Invoke(this, new JsonLoadErrorEventArgs(FileLocation, ex, backupPath));
+
+            // Fall back to new defaults
+            Prop = new T();
+            OriginalProp = Clone(Prop);
+            Loaded = true;
+            Save();
+        }
+    }
+
+    public virtual void Save()
+    {
+        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+
+        string text = JsonSerializer.Serialize(Prop, DefaultJsonOptions);
+        CrossProcessFileLock.AtomicWrite(FileLocation, tempPath => File.WriteAllText(tempPath, text, Encoding.UTF8));
+
+        OriginalProp = Clone(Prop);
+        LastFileHash = ComputeHash(text);
     }
 
     public bool HasFileOnDiskChanged()
     {
-        lock (SyncLock)
-        {
-            if (!File.Exists(FileLocation)) return LastFileHash != null;
+        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+        if (!File.Exists(FileLocation)) return LastFileHash != null;
 
-            using var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            string content = reader.ReadToEnd();
-            return LastFileHash != ComputeHash(content);
-        }
+        using var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream, Encoding.UTF8);
+        string content = reader.ReadToEnd();
+        return LastFileHash != ComputeHash(content);
     }
 
     private static string ComputeHash(string content)

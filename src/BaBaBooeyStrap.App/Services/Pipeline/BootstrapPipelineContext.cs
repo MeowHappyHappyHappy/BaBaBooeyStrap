@@ -33,6 +33,8 @@ public sealed class BootstrapPipelineContext
     public string Channel { get; set; }
     public bool RequiresDownload { get; set; }
     public string TargetVersionDirectory { get; set; } = string.Empty;
+    public string? FailureReason { get; set; }
+    public Exception? FailureException { get; set; }
 
     public void ReportStatus(string message) => StatusCallback?.Invoke(message);
 }

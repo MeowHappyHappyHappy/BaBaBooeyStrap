@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using BaBaBooeyStrap.Core.FastFlags;
 using BaBaBooeyStrap.Core.Models;
+using BaBaBooeyStrap.Core.Storage;
 
 namespace BaBaBooeyStrap.Bootstrapper.FastFlags;
 
@@ -93,6 +95,7 @@ public sealed class FastFlagManager : IFastFlagManager
     {
         lock (_lock)
         {
+            using var fileLock = CrossProcessFileLock.Acquire(_filePath);
             string? directory = Path.GetDirectoryName(_filePath);
             if (!string.IsNullOrEmpty(directory))
             {
@@ -100,10 +103,10 @@ public sealed class FastFlagManager : IFastFlagManager
             }
 
             string json = ExportJson();
-            string tempFile = $"{_filePath}.{Guid.NewGuid():N}.tmp";
-
-            File.WriteAllText(tempFile, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            File.Move(tempFile, _filePath, overwrite: true);
+            CrossProcessFileLock.AtomicWrite(_filePath, tempFile =>
+            {
+                File.WriteAllText(tempFile, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            });
 
             _originalFlags = new Dictionary<string, object>(_flags, StringComparer.OrdinalIgnoreCase);
         }
@@ -113,6 +116,7 @@ public sealed class FastFlagManager : IFastFlagManager
     {
         lock (_lock)
         {
+            using var fileLock = CrossProcessFileLock.Acquire(_filePath);
             if (!File.Exists(_filePath))
             {
                 _flags.Clear();
@@ -132,12 +136,6 @@ public sealed class FastFlagManager : IFastFlagManager
             {
                 ImportJson(content);
                 _originalFlags = new Dictionary<string, object>(_flags, StringComparer.OrdinalIgnoreCase);
-
-                // Enforce Alt+Enter fullscreen preset on load
-                if (GetFlag("FFlagHandleAltEnterFullscreenManually")?.ToString() != "False")
-                {
-                    SetFlag("FFlagHandleAltEnterFullscreenManually", "False");
-                }
             }
             catch (JsonException)
             {
@@ -160,7 +158,12 @@ public sealed class FastFlagManager : IFastFlagManager
             var formatted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var kvp in _flags)
             {
-                formatted[kvp.Key] = kvp.Value?.ToString() ?? string.Empty;
+                formatted[kvp.Key] = kvp.Value switch
+                {
+                    IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                    null => string.Empty,
+                    _ => kvp.Value.ToString() ?? string.Empty
+                };
             }
 
             return JsonSerializer.Serialize(formatted, new JsonSerializerOptions
@@ -239,11 +242,13 @@ public sealed class FastFlagManager : IFastFlagManager
                             break;
                         case JsonValueKind.String:
                             string str = prop.Value.GetString()!;
-                            if (bool.TryParse(str, out bool b))
+                            if (bool.TryParse(str, out bool b) &&
+                                string.Equals(str, b.ToString(), StringComparison.OrdinalIgnoreCase))
                             {
                                 _flags[key] = b;
                             }
-                            else if (long.TryParse(str, out long l))
+                            else if (long.TryParse(str, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l) &&
+                                string.Equals(str, l.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
                             {
                                 _flags[key] = l;
                             }
@@ -266,45 +271,49 @@ public sealed class FastFlagManager : IFastFlagManager
         ArgumentNullException.ThrowIfNull(presetKey);
         ArgumentNullException.ThrowIfNull(value);
 
-        if (presetKey.Contains("MSAA", StringComparison.OrdinalIgnoreCase))
+        switch (presetKey.ToLowerInvariant())
         {
-            SetFlag("FIntDebugForceMSAASamples", value);
-        }
-        else if (presetKey.Contains("Vulkan", StringComparison.OrdinalIgnoreCase))
-        {
-            SetFlag("FFlagDebugGraphicsPreferVulkan", "True");
-            RemoveFlag("FFlagDebugGraphicsPreferD3D11");
-        }
-        else if (presetKey.Contains("D3D11", StringComparison.OrdinalIgnoreCase))
-        {
-            SetFlag("FFlagDebugGraphicsPreferD3D11", "True");
-            RemoveFlag("FFlagDebugGraphicsPreferVulkan");
-        }
-        else if (presetKey.Contains("FRMQualityOverride", StringComparison.OrdinalIgnoreCase))
-        {
-            int quality = Math.Clamp(Convert.ToInt32(value), 1, 21);
-            SetFlag("DFIntDebugFRMQualityLevelOverride", quality);
-        }
-        else if (presetKey.Contains("MeshLOD", StringComparison.OrdinalIgnoreCase))
-        {
-            int num = Math.Clamp(Convert.ToInt32(value), 0, 3);
-            SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic", num);
-            SetFlag("DFIntCSGLevelOfDetailSwitchingDistance", (Math.Clamp(num - 0, 0, 3) + 1) * 250);
-            SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL12", (Math.Clamp(num - 1, 0, 3) + 1) * 250);
-            SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL23", (Math.Clamp(num - 2, 0, 3) + 1) * 250);
-            SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL34", (Math.Clamp(num - 3, 0, 3) + 1) * 250);
-        }
-        else if (presetKey.Contains("DisableScaling", StringComparison.OrdinalIgnoreCase))
-        {
-            SetFlag("DFFlagDisableDPIScale", value);
-        }
-        else if (presetKey.Contains("ManualFullscreen", StringComparison.OrdinalIgnoreCase))
-        {
-            SetFlag("FFlagHandleAltEnterFullscreenManually", value);
-        }
-        else
-        {
-            SetFlag(presetKey, value);
+            case "rendering.msaa":
+            case "msaa":
+                SetFlag("FIntDebugForceMSAASamples", value);
+                break;
+            case "rendering.mode.vulkan":
+            case "rendering.vulkan":
+            case "vulkan":
+                SetFlag("FFlagDebugGraphicsPreferVulkan", "True");
+                RemoveFlag("FFlagDebugGraphicsPreferD3D11");
+                break;
+            case "rendering.mode.d3d11":
+            case "rendering.d3d11":
+            case "d3d11":
+                SetFlag("FFlagDebugGraphicsPreferD3D11", "True");
+                RemoveFlag("FFlagDebugGraphicsPreferVulkan");
+                break;
+            case "rendering.frmqualityoverride":
+            case "frmqualityoverride":
+                int quality = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 1, 21);
+                SetFlag("DFIntDebugFRMQualityLevelOverride", quality);
+                break;
+            case "geometry.meshlod":
+            case "meshlod":
+                int num = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 0, 3);
+                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic", num);
+                SetFlag("DFIntCSGLevelOfDetailSwitchingDistance", (Math.Clamp(num - 0, 0, 3) + 1) * 250);
+                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL12", (Math.Clamp(num - 1, 0, 3) + 1) * 250);
+                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL23", (Math.Clamp(num - 2, 0, 3) + 1) * 250);
+                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL34", (Math.Clamp(num - 3, 0, 3) + 1) * 250);
+                break;
+            case "rendering.disablescaling":
+            case "disablescaling":
+                SetFlag("DFFlagDisableDPIScale", value);
+                break;
+            case "rendering.manualfullscreen":
+            case "manualfullscreen":
+                SetFlag("FFlagHandleAltEnterFullscreenManually", value);
+                break;
+            default:
+                SetFlag(presetKey, value);
+                break;
         }
     }
 

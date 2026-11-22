@@ -10,6 +10,8 @@
         Focusable="False"
         ResizeMode="NoResize"
         SizeToContent="WidthAndHeight"
+        MouseEnter="Toast_MouseEnter"
+        MouseLeave="Toast_MouseLeave"
         MouseLeftButtonUp="Toast_MouseLeftButtonUp">
     <Border x:Name="CardBorder"
             MaxWidth="360"
@@ -72,6 +74,18 @@
                            FontSize="11"
                            Margin="0,2,0,0"
                            TextTrimming="CharacterEllipsis"/>
+                <Border x:Name="CopiedBadge"
+                        Visibility="Collapsed"
+                        Background="#CC10B981"
+                        CornerRadius="4"
+                        Padding="6,2"
+                        Margin="0,6,0,0"
+                        HorizontalAlignment="Left">
+                    <TextBlock x:Name="CopiedBadgeText"
+                               Foreground="White"
+                               FontSize="11"
+                               FontWeight="SemiBold"/>
+                </Border>
             </StackPanel>
         </Grid>
     </Border>

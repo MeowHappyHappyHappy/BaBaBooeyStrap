@@ -15,6 +15,7 @@ using Wpf.Ui.Markup;
 
 namespace BaBaBooeyStrap.Tests.App;
 
+[Collection("LocalizationSingleton")]
 public sealed class MainWindowSubViewModelsTests : IDisposable
 {
     private readonly string _tempDir;

@@ -66,7 +66,7 @@ public sealed class Bootstrapper_GlobalSettingsTests : IClassFixture<MockRobloxE
         // Assert: MouseSensitivity and SavedQualityLevel preserved
         var doc = XDocument.Load(xmlPath);
         var sens = doc.XPathSelectElement("//float[@name='MouseSensitivity']");
-        var qual = doc.XPathSelectElement("//int[@name='SavedQualityLevel']");
+        var qual = doc.XPathSelectElement("//token[@name='SavedQualityLevel']");
         sens.Should().NotBeNull();
         sens!.Value.Should().Be("1.5");
         qual.Should().NotBeNull();

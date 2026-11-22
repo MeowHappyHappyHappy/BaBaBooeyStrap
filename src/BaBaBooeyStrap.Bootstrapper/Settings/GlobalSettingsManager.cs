@@ -7,6 +7,8 @@ using BaBaBooeyStrap.Core.Models;
 
 namespace BaBaBooeyStrap.Bootstrapper.Settings;
 
+public readonly record struct GlobalSettingsBackup(bool Existed, string? Content);
+
 public interface IGlobalSettingsManager
 {
     bool Loaded { get; }
@@ -27,6 +29,20 @@ public interface IGlobalSettingsManager
     void EnsureTemplateExists(int defaultFps = 60);
     string? CaptureBackup();
     void RestoreBackup(string? backupContent);
+    GlobalSettingsBackup CaptureBackupState()
+    {
+        var content = CaptureBackup();
+        return new GlobalSettingsBackup(content is not null, content);
+    }
+
+    void RestoreBackupState(GlobalSettingsBackup backup)
+    {
+        if (backup.Existed)
+        {
+            RestoreBackup(backup.Content);
+        }
+    }
+
     void ApplyProfile(RobloxClientSettingsProfile profile);
 }
 
@@ -223,16 +239,26 @@ public class GlobalSettingsManager : IGlobalSettingsManager
     private void SetValueUnderProperties(string tagName, string attrName, object? value)
     {
         if (_document == null) Load();
-        string xpath = $"//{tagName}[@name='{attrName}']";
-        var element = _document?.XPathSelectElement(xpath);
+        var props = GetOrCreatePropertiesElement();
+        var element = props?
+            .Elements()
+            .FirstOrDefault(e => string.Equals((string?)e.Attribute("name"), attrName, StringComparison.Ordinal))
+            ?? _document?.XPathSelectElement($"//*[@name='{attrName}']");
+
+        string text = value?.ToString() ?? string.Empty;
         if (element != null)
         {
-            element.Value = value?.ToString() ?? string.Empty;
+            element.Name = tagName;
+            element.Value = text;
+            props?.Elements()
+                .Where(e => !ReferenceEquals(e, element) &&
+                            string.Equals((string?)e.Attribute("name"), attrName, StringComparison.Ordinal))
+                .ToList()
+                .ForEach(dup => dup.Remove());
         }
         else
         {
-            var props = GetOrCreatePropertiesElement();
-            props?.Add(new XElement(tagName, new XAttribute("name", attrName), value?.ToString() ?? string.Empty));
+            props?.Add(new XElement(tagName, new XAttribute("name", attrName), text));
         }
     }
 
@@ -307,6 +333,46 @@ public class GlobalSettingsManager : IGlobalSettingsManager
 
         WriteAtomicContent(backupContent);
         RefreshLoadedDocument();
+    }
+
+    public GlobalSettingsBackup CaptureBackupState()
+    {
+        return File.Exists(_filePath)
+            ? new GlobalSettingsBackup(true, File.ReadAllText(_filePath))
+            : new GlobalSettingsBackup(false, null);
+    }
+
+    public void RestoreBackupState(GlobalSettingsBackup backup)
+    {
+        if (!backup.Existed)
+        {
+            if (File.Exists(_filePath))
+            {
+                try
+                {
+                    FileAttributes attrs = File.GetAttributes(_filePath);
+                    if ((attrs & (FileAttributes.ReadOnly | FileAttributes.Hidden)) != 0)
+                    {
+                        FileAttributes clean = attrs & ~(FileAttributes.ReadOnly | FileAttributes.Hidden);
+                        File.SetAttributes(_filePath, clean == 0 ? FileAttributes.Normal : clean);
+                    }
+
+                    File.Delete(_filePath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+
+            _document = null;
+            return;
+        }
+
+        if (backup.Content is not null)
+        {
+            WriteAtomicContent(backup.Content);
+            RefreshLoadedDocument();
+        }
     }
 
     public void ApplyProfile(RobloxClientSettingsProfile profile)
@@ -517,10 +583,11 @@ public class GlobalSettingsManager : IGlobalSettingsManager
             File.SetAttributes(xmlPath, writableAttrs);
         }
 
+        string tempPath = $"{xmlPath}.{Guid.NewGuid():N}.tmp";
         try
         {
             // Check for file locking (FileShare.None)
-            using (var testLock = new FileStream(xmlPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite)) { }
+            using (var testLock = new FileStream(xmlPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
 
             var doc = XDocument.Load(xmlPath);
             var props = doc.Root?.Element("Item")?.Element("Properties");
@@ -543,7 +610,8 @@ public class GlobalSettingsManager : IGlobalSettingsManager
                 capElem.Value = clampedFps.ToString();
             }
 
-            doc.Save(xmlPath);
+            doc.Save(tempPath);
+            File.Move(tempPath, xmlPath, overwrite: true);
         }
         catch (System.Xml.XmlException)
         {
@@ -553,6 +621,15 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         }
         finally
         {
+            try
+            {
+                if (File.Exists(tempPath))
+                {
+                    File.Delete(tempPath);
+                }
+            }
+            catch { }
+
             if (File.Exists(xmlPath))
             {
                 FileAttributes finalAttrs = originalAttrs;
@@ -583,7 +660,7 @@ public class GlobalSettingsManager : IGlobalSettingsManager
                     new XElement("Properties",
                         new XElement("int", new XAttribute("name", "FramerateCap"), defaultFps),
                         new XElement("float", new XAttribute("name", "MouseSensitivity"), "1.5"),
-                        new XElement("int", new XAttribute("name", "SavedQualityLevel"), "10"),
+                        new XElement("token", new XAttribute("name", "SavedQualityLevel"), "10"),
                         new XElement("bool", new XAttribute("name", "VREnabled"), "false"),
                         new XElement("float", new XAttribute("name", "PreferredTransparency"), "1.0"),
                         new XElement("bool", new XAttribute("name", "ReducedMotion"), "false"),

@@ -31,6 +31,9 @@ public sealed class AppUpdateService : IAppUpdateService
 {
     public const string DefaultRepositoryOwner = "MeowHappyHappyHappy";
     public const string DefaultRepositoryName = "BaBaBooeyStrap";
+    private static readonly HttpClient FallbackHttpClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private static readonly TimeSpan MetadataCheckTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan DownloadReadIdleTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IPaths _paths;
     private readonly HttpClient _httpClient;
@@ -48,7 +51,7 @@ public sealed class AppUpdateService : IAppUpdateService
         string? repositoryName = null)
     {
         _paths = paths ?? Paths.Current;
-        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        _httpClient = httpClient ?? FallbackHttpClient;
         _logger = logger ?? Logger.Current;
         _currentVersion = NormalizeVersion(currentVersionOverride ?? ResolveAssemblyVersion());
         _repositoryOwner = string.IsNullOrWhiteSpace(repositoryOwner) ? DefaultRepositoryOwner : repositoryOwner.Trim();
@@ -112,13 +115,16 @@ public sealed class AppUpdateService : IAppUpdateService
         request.Headers.UserAgent.ParseAdd($"BaBaBooeyStrap/{_currentVersion}");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
 
-        using var response = await _httpClient.SendAsync(request, ct).ConfigureAwait(false);
+        using var checkCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        checkCts.CancelAfter(MetadataCheckTimeout);
+
+        using var response = await _httpClient.SendAsync(request, checkCts.Token).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
         {
             throw new HttpRequestException($"GitHub Releases API returned {(int)response.StatusCode} ({response.ReasonPhrase}).");
         }
 
-        string json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        string json = await response.Content.ReadAsStringAsync(checkCts.Token).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
@@ -191,30 +197,67 @@ public sealed class AppUpdateService : IAppUpdateService
 
         Directory.CreateDirectory(_paths.TempUpdates);
         string downloadedExe = Path.Combine(_paths.TempUpdates, $"BaBaBooeyStrap_{info.LatestVersion}.exe");
+        string tempDownloadExe = $"{downloadedExe}.{Guid.NewGuid():N}.part";
 
-        using (var request = new HttpRequestMessage(HttpMethod.Get, info.AssetDownloadUrl))
+        try
         {
+            using var request = new HttpRequestMessage(HttpMethod.Get, info.AssetDownloadUrl);
             request.Headers.UserAgent.ParseAdd($"BaBaBooeyStrap/{_currentVersion}");
             using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             long totalBytes = response.Content.Headers.ContentLength ?? info.AssetSizeBytes;
-            await using var sourceStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            await using var fileStream = new FileStream(downloadedExe, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-
-            byte[] buffer = new byte[81920];
-            long totalRead = 0;
-            int read;
-            while ((read = await sourceStream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+            await using (var sourceStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var fileStream = new FileStream(tempDownloadExe, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
-                await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                totalRead += read;
-                if (totalBytes > 0)
+                byte[] buffer = new byte[81920];
+                long totalRead = 0;
+                while (true)
                 {
-                    progress?.Report(Math.Clamp((double)totalRead / totalBytes, 0.0, 1.0));
+                    using var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    readCts.CancelAfter(DownloadReadIdleTimeout);
+
+                    int read;
+                    try
+                    {
+                        read = await sourceStream.ReadAsync(buffer, readCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+                    {
+                        throw new TimeoutException($"Update download stalled for more than {DownloadReadIdleTimeout.TotalSeconds:F0} seconds.");
+                    }
+
+                    if (read <= 0)
+                    {
+                        break;
+                    }
+
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    totalRead += read;
+                    if (totalBytes > 0)
+                    {
+                        progress?.Report(Math.Clamp((double)totalRead / totalBytes, 0.0, 1.0));
+                    }
+                }
+
+                if (totalBytes > 0 && totalRead != totalBytes)
+                {
+                    throw new IOException($"Incomplete update download ({totalRead} / {totalBytes} bytes).");
+                }
+                if (totalRead == 0)
+                {
+                    throw new IOException("Downloaded update file is empty.");
                 }
             }
+
+            File.Move(tempDownloadExe, downloadedExe, overwrite: true);
             progress?.Report(1.0);
+        }
+        catch
+        {
+            try { if (File.Exists(tempDownloadExe)) File.Delete(tempDownloadExe); } catch { }
+            try { if (File.Exists(downloadedExe)) File.Delete(downloadedExe); } catch { }
+            throw;
         }
 
         string currentExe = !string.IsNullOrWhiteSpace(_paths.Process)
@@ -250,24 +293,52 @@ public sealed class AppUpdateService : IAppUpdateService
         string? installedExe)
     {
         string targetExe = !string.IsNullOrWhiteSpace(currentExe) ? currentExe : (installedExe ?? string.Empty);
+        string escapedDownloaded = EscapeBatchPath(downloadedExe);
+        string escapedTarget = EscapeBatchPath(targetExe);
+        bool copyInstalled = !string.IsNullOrWhiteSpace(installedExe) &&
+            !string.Equals(Path.GetFullPath(targetExe), Path.GetFullPath(installedExe), StringComparison.OrdinalIgnoreCase);
+        string escapedInstalled = copyInstalled ? EscapeBatchPath(installedExe!) : string.Empty;
+
         var sb = new StringBuilder();
         sb.AppendLine("@echo off");
-        sb.AppendLine("setlocal");
+        sb.AppendLine("chcp 65001 >NUL");
+        sb.AppendLine("setlocal EnableDelayedExpansion");
+        sb.AppendLine("set WAIT_COUNT=0");
         sb.AppendLine(":waitloop");
-        sb.AppendLine($"tasklist /FI \"PID eq {currentPid}\" 2>NUL | find /I \"{currentPid}\" >NUL");
+        sb.AppendLine($"tasklist /FI \"PID eq {currentPid}\" /FO CSV /NH 2>NUL | findstr /C:\"\\\"{currentPid}\\\"\" >NUL");
         sb.AppendLine("if %errorlevel%==0 (");
-        sb.AppendLine("  timeout /t 1 /nobreak >NUL");
+        sb.AppendLine("  set /a WAIT_COUNT+=1");
+        sb.AppendLine("  if !WAIT_COUNT! GEQ 60 goto copyphase");
+        sb.AppendLine("  ping -n 2 127.0.0.1 >NUL");
         sb.AppendLine("  goto waitloop");
         sb.AppendLine(")");
-        sb.AppendLine($"copy /Y \"{downloadedExe}\" \"{targetExe}\" >NUL");
-        if (!string.IsNullOrWhiteSpace(installedExe) &&
-            !string.Equals(Path.GetFullPath(targetExe), Path.GetFullPath(installedExe), StringComparison.OrdinalIgnoreCase))
+        sb.AppendLine(":copyphase");
+        sb.AppendLine("set COPY_OK=0");
+        sb.AppendLine("for /L %%I in (1,1,10) do (");
+        sb.AppendLine($"  copy /Y \"{escapedDownloaded}\" \"{escapedTarget}\" >NUL 2>&1");
+        sb.AppendLine("  if not errorlevel 1 (");
+        sb.AppendLine("    set COPY_OK=1");
+        sb.AppendLine("    goto aftertarget");
+        sb.AppendLine("  )");
+        sb.AppendLine("  ping -n 2 127.0.0.1 >NUL");
+        sb.AppendLine(")");
+        sb.AppendLine(":aftertarget");
+        if (copyInstalled)
         {
-            sb.AppendLine($"copy /Y \"{downloadedExe}\" \"{installedExe}\" >NUL");
+            sb.AppendLine("if !COPY_OK!==1 (");
+            sb.AppendLine("  for /L %%I in (1,1,5) do (");
+            sb.AppendLine($"    copy /Y \"{escapedDownloaded}\" \"{escapedInstalled}\" >NUL 2>&1");
+            sb.AppendLine("    if not errorlevel 1 goto afterinstalled");
+            sb.AppendLine("    ping -n 2 127.0.0.1 >NUL");
+            sb.AppendLine("  )");
+            sb.AppendLine(")");
+            sb.AppendLine(":afterinstalled");
         }
-        sb.AppendLine($"del /F /Q \"{downloadedExe}\" >NUL 2>&1");
-        sb.AppendLine($"start \"\" \"{targetExe}\" -menu");
+        sb.AppendLine($"if !COPY_OK!==1 del /F /Q \"{escapedDownloaded}\" >NUL 2>&1");
+        sb.AppendLine($"start \"\" \"{escapedTarget}\" -menu");
         sb.AppendLine("del /F /Q \"%~f0\" >NUL 2>&1");
         return sb.ToString();
+
+        static string EscapeBatchPath(string path) => path.Replace("%", "%%");
     }
 }

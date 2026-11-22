@@ -70,6 +70,7 @@ public partial class MainWindow : FluentWindow
                 ViewModel.WindowIntegrations.MinimizeToTray &&
                 _trayWrapper != null)
             {
+                PersistWindowBounds();
                 Hide();
                 _trayWrapper.MinimizeToTray();
             }
@@ -90,23 +91,6 @@ public partial class MainWindow : FluentWindow
 
     protected override void OnClosing(CancelEventArgs e)
     {
-        if (!_allowRealClose && _trayWrapper != null && ViewModel.WindowIntegrations.MinimizeToTray)
-        {
-            PersistWindowBounds();
-            ViewModel.SaveSettings(_settingsManager);
-            e.Cancel = true;
-            Hide();
-            _trayWrapper.MinimizeToTray();
-            if (!_shownTrayBalloon)
-            {
-                _shownTrayBalloon = true;
-                _trayWrapper.ShowBalloonNotification(
-                    LocalizationService.Instance.GetString("Str_Tray_MinimizedTitle"),
-                    LocalizationService.Instance.GetString("Str_Tray_MinimizedMessage"));
-            }
-            return;
-        }
-
         if (!_allowRealClose && ViewModel.HasUnsavedChanges)
         {
             var choice = FluentDialogService.ShowSaveDiscardCancel(
@@ -124,10 +108,14 @@ public partial class MainWindow : FluentWindow
             {
                 ViewModel.SaveSettings(_settingsManager);
             }
+            else if (choice == Dialogs.FluentDialogResult.Secondary)
+            {
+                ViewModel.DiscardChanges(_settingsManager);
+            }
         }
 
         PersistWindowBounds();
-        if (!_allowRealClose && !ViewModel.HasUnsavedChanges && _stateManager != null)
+        if (_stateManager != null)
         {
             try
             {
@@ -135,6 +123,21 @@ public partial class MainWindow : FluentWindow
                 _stateManager.Save();
             }
             catch { }
+        }
+
+        if (!_allowRealClose && _trayWrapper != null && ViewModel.WindowIntegrations.MinimizeToTray)
+        {
+            e.Cancel = true;
+            Hide();
+            _trayWrapper.MinimizeToTray();
+            if (!_shownTrayBalloon)
+            {
+                _shownTrayBalloon = true;
+                _trayWrapper.ShowBalloonNotification(
+                    LocalizationService.Instance.GetString("Str_Tray_MinimizedTitle"),
+                    LocalizationService.Instance.GetString("Str_Tray_MinimizedMessage"));
+            }
+            return;
         }
 
         ViewModel.AccountManagement.CancelActiveLaunch();
@@ -188,6 +191,8 @@ public partial class MainWindow : FluentWindow
 
     private void PersistWindowBounds()
     {
+        if (_stateManager == null) return;
+
         if (WindowState == System.Windows.WindowState.Normal)
         {
             _stateManager.Prop.SettingsWindow = new Core.Models.WindowState
@@ -196,6 +201,18 @@ public partial class MainWindow : FluentWindow
                 Height = Height,
                 Left = Left,
                 Top = Top
+            };
+        }
+        else if (!RestoreBounds.IsEmpty &&
+                 double.IsFinite(RestoreBounds.Width) && RestoreBounds.Width >= 640 &&
+                 double.IsFinite(RestoreBounds.Height) && RestoreBounds.Height >= 480)
+        {
+            _stateManager.Prop.SettingsWindow = new Core.Models.WindowState
+            {
+                Width = RestoreBounds.Width,
+                Height = RestoreBounds.Height,
+                Left = RestoreBounds.Left,
+                Top = RestoreBounds.Top
             };
         }
     }

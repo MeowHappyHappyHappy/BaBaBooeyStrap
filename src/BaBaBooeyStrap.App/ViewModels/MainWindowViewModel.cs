@@ -151,6 +151,33 @@ public class MainWindowViewModel : ViewModelBase
         SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
     }
 
+    public void DiscardChanges(IJsonManager<Settings>? manager = null)
+    {
+        var resolvedManager = manager ?? _settingsManager;
+
+        _isSuppressingDirtyTracking = true;
+        try
+        {
+            if (resolvedManager != null)
+            {
+                ProfileTransferService.CopySettingsProperties(resolvedManager.OriginalProp, _settings);
+            }
+
+            LaunchSettings.LoadGlobalSettingsSafe();
+            LaunchSettings.RefreshFromSettings();
+            FastFlags.LoadFastFlagPresets();
+            WindowIntegrations.RefreshFromSettings();
+            AccountManagement.RefreshMultiInstanceStatus();
+            HasUnsavedChanges = false;
+        }
+        finally
+        {
+            _isSuppressingDirtyTracking = false;
+        }
+
+        SetLocalizedStatus("Str_Common_Ready");
+    }
+
     public void ExportProfileToFile(string filePath)
     {
         ProfileTransferService.ExportToFile(
@@ -266,6 +293,12 @@ public class MainWindowViewModel : ViewModelBase
             case nameof(WindowAndIntegrationsViewModel.HasCustomIconWarning):
             case nameof(WindowAndIntegrationsViewModel.CustomIconPreviewImage):
             case nameof(WindowAndIntegrationsViewModel.HasCustomIconPreview):
+            case nameof(WindowAndIntegrationsViewModel.IsCustomRobloxIconSelected):
+            case nameof(WindowAndIntegrationsViewModel.CustomRobloxIconWarningText):
+            case nameof(WindowAndIntegrationsViewModel.HasCustomRobloxIconWarning):
+            case nameof(WindowAndIntegrationsViewModel.CustomRobloxIconPreviewImage):
+            case nameof(WindowAndIntegrationsViewModel.HasCustomRobloxIconPreview):
+            case nameof(WindowAndIntegrationsViewModel.IsDiscordRpcSubOptionsEnabled):
                 return;
             default:
                 HasUnsavedChanges = true;
@@ -303,14 +336,17 @@ public class MainWindowViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        double width = state.Width is >= 640 and <= 3840 ? state.Width : 1040;
-        double height = state.Height is >= 480 and <= 2160 ? state.Height : 680;
+        double width = double.IsFinite(state.Width) && state.Width is >= 640 and <= 3840 ? state.Width : 1040;
+        double height = double.IsFinite(state.Height) && state.Height is >= 480 and <= 2160 ? state.Height : 680;
 
         double maxLeft = Math.Max(virtualLeft, virtualLeft + virtualWidth - width);
         double maxTop = Math.Max(virtualTop, virtualTop + virtualHeight - height);
 
-        double left = Math.Clamp(state.Left, Math.Max(0, virtualLeft), Math.Max(0, maxLeft));
-        double top = Math.Clamp(state.Top, Math.Max(0, virtualTop), Math.Max(0, maxTop));
+        double rawLeft = double.IsFinite(state.Left) ? state.Left : virtualLeft;
+        double rawTop = double.IsFinite(state.Top) ? state.Top : virtualTop;
+
+        double left = Math.Clamp(rawLeft, virtualLeft, maxLeft);
+        double top = Math.Clamp(rawTop, virtualTop, maxTop);
 
         return new Core.Models.WindowState
         {

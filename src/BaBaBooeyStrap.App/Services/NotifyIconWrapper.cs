@@ -40,6 +40,12 @@ public sealed class NotifyIconWrapper : IDisposable
     private WinForms.ToolStripMenuItem? _exitMenuItem;
     private ActiveServerSessionInfo? _singleActiveServer;
     private Drawing.Icon? _ownedIcon;
+    private BootstrapperIcon _iconKind = BootstrapperIcon.IconBloxstrap;
+    private string? _customIconPath;
+    private IReadOnlyList<RobloxAccount> _cachedAccounts = Array.Empty<RobloxAccount>();
+    private IReadOnlyList<SavedJoinTarget> _cachedTargets = Array.Empty<SavedJoinTarget>();
+    private int _quickLaunchCacheRefreshing;
+    private bool _quickLaunchCacheWarmed;
     private HwndSource? _hwndSource;
     private uint _taskbarCreatedMessageId;
     private bool _disposed;
@@ -87,6 +93,8 @@ public sealed class NotifyIconWrapper : IDisposable
     {
         if (_disposed) return;
 
+        _iconKind = iconKind;
+        _customIconPath = customIconPath;
         _uiDispatcher ??= Application.Current?.Dispatcher ?? Dispatcher.FromThread(Thread.CurrentThread);
         IsTrayActive = true;
         if (_headlessMode)
@@ -99,7 +107,7 @@ public sealed class NotifyIconWrapper : IDisposable
         CreateOrRecreateWinFormsIcon(iconKind, customIconPath);
         EnsureTaskbarCreatedHook();
         RefreshServerLocationStatus();
-        RefreshQuickLaunchMenu();
+        TriggerAsyncQuickLaunchCacheRefresh();
     }
 
     public void AttachWindow(Window window)
@@ -298,7 +306,7 @@ public sealed class NotifyIconWrapper : IDisposable
             RefreshMultiInstanceMenuStatus();
         }
 
-        RefreshServerLocationStatusCore(forceMenuUpdate: true);
+        RefreshServerLocationStatusCore(forceMenuUpdate: true, forceTooltipUpdate: true);
 
         if (_exitMenuItem != null)
             _exitMenuItem.Text = LocalizationService.Instance.GetString("Str_Tray_Exit");
@@ -308,29 +316,102 @@ public sealed class NotifyIconWrapper : IDisposable
     {
         if (_disposed) return;
 
-        IReadOnlyList<RobloxAccount> accounts;
-        IReadOnlyList<SavedJoinTarget> targets;
-        try
+        if (_headlessMode)
         {
-            accounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>();
-        }
-        catch
-        {
-            accounts = Array.Empty<RobloxAccount>();
+            IReadOnlyList<RobloxAccount> syncAccounts;
+            IReadOnlyList<SavedJoinTarget> syncTargets;
+            try { syncAccounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>(); } catch { syncAccounts = Array.Empty<RobloxAccount>(); }
+            try { syncTargets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>(); } catch { syncTargets = Array.Empty<SavedJoinTarget>(); }
+
+            Volatile.Write(ref _cachedAccounts, syncAccounts);
+            Volatile.Write(ref _cachedTargets, syncTargets);
+            _quickLaunchCacheWarmed = true;
+            LastQuickLaunchAccountNames = syncAccounts.Select(a => a.Username).ToList();
+            return;
         }
 
-        try
-        {
-            targets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>();
-        }
-        catch
-        {
-            targets = Array.Empty<SavedJoinTarget>();
-        }
-
+        var accounts = Volatile.Read(ref _cachedAccounts);
+        var targets = Volatile.Read(ref _cachedTargets);
         LastQuickLaunchAccountNames = accounts.Select(a => a.Username).ToList();
 
-        if (_headlessMode || _quickLaunchMenuItem == null)
+        RebuildQuickLaunchMenuItems(accounts, targets);
+        TriggerAsyncQuickLaunchCacheRefresh();
+    }
+
+    private void TriggerAsyncQuickLaunchCacheRefresh()
+    {
+        if (_disposed || _headlessMode) return;
+        if (Interlocked.CompareExchange(ref _quickLaunchCacheRefreshing, 1, 0) != 0) return;
+
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (_disposed) return;
+
+                IReadOnlyList<RobloxAccount> loadedAccounts;
+                IReadOnlyList<SavedJoinTarget> loadedTargets;
+                try { loadedAccounts = _getAccounts?.Invoke() ?? Array.Empty<RobloxAccount>(); } catch { loadedAccounts = Array.Empty<RobloxAccount>(); }
+                try { loadedTargets = _getSavedTargets?.Invoke() ?? Array.Empty<SavedJoinTarget>(); } catch { loadedTargets = Array.Empty<SavedJoinTarget>(); }
+
+                var prevAccounts = Volatile.Read(ref _cachedAccounts);
+                var prevTargets = Volatile.Read(ref _cachedTargets);
+                bool changed = !_quickLaunchCacheWarmed ||
+                               !AccountsSnapshotEquals(prevAccounts, loadedAccounts) ||
+                               !TargetsSnapshotEquals(prevTargets, loadedTargets);
+
+                Volatile.Write(ref _cachedAccounts, loadedAccounts);
+                Volatile.Write(ref _cachedTargets, loadedTargets);
+                _quickLaunchCacheWarmed = true;
+
+                if (changed && !_disposed)
+                {
+                    InvokeOnUiDispatcher(() =>
+                    {
+                        if (_disposed) return;
+                        var accSnap = Volatile.Read(ref _cachedAccounts);
+                        var tgtSnap = Volatile.Read(ref _cachedTargets);
+                        LastQuickLaunchAccountNames = accSnap.Select(a => a.Username).ToList();
+                        RebuildQuickLaunchMenuItems(accSnap, tgtSnap);
+                    });
+                }
+            }
+            catch { }
+            finally
+            {
+                Interlocked.Exchange(ref _quickLaunchCacheRefreshing, 0);
+            }
+        });
+    }
+
+    private static bool AccountsSnapshotEquals(IReadOnlyList<RobloxAccount> a, IReadOnlyList<RobloxAccount> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (a[i].Id != b[i].Id || !string.Equals(a[i].Username, b[i].Username, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool TargetsSnapshotEquals(IReadOnlyList<SavedJoinTarget> a, IReadOnlyList<SavedJoinTarget> b)
+    {
+        if (a.Count != b.Count) return false;
+        for (int i = 0; i < a.Count; i++)
+        {
+            if (a[i].Id != b[i].Id ||
+                !string.Equals(a[i].Name, b[i].Name, StringComparison.Ordinal) ||
+                !string.Equals(a[i].GameName, b[i].GameName, StringComparison.Ordinal) ||
+                !string.Equals(a[i].TargetInput, b[i].TargetInput, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
+
+    private void RebuildQuickLaunchMenuItems(IReadOnlyList<RobloxAccount> accounts, IReadOnlyList<SavedJoinTarget> targets)
+    {
+        if (_headlessMode || _quickLaunchMenuItem == null || _disposed)
         {
             return;
         }
@@ -407,7 +488,7 @@ public sealed class NotifyIconWrapper : IDisposable
         RefreshServerLocationStatusCore(forceMenuUpdate: false);
     }
 
-    private void RefreshServerLocationStatusCore(bool forceMenuUpdate)
+    private void RefreshServerLocationStatusCore(bool forceMenuUpdate, bool forceTooltipUpdate = false)
     {
         if (_disposed) return;
 
@@ -416,13 +497,13 @@ public sealed class NotifyIconWrapper : IDisposable
             var dispatcher = _uiDispatcher ?? Application.Current?.Dispatcher;
             if (dispatcher != null && !dispatcher.CheckAccess())
             {
-                try { dispatcher.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate))); } catch { }
+                try { dispatcher.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate, forceTooltipUpdate))); } catch { }
                 return;
             }
 
             if (_contextMenu != null && _contextMenu.IsHandleCreated && _contextMenu.InvokeRequired)
             {
-                try { _contextMenu.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate))); } catch { }
+                try { _contextMenu.BeginInvoke(new Action(() => RefreshServerLocationStatusCore(forceMenuUpdate, forceTooltipUpdate))); } catch { }
                 return;
             }
         }
@@ -458,7 +539,7 @@ public sealed class NotifyIconWrapper : IDisposable
                     ClearMenuItemImage(_serverLocationMenuItem);
                     _serverLocationMenuItem.Text = menuText;
                 }
-                if (_notifyIcon != null && !forceMenuUpdate)
+                if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
                 {
                     try { _notifyIcon.Text = tooltipText; } catch { }
                 }
@@ -494,7 +575,7 @@ public sealed class NotifyIconWrapper : IDisposable
                     SetMenuItemFlagImage(_serverLocationMenuItem, server.Location?.Country);
                     _serverLocationMenuItem.Text = menuText;
                 }
-                if (_notifyIcon != null && !forceMenuUpdate)
+                if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
                 {
                     try { _notifyIcon.Text = tooltipText; } catch { }
                 }
@@ -537,7 +618,7 @@ public sealed class NotifyIconWrapper : IDisposable
                 }
                 _serverLocationMenuItem.Text = multiMenuText;
             }
-            if (_notifyIcon != null && !forceMenuUpdate)
+            if (_notifyIcon != null && (!forceMenuUpdate || forceTooltipUpdate))
             {
                 try { _notifyIcon.Text = multiTooltip; } catch { }
             }
@@ -709,19 +790,31 @@ public sealed class NotifyIconWrapper : IDisposable
             }
             catch
             {
-                CreateOrRecreateWinFormsIcon(BootstrapperIcon.IconBloxstrap, null);
+                CreateOrRecreateWinFormsIcon(_iconKind, _customIconPath);
             }
         }
         else
         {
-            CreateOrRecreateWinFormsIcon(BootstrapperIcon.IconBloxstrap, null);
+            CreateOrRecreateWinFormsIcon(_iconKind, _customIconPath);
         }
+
+        if (_notifyIcon != null)
+        {
+            try
+            {
+                _notifyIcon.Text = TruncateTrayTooltip(LastTooltipText ?? "BaBaBooeyStrap");
+            }
+            catch { }
+        }
+        RefreshLocalizedMenuTexts();
     }
 
     private void CreateOrRecreateWinFormsIcon(BootstrapperIcon iconKind, string? customIconPath)
     {
         DisposeWinFormsObjects();
 
+        _iconKind = iconKind;
+        _customIconPath = customIconPath;
         _ownedIcon = IconResolver.ResolveDrawingIcon(iconKind, customIconPath);
 
         _contextMenu = new WinForms.ContextMenuStrip();

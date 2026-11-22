@@ -186,6 +186,9 @@ public static class AppServiceConfiguration
             {
                 TargetProcessId = (uint)data.ProcessId,
                 CustomTitleTemplate = settings.RobloxTitle,
+                CustomIconPath = settings.RobloxIcon == Core.Models.Enums.RobloxIcon.IconCustom
+                    ? settings.RobloxIconCustomLocation
+                    : null,
                 BorderlessFullscreen = settings.FakeBorderlessFullscreen
             })
             : null;

@@ -256,12 +256,18 @@ public sealed class Core_BoundaryTests : IClassFixture<MockRobloxEnvironment>
         File.WriteAllBytes(accountsFile, new byte[] { 0x01, 0x02, 0x03, 0xDE, 0xAD, 0xBE, 0xEF });
 
         var store = new DpapiAccountStore(accountsFile);
+        string? recoveredBackup = null;
+        store.OnCorruptionRecovered += path => recoveredBackup = path;
 
         // Act
-        Action act = () => store.LoadAll();
+        var accounts = store.LoadAll();
 
-        // Assert: Catches CryptographicException or FormatException
-        act.Should().Throw<CryptographicException>();
+        // Assert: Recovers cleanly by backing up corrupted file and returning empty list
+        accounts.Should().BeEmpty();
+        store.LastLoadError.Should().NotBeNullOrWhiteSpace();
+        recoveredBackup.Should().NotBeNullOrWhiteSpace();
+        File.Exists(recoveredBackup!).Should().BeTrue();
+        File.Exists(accountsFile).Should().BeFalse();
     }
 
     [Fact]
@@ -291,8 +297,10 @@ public sealed class Core_BoundaryTests : IClassFixture<MockRobloxEnvironment>
         var store = new DpapiAccountStore(badJsonFile);
 
         // Act & Assert
-        Action act = () => store.LoadAll();
-        act.Should().Throw<JsonException>();
+        var accounts = store.LoadAll();
+        accounts.Should().BeEmpty();
+        store.LastLoadError.Should().NotBeNullOrWhiteSpace();
+        Directory.GetFiles(_env.RootPath, "bad_payload_accounts.dat.corrupted.*.bak").Should().NotBeEmpty();
     }
 
     [Fact]

@@ -6,6 +6,7 @@ using BaBaBooeyStrap.Tests.Tier1_FeatureCoverage.Engines;
 
 namespace BaBaBooeyStrap.Tests.Tier2_BoundaryAndCorner;
 
+[Collection("LocalizationSingleton")]
 public sealed class Integrations_BoundaryTests : IClassFixture<MockRobloxEnvironment>
 {
     private readonly MockRobloxEnvironment _env;

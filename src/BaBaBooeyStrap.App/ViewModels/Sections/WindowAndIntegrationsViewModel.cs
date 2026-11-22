@@ -5,6 +5,7 @@ using System.Windows.Media.Imaging;
 using BaBaBooeyStrap.App.Models;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Integrations.Cleaner;
@@ -23,6 +24,8 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     private object?[] _cleanerStatusArgs = Array.Empty<object?>();
     private string _customIconWarningText = string.Empty;
     private ImageSource? _customIconPreviewImage;
+    private string _customRobloxIconWarningText = string.Empty;
+    private ImageSource? _customRobloxIconPreviewImage;
 
     public WindowAndIntegrationsViewModel(
         Settings settings,
@@ -35,6 +38,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
 
         RefreshCustomThemes();
         RefreshCustomIconState();
+        RefreshCustomRobloxIconState();
     }
 
     public event EventHandler<Theme>? ThemeChanged;
@@ -221,18 +225,94 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     public RobloxIcon SelectedRobloxIcon
     {
         get => _settings.RobloxIcon;
-        set { _settings.RobloxIcon = value; OnPropertyChanged(); }
+        set
+        {
+            if (_settings.RobloxIcon != value)
+            {
+                _settings.RobloxIcon = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsCustomRobloxIconSelected));
+                RefreshCustomRobloxIconState();
+            }
+        }
     }
+
+    public bool IsCustomRobloxIconSelected => SelectedRobloxIcon == RobloxIcon.IconCustom;
 
     public string RobloxIconCustomLocation
     {
         get => _settings.RobloxIconCustomLocation;
-        set { _settings.RobloxIconCustomLocation = value; OnPropertyChanged(); }
+        set
+        {
+            string next = value ?? string.Empty;
+            if (!string.Equals(_settings.RobloxIconCustomLocation, next, StringComparison.Ordinal))
+            {
+                _settings.RobloxIconCustomLocation = next;
+                OnPropertyChanged();
+                RefreshCustomRobloxIconState();
+            }
+        }
     }
 
+    public string CustomRobloxIconWarningText
+    {
+        get => _customRobloxIconWarningText;
+        private set
+        {
+            if (SetProperty(ref _customRobloxIconWarningText, value))
+            {
+                OnPropertyChanged(nameof(HasCustomRobloxIconWarning));
+            }
+        }
+    }
+
+    public bool HasCustomRobloxIconWarning => !string.IsNullOrEmpty(_customRobloxIconWarningText);
+
+    public ImageSource? CustomRobloxIconPreviewImage
+    {
+        get => _customRobloxIconPreviewImage;
+        private set
+        {
+            if (SetProperty(ref _customRobloxIconPreviewImage, value))
+            {
+                OnPropertyChanged(nameof(HasCustomRobloxIconPreview));
+            }
+        }
+    }
+
+    public bool HasCustomRobloxIconPreview => _customRobloxIconPreviewImage != null;
+
     // --- Integrations & Cleaner ---
-    public bool EnableActivityTracking { get => _settings.EnableActivityTracking; set { _settings.EnableActivityTracking = value; OnPropertyChanged(); } }
-    public bool UseDiscordRichPresence { get => _settings.UseDiscordRichPresence; set { _settings.UseDiscordRichPresence = value; OnPropertyChanged(); } }
+    public bool EnableActivityTracking
+    {
+        get => _settings.EnableActivityTracking;
+        set
+        {
+            if (_settings.EnableActivityTracking != value)
+            {
+                _settings.EnableActivityTracking = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsDiscordRpcSubOptionsEnabled));
+            }
+        }
+    }
+
+    public bool UseDiscordRichPresence
+    {
+        get => _settings.UseDiscordRichPresence;
+        set
+        {
+            if (_settings.UseDiscordRichPresence != value)
+            {
+                _settings.UseDiscordRichPresence = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(IsDiscordRpcSubOptionsEnabled));
+            }
+        }
+    }
+
+    public bool IsDiscordRpcSubOptionsEnabled => EnableActivityTracking && UseDiscordRichPresence;
+
     public DiscordRPCStatusDisplay RichPresenceStatusDisplayType { get => _settings.RichPresenceStatusDisplayType; set { _settings.RichPresenceStatusDisplayType = value; OnPropertyChanged(); } }
     public bool HideRPCButtons { get => _settings.HideRPCButtons; set { _settings.HideRPCButtons = value; OnPropertyChanged(); } }
     public bool ShowAccountOnRichPresence { get => _settings.ShowAccountOnRichPresence; set { _settings.ShowAccountOnRichPresence = value; OnPropertyChanged(); } }
@@ -325,6 +405,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsCustomBootstrapperIconSelected));
         OnPropertyChanged(nameof(BootstrapperIconCustomLocation));
         OnPropertyChanged(nameof(SelectedRobloxIcon));
+        OnPropertyChanged(nameof(IsCustomRobloxIconSelected));
         OnPropertyChanged(nameof(RobloxTitle));
         OnPropertyChanged(nameof(RobloxIconCustomLocation));
         OnPropertyChanged(nameof(SelectedCustomTheme));
@@ -332,6 +413,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         OnPropertyChanged(nameof(FakeBorderlessFullscreen));
         OnPropertyChanged(nameof(EnableActivityTracking));
         OnPropertyChanged(nameof(UseDiscordRichPresence));
+        OnPropertyChanged(nameof(IsDiscordRpcSubOptionsEnabled));
         OnPropertyChanged(nameof(RichPresenceStatusDisplayType));
         OnPropertyChanged(nameof(HideRPCButtons));
         OnPropertyChanged(nameof(ShowAccountOnRichPresence));
@@ -350,6 +432,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         ThemeChanged?.Invoke(this, _settings.Theme);
         RefreshCustomThemes();
         RefreshCustomIconState();
+        RefreshCustomRobloxIconState();
     }
 
     public void RefreshCustomThemes()
@@ -370,14 +453,25 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
 
     public void RunCleanerNow()
     {
-        var cleaner = new CacheCleaner(_paths);
-        var policy = CleanerPolicyMapper.FromSettings(_settings);
-        var report = cleaner.ExecuteCleanup(policy);
-        double freedMb = report.BytesFreed / (1024.0 * 1024.0);
-        _cleanerStatusKey = "Str_Behaviour_CleanerReportFormat";
-        _cleanerStatusArgs = [report.FilesDeleted, freedMb];
-        CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
-        _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+        try
+        {
+            var cleaner = new CacheCleaner(_paths);
+            var policy = CleanerPolicyMapper.FromSettings(_settings);
+            var report = cleaner.ExecuteCleanup(policy);
+            double freedMb = report.BytesFreed / (1024.0 * 1024.0);
+            _cleanerStatusKey = "Str_Behaviour_CleanerReportFormat";
+            _cleanerStatusArgs = [report.FilesDeleted, freedMb];
+            CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
+            _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("WindowAndIntegrationsViewModel.RunCleanerNow", ex);
+            _cleanerStatusKey = "Str_Behaviour_CleanerErrorFormat";
+            _cleanerStatusArgs = [ex.Message];
+            CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
+            _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+        }
     }
 
     public void RefreshLocalizedProperties()
@@ -388,6 +482,52 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         }
 
         RefreshCustomIconState();
+        RefreshCustomRobloxIconState();
+    }
+
+    private void RefreshCustomRobloxIconState()
+    {
+        if (!IsCustomRobloxIconSelected || string.IsNullOrWhiteSpace(RobloxIconCustomLocation))
+        {
+            CustomRobloxIconPreviewImage = null;
+            CustomRobloxIconWarningText = string.Empty;
+            return;
+        }
+
+        string path = RobloxIconCustomLocation.Trim();
+        if (!File.Exists(path))
+        {
+            CustomRobloxIconPreviewImage = null;
+            CustomRobloxIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconNotFound");
+            return;
+        }
+
+        string ext = Path.GetExtension(path);
+        if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            CustomRobloxIconPreviewImage = IconResolver.ResolveImageSource(BootstrapperIcon.IconCustom, path);
+            CustomRobloxIconWarningText = string.Empty;
+            return;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.DecodePixelWidth = 32;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            CustomRobloxIconPreviewImage = bitmap;
+            CustomRobloxIconWarningText = string.Empty;
+        }
+        catch
+        {
+            CustomRobloxIconPreviewImage = null;
+            CustomRobloxIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconInvalid");
+        }
     }
 
     private void RefreshCustomIconState()

@@ -1,3 +1,4 @@
+using System.Windows;
 using BaBaBooeyStrap.App.Models;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.Views.Dialogs;
@@ -32,7 +33,7 @@ public static class BootstrapperDialogFactory
             }
         }
 
-        var vm = new BootstrapperDialogViewModel(cts)
+        var vm = new BootstrapperDialogViewModel(cts, Application.Current?.Dispatcher)
         {
             Title = string.IsNullOrWhiteSpace(settings.BootstrapperTitle) ? "BaBaBooeyStrap" : settings.BootstrapperTitle,
             Style = style,

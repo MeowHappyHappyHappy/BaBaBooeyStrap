@@ -5,7 +5,13 @@ namespace BaBaBooeyStrap.Bootstrapper.Deployment;
 
 public class CdnMirrorSelector : ICdnMirrorSelector
 {
+    private static readonly HttpClient FallbackHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private static readonly TimeSpan MirrorCacheTtl = TimeSpan.FromMinutes(10);
+
     private readonly HttpClient? _httpClient;
+    private readonly object _cacheLock = new();
+    private string? _cachedMirror;
+    private DateTimeOffset _cacheExpiresUtc;
 
     public CdnMirrorSelector(HttpClient? httpClient = null)
     {
@@ -21,51 +27,81 @@ public class CdnMirrorSelector : ICdnMirrorSelector
         return await SelectFastestMirrorInternalAsync(mirrorUrls, client ?? _httpClient, timeout, ct);
     }
 
-    public async Task<string> ResolveOptimalCdnUrlAsync(CancellationToken ct = default)
+    public Task<string> ResolveOptimalCdnUrlAsync(CancellationToken ct = default)
     {
+        return ResolveOptimalCdnUrlAsync(forceRefresh: false, ct);
+    }
+
+    public async Task<string> ResolveOptimalCdnUrlAsync(bool forceRefresh, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        if (!forceRefresh)
+        {
+            lock (_cacheLock)
+            {
+                if (!string.IsNullOrWhiteSpace(_cachedMirror) && DateTimeOffset.UtcNow < _cacheExpiresUtc)
+                {
+                    return _cachedMirror;
+                }
+            }
+        }
+
         var candidates = CdnMirrorSelectorDefaults.GlobalMirrors;
-        var client = _httpClient ?? new HttpClient();
+        var client = _httpClient ?? FallbackHttpClient;
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         linkedCts.CancelAfter(TimeSpan.FromSeconds(4));
-        var tasks = candidates.Select(async mirror =>
+
+        var pending = candidates.Select(mirror => ProbeMirrorAsync(client, mirror, linkedCts.Token)).ToList();
+        while (pending.Count > 0)
+        {
+            var completed = await Task.WhenAny(pending).ConfigureAwait(false);
+            pending.Remove(completed);
+
+            string? winner = await completed.ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(winner))
+            {
+                linkedCts.Cancel();
+                lock (_cacheLock)
+                {
+                    _cachedMirror = winner;
+                    _cacheExpiresUtc = DateTimeOffset.UtcNow.Add(MirrorCacheTtl);
+                }
+                return winner;
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        // Fallback to primary setup CDN if all candidates failed or timed out
+        return candidates[0];
+
+        static async Task<string?> ProbeMirrorAsync(HttpClient httpClient, string mirror, CancellationToken token)
         {
             try
             {
                 string endpoint = $"{mirror.TrimEnd('/')}/versionStudio";
                 using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
-                var sw = Stopwatch.StartNew();
-                using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, linkedCts.Token);
-                sw.Stop();
+                using var resp = await httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, token).ConfigureAwait(false);
 
                 if (resp.IsSuccessStatusCode)
                 {
-                    string content = (await resp.Content.ReadAsStringAsync(linkedCts.Token)).Trim();
+                    string content = (await resp.Content.ReadAsStringAsync(token).ConfigureAwait(false)).Trim();
                     if (content == CdnMirrorSelectorDefaults.VersionStudioHash ||
                         content.StartsWith("version-", StringComparison.OrdinalIgnoreCase))
                     {
-                        return (Mirror: mirror, Latency: sw.ElapsedMilliseconds, Success: true);
+                        return mirror;
                     }
                 }
             }
             catch
             {
-                // Ignore failure on individual candidate
+                // Ignore individual candidate failures/cancellation
             }
 
-            return (Mirror: mirror, Latency: long.MaxValue, Success: false);
-        }).ToList();
-
-        var results = await Task.WhenAll(tasks);
-        var fastest = results.Where(r => r.Success).MinBy(r => r.Latency);
-
-        if (fastest.Success)
-        {
-            return fastest.Mirror;
+            return null;
         }
-
-        // Fallback to primary setup CDN if all candidates failed or timed out
-        return candidates[0];
     }
 
     public static async Task<string> SelectFastestMirrorInternalAsync(

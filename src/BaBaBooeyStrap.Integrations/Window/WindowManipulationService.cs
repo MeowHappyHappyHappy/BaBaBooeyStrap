@@ -21,6 +21,11 @@ public sealed class WindowManipulationService : IWindowManipulation
 {
     private sealed record SavedWindowState(uint Style, uint ExStyle, User32.RECT Bounds);
     private sealed record OwnedIconPair(nint SmallIcon, nint LargeIcon);
+    private readonly record struct PidCacheEntry(bool IsRoblox, DateTime ExpiresUtc);
+
+    private const int MaxPidCacheEntries = 512;
+    private static readonly TimeSpan PidCacheTtl = TimeSpan.FromSeconds(30);
+    private const int MinimizedCoordThreshold = -32000;
 
     private static readonly IReadOnlyDictionary<string, string> EmptyPlaceholders =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -30,10 +35,12 @@ public sealed class WindowManipulationService : IWindowManipulation
     private readonly ILogger _logger;
     private readonly ConcurrentDictionary<nint, SavedWindowState> _savedStates = new();
     private readonly ConcurrentDictionary<nint, OwnedIconPair> _ownedIcons = new();
+    private readonly ConcurrentDictionary<nint, byte> _borderlessAppliedWindows = new();
     private readonly ConcurrentDictionary<nint, string> _originalTitles = new();
     private readonly ConcurrentDictionary<nint, string> _lastAppliedTitles = new();
     private readonly ConcurrentDictionary<nint, int> _inFlightTitleUpdates = new();
-    private readonly ConcurrentDictionary<uint, bool> _robloxPidCache = new();
+    private readonly ConcurrentDictionary<nint, uint> _windowPids = new();
+    private readonly ConcurrentDictionary<uint, PidCacheEntry> _robloxPidCache = new();
     private readonly object _hookLock = new();
     private readonly object _titleLock = new();
 
@@ -85,6 +92,7 @@ public sealed class WindowManipulationService : IWindowManipulation
             createdThread = new Thread(() =>
             {
                 nint createHook = nint.Zero;
+                nint showHook = nint.Zero;
                 nint destroyHook = nint.Zero;
                 nint nameChangeHook = nint.Zero;
 
@@ -106,6 +114,14 @@ public sealed class WindowManipulationService : IWindowManipulation
                         0,
                         flags);
 
+                    showHook = _interop.SetWinEventHook(
+                        User32.EVENT_OBJECT_SHOW,
+                        User32.EVENT_OBJECT_SHOW,
+                        localDelegate,
+                        _options.TargetProcessId,
+                        0,
+                        flags);
+
                     destroyHook = _interop.SetWinEventHook(
                         User32.EVENT_OBJECT_DESTROY,
                         User32.EVENT_OBJECT_DESTROY,
@@ -122,7 +138,10 @@ public sealed class WindowManipulationService : IWindowManipulation
                         0,
                         flags);
 
-                    if (createHook == nint.Zero && destroyHook == nint.Zero && nameChangeHook == nint.Zero)
+                    if (createHook == nint.Zero &&
+                        showHook == nint.Zero &&
+                        destroyHook == nint.Zero &&
+                        nameChangeHook == nint.Zero)
                     {
                         _logger.Debug("WindowManipulationService", "All SetWinEventHook calls returned zero handles.");
                     }
@@ -148,6 +167,7 @@ public sealed class WindowManipulationService : IWindowManipulation
                 finally
                 {
                     if (createHook != nint.Zero) _interop.UnhookWinEvent(createHook);
+                    if (showHook != nint.Zero) _interop.UnhookWinEvent(showHook);
                     if (destroyHook != nint.Zero) _interop.UnhookWinEvent(destroyHook);
                     if (nameChangeHook != nint.Zero) _interop.UnhookWinEvent(nameChangeHook);
 
@@ -216,6 +236,8 @@ public sealed class WindowManipulationService : IWindowManipulation
             _hookThreadId = Volatile.Read(ref initializedThreadId);
             _hookRunning = true;
         }
+
+        ScanExistingWindows();
     }
 
     public void StopHook()
@@ -263,6 +285,11 @@ public sealed class WindowManipulationService : IWindowManipulation
             if (eventType == User32.EVENT_OBJECT_DESTROY)
             {
                 _savedStates.TryRemove(hwnd, out _);
+                _borderlessAppliedWindows.TryRemove(hwnd, out _);
+                if (_windowPids.TryRemove(hwnd, out uint trackedPid))
+                {
+                    _robloxPidCache.TryRemove(trackedPid, out _);
+                }
                 lock (_titleLock)
                 {
                     _originalTitles.TryRemove(hwnd, out _);
@@ -273,47 +300,98 @@ public sealed class WindowManipulationService : IWindowManipulation
                 return;
             }
 
-            if (eventType != User32.EVENT_OBJECT_CREATE && eventType != User32.EVENT_OBJECT_NAMECHANGE)
+            if (eventType != User32.EVENT_OBJECT_CREATE &&
+                eventType != User32.EVENT_OBJECT_SHOW &&
+                eventType != User32.EVENT_OBJECT_NAMECHANGE)
             {
                 return;
             }
 
-            if (!_interop.IsWindow(hwnd) || !_interop.IsWindowVisible(hwnd))
-            {
-                return;
-            }
-
-            _interop.GetWindowThreadProcessId(hwnd, out uint pid);
-            string className = _interop.GetClassName(hwnd);
-            string windowTitle = _interop.GetWindowText(hwnd);
-
-            if (!IsTargetWindow(hwnd, pid, className, windowTitle))
-            {
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(_options.CustomTitleTemplate))
-            {
-                SetCustomTitle(hwnd, _options.CustomTitleTemplate, _options.TitlePlaceholders ?? EmptyPlaceholders);
-            }
-
-            if (eventType == User32.EVENT_OBJECT_CREATE)
-            {
-                if (!string.IsNullOrWhiteSpace(_options.CustomIconPath))
-                {
-                    SetCustomIcon(hwnd, _options.CustomIconPath);
-                }
-
-                if (_options.BorderlessFullscreen)
-                {
-                    SetBorderlessFullscreen(hwnd, true);
-                }
-            }
+            ApplyConfiguredRulesToWindow(hwnd, eventType != User32.EVENT_OBJECT_NAMECHANGE);
         }
         catch (Exception ex)
         {
             // Never allow managed exceptions to unwind across WinEventHook native callback boundary
             _logger.Debug("WindowManipulationService", $"WinEvent handler suppressed error: {ex.Message}");
+        }
+    }
+
+    private void ScanExistingWindows()
+    {
+        try
+        {
+            uint ownPid = (uint)Environment.ProcessId;
+            _interop.EnumWindows((hwnd, _) =>
+            {
+                try
+                {
+                    if (_disposed) return false;
+                    if (_options.SkipOwnProcess)
+                    {
+                        _interop.GetWindowThreadProcessId(hwnd, out uint pid);
+                        if (pid == ownPid) return true;
+                    }
+
+                    ApplyConfiguredRulesToWindow(hwnd, applyIconAndBorderless: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug("WindowManipulationService", $"Initial window scan error: {ex.Message}");
+                }
+                return true;
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("WindowManipulationService", $"EnumWindows failed: {ex.Message}");
+        }
+    }
+
+    private void ApplyConfiguredRulesToWindow(nint hwnd, bool applyIconAndBorderless)
+    {
+        if (!_interop.IsWindow(hwnd) || !_interop.IsWindowVisible(hwnd))
+        {
+            return;
+        }
+
+        _interop.GetWindowThreadProcessId(hwnd, out uint pid);
+        if (_options.TargetProcessId != 0 && pid != _options.TargetProcessId)
+        {
+            return;
+        }
+
+        string className = _interop.GetClassName(hwnd);
+        string windowTitle = _interop.GetWindowText(hwnd);
+
+        if (!IsTargetWindow(hwnd, pid, className, windowTitle))
+        {
+            return;
+        }
+
+        if (pid != 0)
+        {
+            _windowPids[hwnd] = pid;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_options.CustomTitleTemplate))
+        {
+            SetCustomTitle(hwnd, _options.CustomTitleTemplate, _options.TitlePlaceholders ?? EmptyPlaceholders);
+        }
+
+        if (applyIconAndBorderless)
+        {
+            if (!string.IsNullOrWhiteSpace(_options.CustomIconPath) && !_ownedIcons.ContainsKey(hwnd))
+            {
+                SetCustomIcon(hwnd, _options.CustomIconPath);
+            }
+
+            if (_options.BorderlessFullscreen && !_borderlessAppliedWindows.ContainsKey(hwnd))
+            {
+                if (SetBorderlessFullscreen(hwnd, true))
+                {
+                    _borderlessAppliedWindows[hwnd] = 0;
+                }
+            }
         }
     }
 
@@ -491,7 +569,13 @@ public sealed class WindowManipulationService : IWindowManipulation
 
         if (enabled)
         {
-            if (_interop.GetWindowRect(hWnd, out var currentBounds))
+            bool isIconic = _interop.IsIconic(hWnd);
+            User32.RECT currentBounds = default;
+            bool hasValidBounds = isIconic
+                ? (_interop.TryGetNormalWindowRect(hWnd, out currentBounds) && IsValidWindowBounds(currentBounds))
+                : (_interop.GetWindowRect(hWnd, out currentBounds) && IsValidWindowBounds(currentBounds));
+
+            if (hasValidBounds)
             {
                 _savedStates.TryAdd(hWnd, new SavedWindowState(currentStyle, currentExStyle, currentBounds));
             }
@@ -505,7 +589,7 @@ public sealed class WindowManipulationService : IWindowManipulation
             _interop.SetWindowLongPtr(hWnd, User32.GWL_STYLE, unchecked((nint)newStyle));
             _interop.SetWindowLongPtr(hWnd, User32.GWL_EXSTYLE, unchecked((nint)newExStyle));
 
-            return _interop.SetWindowPos(
+            bool applied = _interop.SetWindowPos(
                 hWnd,
                 nint.Zero,
                 x,
@@ -513,21 +597,41 @@ public sealed class WindowManipulationService : IWindowManipulation
                 cx,
                 cy,
                 User32.SWP_FRAMECHANGED | User32.SWP_NOZORDER | User32.SWP_SHOWWINDOW);
+
+            if (applied)
+            {
+                _borderlessAppliedWindows[hWnd] = 0;
+            }
+            return applied;
         }
+
+        _borderlessAppliedWindows.TryRemove(hWnd, out _);
 
         if (_savedStates.TryRemove(hWnd, out var saved))
         {
             _interop.SetWindowLongPtr(hWnd, User32.GWL_STYLE, unchecked((nint)saved.Style));
             _interop.SetWindowLongPtr(hWnd, User32.GWL_EXSTYLE, unchecked((nint)saved.ExStyle));
 
+            if (IsValidWindowBounds(saved.Bounds))
+            {
+                return _interop.SetWindowPos(
+                    hWnd,
+                    nint.Zero,
+                    saved.Bounds.Left,
+                    saved.Bounds.Top,
+                    saved.Bounds.Width,
+                    saved.Bounds.Height,
+                    User32.SWP_FRAMECHANGED | User32.SWP_NOZORDER | User32.SWP_SHOWWINDOW);
+            }
+
             return _interop.SetWindowPos(
                 hWnd,
                 nint.Zero,
-                saved.Bounds.Left,
-                saved.Bounds.Top,
-                saved.Bounds.Width,
-                saved.Bounds.Height,
-                User32.SWP_FRAMECHANGED | User32.SWP_NOZORDER | User32.SWP_SHOWWINDOW);
+                0,
+                0,
+                0,
+                0,
+                User32.SWP_FRAMECHANGED | User32.SWP_NOZORDER | User32.SWP_NOMOVE | User32.SWP_NOSIZE | User32.SWP_SHOWWINDOW);
         }
 
         const uint restoreStyleMask = User32.WS_CAPTION | User32.WS_THICKFRAME | User32.WS_SYSMENU | User32.WS_MINIMIZEBOX | User32.WS_MAXIMIZEBOX;
@@ -565,10 +669,20 @@ public sealed class WindowManipulationService : IWindowManipulation
         return IsRobloxPlayerProcess(pid);
     }
 
+    private static bool IsValidWindowBounds(User32.RECT rect) =>
+        rect.Left > MinimizedCoordThreshold &&
+        rect.Top > MinimizedCoordThreshold &&
+        rect.Width > 0 &&
+        rect.Height > 0;
+
     private bool IsRobloxPlayerProcess(uint pid)
     {
         if (pid == 0) return false;
-        if (_robloxPidCache.TryGetValue(pid, out bool cached)) return cached;
+        DateTime now = DateTime.UtcNow;
+        if (_robloxPidCache.TryGetValue(pid, out var cached) && cached.ExpiresUtc > now)
+        {
+            return cached.IsRoblox;
+        }
 
         bool isRoblox = false;
         try
@@ -581,8 +695,32 @@ public sealed class WindowManipulationService : IWindowManipulation
             isRoblox = false;
         }
 
-        _robloxPidCache[pid] = isRoblox;
+        if (_robloxPidCache.Count >= MaxPidCacheEntries)
+        {
+            PrunePidCache(now);
+        }
+
+        _robloxPidCache[pid] = (new PidCacheEntry(isRoblox, now.Add(PidCacheTtl)));
         return isRoblox;
+    }
+
+    private void PrunePidCache(DateTime now)
+    {
+        foreach (var kvp in _robloxPidCache)
+        {
+            if (kvp.Value.ExpiresUtc <= now)
+            {
+                _robloxPidCache.TryRemove(kvp.Key, out _);
+            }
+        }
+
+        if (_robloxPidCache.Count >= MaxPidCacheEntries)
+        {
+            foreach (var key in _robloxPidCache.Keys.Take(_robloxPidCache.Count - MaxPidCacheEntries / 2))
+            {
+                _robloxPidCache.TryRemove(key, out _);
+            }
+        }
     }
 
     private static IReadOnlyDictionary<string, string> BuildEffectivePlaceholders(
@@ -674,6 +812,8 @@ public sealed class WindowManipulationService : IWindowManipulation
             ReleaseOwnedIcons(hWnd);
         }
         _savedStates.Clear();
+        _borderlessAppliedWindows.Clear();
+        _windowPids.Clear();
         lock (_titleLock)
         {
             _originalTitles.Clear();

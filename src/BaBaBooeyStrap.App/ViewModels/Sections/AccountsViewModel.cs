@@ -55,8 +55,10 @@ public sealed class AccountsViewModel : ViewModelBase
     private bool _isFollowUserTargetMode;
     private string _launchPlaceIdText = string.Empty;
     private string _launchShareLink = string.Empty;
-    private string _multiInstanceStatusText = "Multi-Instance: Unknown";
-    private string _runningPidsText = "Running clients: 0";
+    private string _multiInstanceStatusText = LocalizationService.Instance.Format(
+        "Str_Accounts_MultiInstanceStatusFormat",
+        LocalizationService.Instance.GetString("Str_Common_Unknown"));
+    private string _runningPidsText = LocalizationService.Instance.Format("Str_Accounts_RunningClientsSimpleFormat", 0);
     private string _runningPidsToolTip = string.Empty;
     private bool _ownsMutex;
     private bool _waitingForMutex;
@@ -1022,7 +1024,7 @@ public sealed class AccountsViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            AppendActivityLog($"Notes save failed: {ex.Message}");
+            AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogNotesSaveFailedFormat", ex.Message));
         }
     }
 
@@ -1270,7 +1272,7 @@ public sealed class AccountsViewModel : ViewModelBase
 
         _resolvedPlaceId = info.PlaceId;
         ResolvedGameName = info.Name;
-        ResolvedGamePlaceIdText = $"Place ID: {info.PlaceId}";
+        ResolvedGamePlaceIdText = LocalizationService.Instance.Format("Str_Accounts_PlaceIdFormat", info.PlaceId);
         ResolvedGameThumbnailUrl = info.ThumbnailUrl;
         HasResolvedGameInfo = true;
     }
@@ -1504,13 +1506,13 @@ public sealed class AccountsViewModel : ViewModelBase
         var ct = _launchCts.Token;
 
         bool hasAnySettingsOverride = targets.Any(t => t.Account.RobloxSettings?.HasOverrides == true);
-        string? settingsBackup = null;
+        GlobalSettingsBackup? settingsBackup = null;
         if (hasAnySettingsOverride)
         {
             try
             {
-                settingsBackup = _globalSettingsManager.CaptureBackup();
-                if (settingsBackup != null)
+                settingsBackup = _globalSettingsManager.CaptureBackupState();
+                if (settingsBackup.Value.Existed)
                 {
                     AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsBackedUp"));
                 }
@@ -1543,11 +1545,11 @@ public sealed class AccountsViewModel : ViewModelBase
                 _setLocalizedStatus("Str_Accounts_StatusLaunchingItemFormat", [item.Username, i + 1, targets.Count]);
                 AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_StatusLaunchingItemFormat", item.Username, i + 1, targets.Count));
 
-                if (settingsBackup != null && i > 0)
+                if (settingsBackup.HasValue && i > 0)
                 {
                     try
                     {
-                        _globalSettingsManager.RestoreBackup(settingsBackup);
+                        _globalSettingsManager.RestoreBackupState(settingsBackup.Value);
                     }
                     catch (Exception ex)
                     {
@@ -1594,6 +1596,10 @@ public sealed class AccountsViewModel : ViewModelBase
                     }
                     else
                     {
+                        if (result.AuthHttpStatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                        {
+                            item.SetCookieHealth(AccountCookieHealth.Invalid, result.ErrorMessage);
+                        }
                         AppendActivityLog(LocalizationService.Instance.Format(
                             "Str_Accounts_LogLaunchItemFailedFormat",
                             item.Username,
@@ -1620,7 +1626,7 @@ public sealed class AccountsViewModel : ViewModelBase
                     AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, ex.Message));
                 }
 
-                bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || settingsBackup != null);
+                bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || settingsBackup.HasValue);
                 if (shouldWaitForWindow)
                 {
                     int timeoutSeconds = Math.Max(1, (int)Math.Ceiling(WindowWaitTimeout.TotalSeconds));
@@ -1657,11 +1663,11 @@ public sealed class AccountsViewModel : ViewModelBase
         }
         finally
         {
-            if (settingsBackup != null)
+            if (settingsBackup.HasValue)
             {
                 try
                 {
-                    _globalSettingsManager.RestoreBackup(settingsBackup);
+                    _globalSettingsManager.RestoreBackupState(settingsBackup.Value);
                     AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsRestored"));
                 }
                 catch (Exception ex)
@@ -1734,10 +1740,10 @@ public sealed class AccountsViewModel : ViewModelBase
     {
         string pidsText = status.RunningRobloxPids.Count > 0
             ? string.Join(", ", status.RunningRobloxPids)
-            : "none";
+            : LocalizationService.Instance.GetString("Str_Common_None");
         string errorPart = string.IsNullOrWhiteSpace(status.LastError)
             ? string.Empty
-            : $", LastError={status.LastError}";
+            : LocalizationService.Instance.Format("Str_Accounts_LogLastErrorPartFormat", status.LastError);
         return LocalizationService.Instance.Format(
             "Str_Accounts_LogEnabledFormat",
             prefix,

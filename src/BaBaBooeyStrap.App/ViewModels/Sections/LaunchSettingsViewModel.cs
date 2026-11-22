@@ -361,7 +361,7 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
         {
             var selector = new CdnMirrorSelector();
             var sw = Stopwatch.StartNew();
-            string optimal = await selector.ResolveOptimalCdnUrlAsync();
+            string optimal = await selector.ResolveOptimalCdnUrlAsync(forceRefresh: true);
             sw.Stop();
             _cdnTestResultKey = "Str_Channel_MirrorOptimalFormat";
             _cdnTestResultArgs = [optimal, sw.ElapsedMilliseconds];

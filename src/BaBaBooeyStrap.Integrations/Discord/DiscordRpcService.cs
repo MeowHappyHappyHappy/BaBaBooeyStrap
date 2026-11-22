@@ -22,9 +22,11 @@ public sealed class DiscordRpcService : IDiscordRpcService
     private NamedPipeClientStream? _pipe;
     private CancellationTokenSource? _sessionCts;
     private CancellationTokenSource? _reconnectCts;
+    private CancellationTokenSource? _deferredFlushCts;
     private Task? _readerTask;
     private Task? _reconnectTask;
     private DiscordActivity? _lastActivity;
+    private DiscordActivity? _pendingDeferredActivity;
     private DateTime _lastPresenceUpdateUtc = DateTime.MinValue;
     private bool _isConnected;
     private bool _explicitDisconnect;
@@ -151,6 +153,11 @@ public sealed class DiscordRpcService : IDiscordRpcService
         ArgumentNullException.ThrowIfNull(activity);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        CancellationTokenSource? ctsToCancel = null;
+        CancellationTokenSource? deferredCts = null;
+        TimeSpan remainingDelay = TimeSpan.Zero;
+        bool throttled = false;
+
         lock (_stateLock)
         {
             _lastActivity = activity;
@@ -158,25 +165,127 @@ public sealed class DiscordRpcService : IDiscordRpcService
             if (_options.UpdateThrottle > TimeSpan.Zero)
             {
                 DateTime now = DateTime.UtcNow;
-                if ((now - _lastPresenceUpdateUtc) < _options.UpdateThrottle)
+                TimeSpan elapsed = now - _lastPresenceUpdateUtc;
+                if (elapsed < _options.UpdateThrottle)
                 {
-                    return;
+                    throttled = true;
+                    _pendingDeferredActivity = activity;
+                    if (_deferredFlushCts == null)
+                    {
+                        remainingDelay = _options.UpdateThrottle - elapsed;
+                        deferredCts = new CancellationTokenSource();
+                        _deferredFlushCts = deferredCts;
+                    }
                 }
-                _lastPresenceUpdateUtc = now;
+                else
+                {
+                    _lastPresenceUpdateUtc = now;
+                    ctsToCancel = CancelDeferredFlushLocked();
+                }
             }
+            else
+            {
+                ctsToCancel = CancelDeferredFlushLocked();
+            }
+        }
+
+        if (ctsToCancel != null)
+        {
+            try { ctsToCancel.Cancel(); } catch { }
+            try { ctsToCancel.Dispose(); } catch { }
+        }
+
+        if (throttled)
+        {
+            if (deferredCts != null)
+            {
+                _ = FlushDeferredPresenceAsync(deferredCts, remainingDelay);
+            }
+            return;
         }
 
         string json = BuildSetActivityJson(activity);
         await SendFrameSafeAsync(OpcodeFrame, json, ct).ConfigureAwait(false);
     }
 
+    private CancellationTokenSource? CancelDeferredFlushLocked()
+    {
+        _pendingDeferredActivity = null;
+        var cts = _deferredFlushCts;
+        _deferredFlushCts = null;
+        return cts;
+    }
+
+    private async Task FlushDeferredPresenceAsync(CancellationTokenSource flushCts, TimeSpan delay)
+    {
+        try
+        {
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, flushCts.Token).ConfigureAwait(false);
+            }
+
+            DiscordActivity? toSend = null;
+            lock (_stateLock)
+            {
+                if (_disposed || !ReferenceEquals(_deferredFlushCts, flushCts) || flushCts.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _deferredFlushCts = null;
+                toSend = _pendingDeferredActivity;
+                _pendingDeferredActivity = null;
+                if (toSend != null)
+                {
+                    _lastPresenceUpdateUtc = DateTime.UtcNow;
+                }
+            }
+
+            if (toSend != null)
+            {
+                string json = BuildSetActivityJson(toSend);
+                await SendFrameSafeAsync(OpcodeFrame, json, flushCts.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("DiscordRpcService", $"Deferred presence flush failed: {ex.Message}");
+        }
+        finally
+        {
+            lock (_stateLock)
+            {
+                if (ReferenceEquals(_deferredFlushCts, flushCts))
+                {
+                    _deferredFlushCts = null;
+                }
+            }
+            try { flushCts.Dispose(); } catch { }
+        }
+    }
+
     public async Task ClearPresenceAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        CancellationTokenSource? ctsToCancel;
         lock (_stateLock)
         {
             _lastActivity = null;
+            ctsToCancel = CancelDeferredFlushLocked();
+        }
+
+        if (ctsToCancel != null)
+        {
+            try { ctsToCancel.Cancel(); } catch { }
+            try { ctsToCancel.Dispose(); } catch { }
         }
 
         string json = DiscordIpcProtocol.BuildClearActivityJson(Environment.ProcessId);
@@ -192,6 +301,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
     public void Disconnect()
     {
         CancellationTokenSource? reconnectCts;
+        CancellationTokenSource? deferredFlushCts;
         NamedPipeClientStream? pipeToClose;
         CancellationTokenSource? sessionCts;
         bool wasConnected;
@@ -207,8 +317,11 @@ public sealed class DiscordRpcService : IDiscordRpcService
             _sessionCts = null;
             reconnectCts = _reconnectCts;
             _reconnectCts = null;
+            deferredFlushCts = CancelDeferredFlushLocked();
         }
 
+        try { deferredFlushCts?.Cancel(); } catch { }
+        try { deferredFlushCts?.Dispose(); } catch { }
         try { reconnectCts?.Cancel(); } catch { }
         try { reconnectCts?.Dispose(); } catch { }
 
@@ -460,11 +573,16 @@ public sealed class DiscordRpcService : IDiscordRpcService
             if (reconnected)
             {
                 DiscordActivity? cached;
+                CancellationTokenSource? staleDeferredCts;
                 lock (_stateLock)
                 {
                     cached = _lastActivity;
                     _lastPresenceUpdateUtc = DateTime.MinValue;
+                    staleDeferredCts = CancelDeferredFlushLocked();
                 }
+
+                try { staleDeferredCts?.Cancel(); } catch { }
+                try { staleDeferredCts?.Dispose(); } catch { }
 
                 if (cached != null)
                 {

@@ -90,7 +90,7 @@
         <!-- DataGrid -->
         <ui:DataGrid x:Name="FlagsDataGrid"
                      Grid.Row="3"
-                     ItemsSource="{Binding FilteredFlags}"
+                     ItemsSource="{Binding FlagsView}"
                      AutoGenerateColumns="False"
                      CanUserAddRows="False"
                      SelectionMode="Extended"

@@ -79,16 +79,10 @@ public static class ProfileTransferService
             SavedTargets = targetsCopy
         };
 
-        string? directory = Path.GetDirectoryName(filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
         string json = JsonSerializer.Serialize(bundle, JsonOptions);
-        string tempPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
-        File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        File.Move(tempPath, filePath, overwrite: true);
+        CrossProcessFileLock.AtomicWrite(
+            filePath,
+            tempPath => File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)));
     }
 
     public static ProfileBundle ImportFromFile(string filePath)
@@ -201,8 +195,10 @@ public static class ProfileTransferService
         return JsonSerializer.Deserialize<Settings>(json, JsonOptions) ?? new Settings();
     }
 
-    private static void CopySettingsProperties(Settings source, Settings destination)
+    public static void CopySettingsProperties(Settings source, Settings destination)
     {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
         foreach (PropertyInfo prop in typeof(Settings).GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (!prop.CanRead) continue;

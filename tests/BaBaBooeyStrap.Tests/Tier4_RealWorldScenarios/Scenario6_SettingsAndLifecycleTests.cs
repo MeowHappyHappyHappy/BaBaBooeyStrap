@@ -13,6 +13,7 @@ using Xunit;
 
 namespace BaBaBooeyStrap.Tests.Tier4_RealWorldScenarios;
 
+[Collection("LocalizationSingleton")]
 public sealed class Scenario6_SettingsAndLifecycleTests
 {
     [Fact]
@@ -238,7 +239,7 @@ public sealed class Scenario6_SettingsAndLifecycleTests
         malformedImportAccepted.Should().BeFalse();
         editorVm.Flags.Should().ContainSingle(f => f.Name == "FFlagKeepSafe");
 
-        Directory.GetFiles(paths.Base, "*.corrupted.*.bak").Length.Should().Be(2);
+        Directory.GetFiles(paths.Base, "*.corrupted.*.bak").Length.Should().Be(3);
         logger.History.Count.Should().Be(2);
     }
 }

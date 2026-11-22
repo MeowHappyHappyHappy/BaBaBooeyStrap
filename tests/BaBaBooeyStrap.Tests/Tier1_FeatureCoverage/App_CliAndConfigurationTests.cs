@@ -9,6 +9,7 @@ using BaBaBooeyStrap.Tests.Tier1_FeatureCoverage.Engines;
 
 namespace BaBaBooeyStrap.Tests.Tier1_FeatureCoverage;
 
+[Collection("LocalizationSingleton")]
 public sealed class App_CliAndConfigurationTests : IClassFixture<MockRobloxEnvironment>
 {
     private readonly MockRobloxEnvironment _env;

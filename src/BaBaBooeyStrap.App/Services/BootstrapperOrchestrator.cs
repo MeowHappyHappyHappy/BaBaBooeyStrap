@@ -147,7 +147,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         Action<string>? statusCallback,
         bool skipDeploymentCheck,
         string? accountUsername,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Func<LaunchSettings, CancellationToken, Task<(LaunchSettings? PreparedSettings, LaunchResult? Failure)>>? preSpawnSettingsBuilder = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ct.ThrowIfCancellationRequested();
@@ -177,15 +178,30 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         if (!skipDeploymentCheck)
         {
             string? resolvedGuid;
+            string? pipelineFailureReason = null;
             await _prepareLock.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                resolvedGuid = await PrepareDeploymentAndModsCoreAsync(settings, isStudio, progress, statusCallback, ct)
+                var pipelineResult = await PrepareDeploymentAndModsCoreAsync(settings, isStudio, progress, statusCallback, ct)
                     .ConfigureAwait(false);
+                resolvedGuid = pipelineResult.ResolvedVersionGuid;
+                pipelineFailureReason = pipelineResult.FailureReason;
             }
             finally
             {
                 _prepareLock.Release();
+            }
+
+            if (!string.IsNullOrWhiteSpace(pipelineFailureReason))
+            {
+                _logger.Error("BootstrapperOrchestrator", pipelineFailureReason);
+                return new LaunchResult(
+                    false,
+                    settings.RobloxLaunchArgs,
+                    RobloxLauncher.ParseTargetFromUri(settings.RobloxLaunchArgs),
+                    DateTimeOffset.UtcNow,
+                    null,
+                    pipelineFailureReason);
             }
 
             if (!string.IsNullOrWhiteSpace(resolvedGuid) && string.IsNullOrWhiteSpace(settings.VersionFlag.Data))
@@ -222,6 +238,50 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             preLaunchedAutoClosePids = await _customIntegrationRunner
                 .LaunchIntegrationsAsync(appSettings.CustomIntegrations, preLaunchOnly: true, ct: ct)
                 .ConfigureAwait(false);
+        }
+
+        // 5c. Build deferred auth ticket / matchmaking server right before process spawn so ticket never expires during long updates
+        if (preSpawnSettingsBuilder != null)
+        {
+            var (preparedSettings, failureResult) = await preSpawnSettingsBuilder(settings, ct).ConfigureAwait(false);
+            if (failureResult != null)
+            {
+                return failureResult;
+            }
+            if (preparedSettings != null)
+            {
+                settings = preparedSettings;
+            }
+        }
+        else if (!isStudio && appSettings.EnableBetterMatchmaking && PlaceLauncherUriBuilder.IsValidLaunchUri(settings.RobloxLaunchArgs))
+        {
+            try
+            {
+                var uriBuilder = PlaceLauncherUriBuilder.Parse(settings.RobloxLaunchArgs);
+                if (uriBuilder.PlaceId > 0 &&
+                    string.IsNullOrWhiteSpace(uriBuilder.JobId) &&
+                    string.IsNullOrWhiteSpace(uriBuilder.AccessCode) &&
+                    string.IsNullOrWhiteSpace(uriBuilder.LinkCode) &&
+                    !uriBuilder.UserId.HasValue)
+                {
+                    string? serverId = await _roValraService
+                        .GetBetterMatchmakingServerIdAsync(uriBuilder.PlaceId, appSettings.EnableBetterMatchmakingRandomization, ct)
+                        .ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(serverId))
+                    {
+                        uriBuilder.JobId = serverId;
+                        settings.RobloxLaunchArgs = uriBuilder.BuildProtocolUri();
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("BootstrapperOrchestrator", $"Better matchmaking lookup failed, continuing with default matchmaking: {ex.Message}");
+            }
         }
 
         // 6. Launch Roblox executable via Core RobloxLauncher
@@ -263,7 +323,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         return result;
     }
 
-    private async Task<string?> PrepareDeploymentAndModsCoreAsync(
+    private async Task<BootstrapPipelineContext> PrepareDeploymentAndModsCoreAsync(
         LaunchSettings settings,
         bool isStudio,
         IProgress<PackageDownloadProgress>? progress,
@@ -281,20 +341,35 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         {
             ct.ThrowIfCancellationRequested();
             await step.ExecuteAsync(context, ct).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(context.FailureReason))
+            {
+                break;
+            }
         }
 
-        return context.ResolvedVersionGuid;
+        return context;
     }
 
     public Task<LaunchResult> LaunchAccountAsync(RobloxAccount account, LaunchTarget target, CancellationToken ct = default)
     {
-        return LaunchAccountAsync(account, target, skipDeploymentCheck: false, ct);
+        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck: false, ct);
+    }
+
+    public Task<LaunchResult> LaunchAccountAsync(
+        RobloxAccount account,
+        LaunchTarget target,
+        bool skipDeploymentCheck,
+        CancellationToken ct = default)
+    {
+        return LaunchAccountAsync(account, target, null, null, skipDeploymentCheck, ct);
     }
 
     public async Task<LaunchResult> LaunchAccountAsync(
         RobloxAccount account,
         LaunchTarget target,
-        bool skipDeploymentCheck,
+        IProgress<PackageDownloadProgress>? progress,
+        Action<string>? statusCallback,
+        bool skipDeploymentCheck = false,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(account);
@@ -324,7 +399,26 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
 
         var coreLauncher = new RobloxLauncher(_paths, _authService, _robloxStateManager, _logger);
-        var resolution = await coreLauncher.ResolveAccountLaunchTargetAsync(account.Cookie, target, ct).ConfigureAwait(false);
+        RobloxLauncher.ResolvedLaunchTargetDetails resolution;
+        try
+        {
+            resolution = await coreLauncher.ResolveAccountLaunchTargetAsync(account.Cookie, target, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (RobloxApiException apiEx)
+        {
+            _logger.Warn("BootstrapperOrchestrator", $"Failed to resolve target for '{account.Username}': {apiEx.StatusCode} {apiEx.Message}");
+            return new LaunchResult(false, string.Empty, target, DateTimeOffset.UtcNow, null, apiEx.Message, apiEx.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("BootstrapperOrchestrator", $"Failed to resolve target for '{account.Username}': {ex.Message}");
+            return new LaunchResult(false, string.Empty, target, DateTimeOffset.UtcNow, null, ex.Message);
+        }
+
         if (!resolution.Success)
         {
             string? errorMessage = resolution.NotInGameTargetName != null
@@ -333,27 +427,88 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             return new LaunchResult(false, string.Empty, resolution.Target, DateTimeOffset.UtcNow, null, errorMessage);
         }
 
-        string authTicket = await _authService.GenerateAuthTicketAsync(account.Cookie, ct).ConfigureAwait(false);
         string? effectiveChannel = !string.IsNullOrWhiteSpace(appSettings.Channel) &&
                                    !string.Equals(appSettings.Channel, "production", StringComparison.OrdinalIgnoreCase) &&
                                    !string.Equals(appSettings.Channel, "live", StringComparison.OrdinalIgnoreCase)
             ? appSettings.Channel.Trim()
             : null;
 
-        var builder = new PlaceLauncherUriBuilder
+        var initialSettings = new LaunchSettings
         {
-            PlaceId = resolution.PlaceId,
-            JobId = resolution.JobId,
-            LinkCode = resolution.LinkCode,
-            UserId = resolution.FollowUserId,
-            AuthTicket = authTicket,
-            Channel = effectiveChannel,
-            LaunchTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            RobloxLaunchMode = LaunchMode.Player
         };
 
-        string uri = builder.BuildProtocolUri();
-        var launchSettings = new LaunchSettings([uri]);
-        var result = await LaunchWithProgressInternalAsync(launchSettings, null, null, skipDeploymentCheck, account.Username, ct).ConfigureAwait(false);
+        var result = await LaunchWithProgressInternalAsync(
+            initialSettings,
+            progress,
+            statusCallback,
+            skipDeploymentCheck,
+            account.Username,
+            ct,
+            preSpawnSettingsBuilder: async (preparedSettings, innerCt) =>
+            {
+                string? jobId = resolution.JobId;
+                if (appSettings.EnableBetterMatchmaking &&
+                    resolution.PlaceId > 0 &&
+                    string.IsNullOrWhiteSpace(jobId) &&
+                    string.IsNullOrWhiteSpace(resolution.LinkCode) &&
+                    !resolution.FollowUserId.HasValue)
+                {
+                    try
+                    {
+                        string? bestServerId = await _roValraService
+                            .GetBetterMatchmakingServerIdAsync(resolution.PlaceId, appSettings.EnableBetterMatchmakingRandomization, innerCt)
+                            .ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(bestServerId))
+                        {
+                            jobId = bestServerId;
+                        }
+                    }
+                    catch (OperationCanceledException) when (innerCt.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warn("BootstrapperOrchestrator", $"Better matchmaking lookup failed for '{account.Username}': {ex.Message}");
+                    }
+                }
+
+                string authTicket;
+                try
+                {
+                    authTicket = await _authService.GenerateAuthTicketAsync(account.Cookie, innerCt).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (innerCt.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (RobloxApiException apiEx)
+                {
+                    _logger.Warn("BootstrapperOrchestrator", $"Auth ticket failed for '{account.Username}': {apiEx.StatusCode} {apiEx.Message}");
+                    return (null, new LaunchResult(false, string.Empty, resolution.Target, DateTimeOffset.UtcNow, null, apiEx.Message, apiEx.StatusCode));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("BootstrapperOrchestrator", $"Auth ticket failed for '{account.Username}': {ex.Message}");
+                    return (null, new LaunchResult(false, string.Empty, resolution.Target, DateTimeOffset.UtcNow, null, ex.Message));
+                }
+
+                var builder = new PlaceLauncherUriBuilder
+                {
+                    PlaceId = resolution.PlaceId,
+                    JobId = jobId,
+                    LinkCode = resolution.LinkCode,
+                    UserId = resolution.FollowUserId,
+                    AuthTicket = authTicket,
+                    Channel = effectiveChannel,
+                    LaunchTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                };
+
+                preparedSettings.RobloxLaunchArgs = builder.BuildProtocolUri();
+                preparedSettings.RobloxLaunchMode = LaunchMode.Player;
+                return (preparedSettings, null);
+            }).ConfigureAwait(false);
 
         if (result.Success)
         {
@@ -520,6 +675,10 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                     await discordRpc.ConnectAsync().ConfigureAwait(false);
 
                 string details = $"Playing Place {joinArgs.PlaceId}";
+                if (appSettings.ShowAccountOnRichPresence && !string.IsNullOrWhiteSpace(accountUsername))
+                {
+                    details = $"{details} ({accountUsername})";
+                }
                 string state = appSettings.ShowServerDetails && resolvedLocation != null
                     ? $"{resolvedLocation.City}, {resolvedLocation.Country}"
                     : (appSettings.ShowServerDetails && !string.IsNullOrWhiteSpace(joinArgs.ServerIp)

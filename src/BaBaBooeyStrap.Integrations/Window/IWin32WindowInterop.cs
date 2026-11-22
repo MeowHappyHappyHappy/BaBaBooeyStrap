@@ -13,6 +13,9 @@ public interface IWin32WindowInterop
     nint GetWindowLongPtr(nint hWnd, int nIndex);
     nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong);
     bool GetWindowRect(nint hWnd, out User32.RECT rect);
+    bool IsIconic(nint hWnd) => false;
+    bool TryGetNormalWindowRect(nint hWnd, out User32.RECT rect) => GetWindowRect(hWnd, out rect);
+    bool EnumWindows(User32.EnumWindowsProc callback) => false;
     User32.RECT GetMonitorRectFromWindow(nint hWnd);
     int GetSystemMetrics(int nIndex);
     bool SetWindowPos(nint hWnd, nint hWndInsertAfter, int x, int y, int cx, int cy, uint flags);

@@ -13,4 +13,9 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="BaBaBooeyStrap.Bootstrapper" />
+    <InternalsVisibleTo Include="BaBaBooeyStrap.Tests" />
+  </ItemGroup>
+
 </Project>

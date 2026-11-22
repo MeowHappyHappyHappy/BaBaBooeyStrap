@@ -16,6 +16,8 @@
   "Str_Common_Ready": "Ready",
   "Str_Common_NotTestedYet": "Not tested yet",
   "Str_Common_NotInstalledYet": "Not installed yet",
+  "Str_Common_None": "none",
+  "Str_Common_Unknown": "Unknown",
 
   "Str_MainWindow_Title": "BaBaBooeyStrap Settings",
   "Str_MainWindow_Save": "Save",
@@ -238,6 +240,8 @@
   "Str_FastFlags_ManualFullscreen": "Allow Alt+Enter Manual Fullscreen",
   "Str_FastFlags_ManualFullscreenDesc": "Allows switching between windowed and exclusive fullscreen via Alt+Enter.",
   "Str_FastFlags_ApplyPresets": "Apply Presets Now",
+  "Str_FastFlags_StatusPresetsApplied": "FastFlag presets applied to ClientAppSettings.json.",
+  "Str_FastFlags_StatusManagerDisabled": "Enable FastFlag Manager first to apply presets.",
 
   "Str_Mods_PageTitle": "Mods",
   "Str_Mods_Header": "Mods & File Overlay",
@@ -286,7 +290,9 @@
   "Str_Appearance_RobloxIdentityHeader": "Roblox Client Window Identity",
   "Str_Appearance_RobloxTitle": "Roblox Window Title:",
   "Str_Appearance_RobloxIcon": "Roblox Window Icon:",
+  "Str_Appearance_RobloxCustomIcon": "Custom Roblox Icon:",
   "Str_Appearance_IconFileFilter": "Icon Files (*.ico)|*.ico",
+  "Str_Appearance_RobloxIconFileFilter": "Icon & Executable Files (*.ico;*.exe;*.dll)|*.ico;*.exe;*.dll",
 
   "Str_Behaviour_PageTitle": "Behaviour",
   "Str_Behaviour_Header": "Behaviour, Integrations & Cleaner",
@@ -305,6 +311,8 @@
   "Str_Behaviour_ActivityTracking": "Enable Activity Tracking",
   "Str_Behaviour_DiscordRpc": "Use Discord Rich Presence",
   "Str_Behaviour_HideRpcButtons": "Hide Discord RPC Join Buttons",
+  "Str_Behaviour_RpcStatusDisplay": "Discord Status Display:",
+  "Str_Behaviour_ShowAccountOnRpc": "Show Account Username in Discord RPC",
   "Str_Behaviour_ShowServerDetails": "Show Server Location Details (RoValra)",
   "Str_Behaviour_WindowManipulation": "Enable Window Manipulation Hooks",
   "Str_Behaviour_WindowManipulationDesc": "Required for applying custom Roblox window titles, icons, and borderless tweaks.",
@@ -312,6 +320,8 @@
   "Str_Behaviour_FakeBorderlessDesc": "Removes window borders and maximizes the client to simulate borderless fullscreen.",
   "Str_Behaviour_BetterMatchmaking": "Enable Better Matchmaking",
   "Str_Behaviour_BetterMatchmakingDesc": "Queries RoValra server region data to help prefer closer or lower-latency servers.",
+  "Str_Behaviour_BetterMatchmakingRandomization": "Randomize Selected Optimal Server",
+  "Str_Behaviour_BetterMatchmakingRandomizationDesc": "Picks a random server in the nearest region instead of always joining the top listed server.",
   "Str_Behaviour_CleanerHeader": "Cache & Log Cleaner",
   "Str_Behaviour_CleanNow": "Clean Now",
   "Str_Behaviour_RetentionPolicy": "Retention Policy:",
@@ -321,6 +331,7 @@
   "Str_Behaviour_CleanBaBaBooeyStrapLogs": "BaBaBooeyStrap Logs",
   "Str_Behaviour_CleanCrashDumps": "Crash Dumps",
   "Str_Behaviour_CleanerReportFormat": "Deleted {0} files ({1:F2} MB freed).",
+  "Str_Behaviour_CleanerErrorFormat": "Cleanup failed: {0}",
 
   "Str_Channel_PageTitle": "Channel",
   "Str_Channel_Header": "Deployment Channel & CDN",
@@ -348,6 +359,7 @@
   "Str_GlobalSettings_MouseSensitivity": "Mouse Sensitivity:",
   "Str_GlobalSettings_QualityLevel": "Saved Quality Level (1-10):",
   "Str_GlobalSettings_TextSize": "Preferred Text Size (1-4):",
+  "Str_GlobalSettings_PreferredTransparency": "Preferred Background Transparency (0-1):",
   "Str_GlobalSettings_VrEnabled": "VR Enabled",
   "Str_GlobalSettings_ReducedMotion": "Reduced Motion",
   "Str_GlobalSettings_StatusSaved": "Saved GlobalBasicSettings_13.xml",
@@ -424,6 +436,8 @@
   "Str_FastFlagEditor_MsgInvalidJson": "Invalid JSON format. Existing flags were not modified.",
   "Str_FastFlagEditor_MsgExportedFileFormat": "Exported JSON to {0} (and copied to clipboard).",
   "Str_FastFlagEditor_MsgExportedClipboard": "Copied exported JSON to clipboard.",
+  "Str_FastFlagEditor_MsgExportClipboardFailedFormat": "Failed to copy JSON to clipboard: {0}",
+  "Str_FastFlagEditor_MsgExportFileFailedFormat": "Failed to save JSON file: {0}",
   "Str_FastFlagEditor_MsgCleared": "Cleared all flags.",
   "Str_FastFlagEditor_MsgResetDefaults": "Reset to default flags.",
   "Str_FastFlagEditor_JsonFileFilter": "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
@@ -506,6 +520,10 @@
   "Str_Bootstrapper_StatusDownloadingManifestFormat": "Downloading manifest for {0}...",
   "Str_Bootstrapper_StatusDownloadingCountFormat": "Downloading {0} Roblox packages...",
   "Str_Bootstrapper_StatusExtracting": "Extracting packages...",
+  "Str_Bootstrapper_ExtractingNamedFormat": "Extracting {0}...",
+  "Str_Bootstrapper_ErrorDiskSpaceFormat": "Not enough free disk space on {0} (requires {1:F0} MB, available {2:F0} MB).",
+  "Str_Bootstrapper_ErrorDeploymentIncompleteFormat": "Roblox deployment for {0} is incomplete after extraction. Please retry or clear space.",
+  "Str_Bootstrapper_ErrorDeploymentFailedFormat": "Failed to deploy Roblox: {0}",
 
   "Enum_AppLanguage_Auto": "System Default",
   "Enum_AppLanguage_TraditionalChinese": "繁體中文",
@@ -588,6 +606,9 @@
   "Enum_FastFlagType_String": "String",
   "Enum_FastFlagType_Log": "Log",
   "Enum_FastFlagType_Unknown": "Unknown",
+
+  "Enum_DiscordRPCStatusDisplay_Name": "Activity Name (Roblox)",
+  "Enum_DiscordRPCStatusDisplay_Details": "Game / Place Details",
 
   "Str_Common_Edit": "Edit",
 
@@ -680,5 +701,17 @@
   "Str_About_RepairProtocolsDone": "Roblox player and studio launch protocols have been re-registered.",
   "Str_About_ExportDiagnostics": "Export Diagnostics (.zip)",
   "Str_About_ExportDiagnosticsDoneFormat": "Diagnostics archive saved (without accounts or cookies) to:\n{0}",
-  "Str_About_OpenFolder": "Open Folder"
+  "Str_About_OpenFolder": "Open Folder",
+
+  "Str_Toast_Copied": "Copied",
+  "Str_Filter_ProgramsAndScripts": "Programs & Scripts (*.exe;*.bat;*.cmd;*.ps1)|*.exe;*.bat;*.cmd;*.ps1|All Files (*.*)|*.*",
+  "Str_Filter_ProfileJson": "BaBaBooeyStrap Profile (*.json)|*.json",
+  "Str_Filter_ZipArchive": "ZIP Archive (*.zip)|*.zip",
+
+  "Str_Accounts_LogCookieVerificationFailedFormat": "Cookie verification failed: {0}",
+  "Str_Accounts_LogLaunchFailedFormat": "Launch failed: {0}",
+  "Str_Accounts_LogBatchLaunchFailedFormat": "Batch launch failed: {0}",
+  "Str_Accounts_LogNotesSaveFailedFormat": "Notes save failed: {0}",
+  "Str_Accounts_PlaceIdFormat": "Place ID: {0}",
+  "Str_Accounts_LogLastErrorPartFormat": ", LastError={0}"
 }

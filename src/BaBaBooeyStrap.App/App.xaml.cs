@@ -9,6 +9,7 @@ using BaBaBooeyStrap.App.DependencyInjection;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.Views;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Bootstrapper.Settings;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Launch;
 using BaBaBooeyStrap.Core.Logging;
@@ -195,7 +196,11 @@ public partial class App : Application
             !launchSettings.NoLaunchFlag.Active)
         {
             var firstRun = new FirstRunDialog(settingsManager.Prop);
-            firstRun.ShowDialog();
+            if (firstRun.ShowDialog() != true)
+            {
+                ShutdownApp(0);
+                return;
+            }
 
             installer.Install(
                 createDesktopShortcut: firstRun.CreateDesktopShortcut,
@@ -395,7 +400,16 @@ public partial class App : Application
             orchestrator.MultiInstanceController.Enable();
         }
 
-        string? settingsBackup = null;
+        GlobalSettingsBackup? settingsBackup = null;
+        using var cts = new CancellationTokenSource();
+        IBootstrapperDialog? dialog = null;
+
+        if (!quietMode)
+        {
+            dialog = BootstrapperDialogFactory.Create(settingsManager.Prop, cts, _services.Paths);
+            dialog.ShowBootstrapper();
+        }
+
         try
         {
             string effectiveTarget = RobloxLauncher.BuildEffectiveTargetInput(rawTarget, jobId);
@@ -403,19 +417,34 @@ public partial class App : Application
 
             if (account.RobloxSettings?.HasOverrides == true)
             {
-                settingsBackup = globalSettings.CaptureBackup();
+                settingsBackup = globalSettings.CaptureBackupState();
                 globalSettings.ApplyProfile(account.RobloxSettings);
             }
 
+            var progress = dialog?.ViewModel;
+            void UpdateStatus(string msg)
+            {
+                if (dialog == null) return;
+                Dispatcher.InvokeAsync(() => dialog.Message = msg);
+            }
+
             var previousPids = orchestrator.ProcessSupervisor.CaptureRunningClientPids();
-            var result = await orchestrator.LaunchAccountAsync(account, parsedTarget);
+            var result = await orchestrator.LaunchAccountAsync(
+                account,
+                parsedTarget,
+                progress,
+                UpdateStatus,
+                skipDeploymentCheck: false,
+                cts.Token);
+
+            dialog?.CloseBootstrapper();
 
             if (result.Success)
             {
                 accountStore.Upsert(account);
                 _mainWindow?.ViewModel.AccountManagement.ReloadAccounts();
 
-                if (settingsBackup != null)
+                if (settingsBackup.HasValue)
                 {
                     await orchestrator.ProcessSupervisor.WaitForNewClientMainWindowAsync(previousPids);
                 }
@@ -427,8 +456,14 @@ public partial class App : Application
                     result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"));
             }
         }
+        catch (OperationCanceledException)
+        {
+            dialog?.CloseBootstrapper();
+            Logger.InfoStatic("App.ExecuteAccountLaunchAsync", "Quick launch cancelled by user.");
+        }
         catch (Exception ex)
         {
+            dialog?.CloseBootstrapper();
             Logger.ExceptionStatic("App.ExecuteAccountLaunchAsync", ex);
             if (!quietMode)
             {
@@ -439,10 +474,11 @@ public partial class App : Application
         }
         finally
         {
+            dialog?.CloseBootstrapper();
             settingsManager.Prop.MultiInstanceEnabled = previousMultiInstance;
-            if (settingsBackup != null)
+            if (settingsBackup.HasValue)
             {
-                try { globalSettings.RestoreBackup(settingsBackup); } catch { }
+                try { globalSettings.RestoreBackupState(settingsBackup.Value); } catch { }
             }
         }
     }
@@ -723,6 +759,8 @@ public partial class App : Application
 
         ShutdownApp(0);
     }
+
+    internal void RequestShutdown(int exitCode = 0) => ShutdownApp(exitCode);
 
     private void ShutdownApp(int exitCode)
     {

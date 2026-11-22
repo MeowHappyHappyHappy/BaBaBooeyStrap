@@ -97,15 +97,30 @@
                         <TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableActivityTracking}" HorizontalAlignment="Right"/>
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
                         <TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}" HorizontalAlignment="Right"/>
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
                         <TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.HideRPCButtons}" HorizontalAlignment="Right"/>
                     </DockPanel>
-                    <DockPanel Margin="0,4">
+                    <Grid Margin="0,6" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{DynamicResource Str_Behaviour_RpcStatusDisplay}" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding WindowIntegrations.AvailableRpcDisplays}"
+                                  SelectedItem="{Binding WindowIntegrations.RichPresenceStatusDisplayType}"
+                                  ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
+                    </Grid>
+                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
+                        <TextBlock Text="{DynamicResource Str_Behaviour_ShowAccountOnRpc}" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowAccountOnRichPresence}" HorizontalAlignment="Right"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
                         <TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/>
                         <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowServerDetails}" HorizontalAlignment="Right"/>
                     </DockPanel>
@@ -120,7 +135,7 @@
                         </StackPanel>
                         <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.EnableWindowManipulation}" VerticalAlignment="Center"/>
                     </Grid>
-                    <Grid Margin="0,6">
+                    <Grid Margin="0,6" IsEnabled="{Binding WindowIntegrations.EnableWindowManipulation}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -131,7 +146,7 @@
                         </StackPanel>
                         <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.FakeBorderlessFullscreen}" VerticalAlignment="Center"/>
                     </Grid>
-                    <Grid Margin="0,6,0,2">
+                    <Grid Margin="0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
@@ -141,6 +156,17 @@
                             <TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmakingDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
                         <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.EnableBetterMatchmaking}" VerticalAlignment="Center"/>
+                    </Grid>
+                    <Grid Margin="0,6,0,2" IsEnabled="{Binding WindowIntegrations.EnableBetterMatchmaking}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                            <TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmakingRandomization}"/>
+                            <TextBlock Text="{DynamicResource Str_Behaviour_BetterMatchmakingRandomizationDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                        </StackPanel>
+                        <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding WindowIntegrations.EnableBetterMatchmakingRandomization}" VerticalAlignment="Center"/>
                     </Grid>
                 </StackPanel>
             </Border>

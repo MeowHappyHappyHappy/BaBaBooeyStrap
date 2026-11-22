@@ -1,7 +1,8 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Windows.Data;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core.FastFlags;
 using BaBaBooeyStrap.Core.Models;
@@ -24,6 +25,8 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
     public FastFlagEditorViewModel(IFastFlagManager? manager)
     {
         _manager = manager;
+        FlagsView = CollectionViewSource.GetDefaultView(_flags);
+        FlagsView.Filter = FilterFastFlag;
         if (_manager != null)
         {
             LoadFromManager();
@@ -31,6 +34,7 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
     }
 
     public ObservableCollection<FastFlag> Flags => _flags;
+    public ICollectionView FlagsView { get; }
 
     public string SearchText
     {
@@ -40,6 +44,7 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
             string normalized = value ?? string.Empty;
             if (SetProperty(ref _searchText, normalized))
             {
+                FlagsView.Refresh();
                 OnPropertyChanged(nameof(FilteredFlags));
                 OnPropertyChanged(nameof(FilteredFlagCount));
             }
@@ -53,6 +58,7 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
         {
             if (SetProperty(ref _selectedTypeFilter, value))
             {
+                FlagsView.Refresh();
                 OnPropertyChanged(nameof(FilteredFlags));
                 OnPropertyChanged(nameof(FilteredFlagCount));
             }
@@ -82,13 +88,32 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
 
             if (!string.IsNullOrWhiteSpace(_searchText))
             {
-                string escaped = Regex.Escape(_searchText);
-                var regex = new Regex(escaped, RegexOptions.IgnoreCase);
-                query = query.Where(f => regex.IsMatch(f.Name));
+                query = query.Where(f => f.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase));
             }
 
             return query;
         }
+    }
+
+    private bool FilterFastFlag(object obj)
+    {
+        if (obj is not FastFlag flag)
+        {
+            return false;
+        }
+
+        if (_selectedTypeFilter.HasValue && flag.Type != _selectedTypeFilter.Value)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_searchText) &&
+            !flag.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public void AddFlag(string name, string value)
@@ -277,6 +302,7 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
 
     private void NotifyCollectionDerivedProperties()
     {
+        FlagsView.Refresh();
         OnPropertyChanged(nameof(FilteredFlags));
         OnPropertyChanged(nameof(TotalFlagCount));
         OnPropertyChanged(nameof(FilteredFlagCount));

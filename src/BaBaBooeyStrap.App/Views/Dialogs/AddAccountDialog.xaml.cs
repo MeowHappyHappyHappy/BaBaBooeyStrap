@@ -40,8 +40,8 @@ public partial class AddAccountDialog : FluentWindow
             string updateTitle = LocalizationService.Instance.Format("Str_AddAccount_UpdateTitleFormat", existingUsername!);
             Title = updateTitle;
             DialogTitleBar.Title = updateTitle;
-            LoginTabControl.SelectedItem = ManualCookieTab;
-            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_InitialStatus");
+            LoginTabControl.SelectedItem = WebLoginTab;
+            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_WebInitialStatus");
         }
         else
         {
@@ -202,7 +202,7 @@ public partial class AddAccountDialog : FluentWindow
 
     private async void VerifyAdd_Click(object sender, RoutedEventArgs e)
     {
-        string cookie = CookieBox.Password.Trim();
+        string cookie = RobloxAuthService.NormalizeCookie(CookieBox.Password);
         if (string.IsNullOrWhiteSpace(cookie))
         {
             StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_EmptyCookieError");
@@ -214,6 +214,7 @@ public partial class AddAccountDialog : FluentWindow
 
     private async Task VerifyAndCompleteAsync(string cookie, bool isFromWebView)
     {
+        cookie = RobloxAuthService.NormalizeCookie(cookie);
         VerifyAddButton.IsEnabled = false;
         VerifyProgressRing.Visibility = Visibility.Visible;
         StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_VerifyingStatus");

@@ -63,7 +63,7 @@ public partial class BehaviourPage : Page
         var dlg = new SaveFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_Behaviour_ExportProfile"),
-            Filter = "BaBaBooeyStrap Profile (*.json)|*.json",
+            Filter = LocalizationService.Instance.GetString("Str_Filter_ProfileJson"),
             FileName = $"BaBaBooeyStrap_Profile_{DateTime.Now:yyyyMMdd}.json"
         };
 
@@ -93,7 +93,7 @@ public partial class BehaviourPage : Page
         var dlg = new OpenFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_Behaviour_ImportProfile"),
-            Filter = "BaBaBooeyStrap Profile (*.json)|*.json"
+            Filter = LocalizationService.Instance.GetString("Str_Filter_ProfileJson")
         };
 
         if (dlg.ShowDialog() != true) return;

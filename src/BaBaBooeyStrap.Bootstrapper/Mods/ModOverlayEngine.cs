@@ -3,6 +3,13 @@ using BaBaBooeyStrap.Bootstrapper.Deployment;
 
 namespace BaBaBooeyStrap.Bootstrapper.Mods;
 
+public enum PackageFileRestoreOutcome
+{
+    Restored,
+    NotInPackage,
+    CacheUnavailable
+}
+
 public record ModApplyResult(
     bool Success,
     int AppliedCount,
@@ -29,6 +36,8 @@ public interface IModOverlayEngine
 
 public class ModOverlayEngine : IModOverlayEngine
 {
+    private const string BackupsFolderName = ".backups";
+
     private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "CON", "PRN", "AUX", "NUL",
@@ -36,7 +45,7 @@ public class ModOverlayEngine : IModOverlayEngine
         "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
     };
 
-    public async Task<ModApplyResult> ApplyModificationsAsync(
+    public Task<ModApplyResult> ApplyModificationsAsync(
         string modificationsFolder,
         string versionFolder,
         IReadOnlyList<string>? previousManifest = null,
@@ -44,7 +53,51 @@ public class ModOverlayEngine : IModOverlayEngine
         string robloxDomain = "www.roblox.com",
         CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(modificationsFolder) || !Directory.Exists(modificationsFolder))
+        return ApplyModificationsCoreAsync(
+            modificationsFolder,
+            versionFolder,
+            previousManifest,
+            packageFileRestorer,
+            packageFileRestorerWithOutcome: null,
+            excludeClientSettings: false,
+            robloxDomain,
+            ct);
+    }
+
+    public Task<ModApplyResult> ApplyModificationsAsync(
+        string modificationsFolder,
+        string versionFolder,
+        IReadOnlyList<string>? previousManifest,
+        Func<string, string, Task<PackageFileRestoreOutcome>>? packageFileRestorerWithOutcome,
+        bool excludeClientSettings = false,
+        string robloxDomain = "www.roblox.com",
+        CancellationToken ct = default)
+    {
+        return ApplyModificationsCoreAsync(
+            modificationsFolder,
+            versionFolder,
+            previousManifest,
+            packageFileRestorer: null,
+            packageFileRestorerWithOutcome,
+            excludeClientSettings,
+            robloxDomain,
+            ct);
+    }
+
+    private async Task<ModApplyResult> ApplyModificationsCoreAsync(
+        string modificationsFolder,
+        string versionFolder,
+        IReadOnlyList<string>? previousManifest,
+        Func<string, string, Task>? packageFileRestorer,
+        Func<string, string, Task<PackageFileRestoreOutcome>>? packageFileRestorerWithOutcome,
+        bool excludeClientSettings,
+        string robloxDomain,
+        CancellationToken ct)
+    {
+        bool hasModificationsDir = !string.IsNullOrWhiteSpace(modificationsFolder) && Directory.Exists(modificationsFolder);
+        bool hasPreviousManifest = previousManifest != null && previousManifest.Count > 0;
+
+        if (!hasModificationsDir && (!hasPreviousManifest || !Directory.Exists(versionFolder)))
         {
             return new ModApplyResult(true, 0, 0, Array.Empty<string>(), null);
         }
@@ -53,101 +106,148 @@ public class ModOverlayEngine : IModOverlayEngine
         var currentManifestedFiles = new List<string>();
         int appliedCount = 0;
         int restoredCount = 0;
+        string versionFolderKey = GetVersionBackupKey(versionFolder);
+        var previousSet = hasPreviousManifest
+            ? new HashSet<string>(previousManifest!, StringComparer.OrdinalIgnoreCase)
+            : null;
 
         try
         {
-            var modDir = new DirectoryInfo(modificationsFolder);
-            var files = modDir.GetFiles("*", SearchOption.AllDirectories);
-
-            foreach (var file in files)
+            if (hasModificationsDir)
             {
-                ct.ThrowIfCancellationRequested();
+                var modDir = new DirectoryInfo(modificationsFolder);
+                var files = modDir.GetFiles("*", SearchOption.AllDirectories);
 
-                // 1. Exclude README.txt and .lock files
-                if (file.Name.Equals("README.txt", StringComparison.OrdinalIgnoreCase) ||
-                    file.Extension.Equals(".lock", StringComparison.OrdinalIgnoreCase))
+                foreach (var file in files)
                 {
-                    continue;
-                }
+                    ct.ThrowIfCancellationRequested();
 
-                // 2. Exclude reserved device names
-                string baseName = Path.GetFileNameWithoutExtension(file.Name).ToUpperInvariant();
-                if (ReservedDeviceNames.Contains(baseName))
-                {
-                    continue;
-                }
+                    string relativePath = Path.GetRelativePath(modificationsFolder, file.FullName);
+                    string normalizedRel = relativePath.Replace('\\', '/');
 
-                string relativePath = Path.GetRelativePath(modificationsFolder, file.FullName);
-                string normalizedRel = relativePath.Replace('\\', '/');
-
-                // 3. Exclude dangerous avatar mesh files
-                if (IsDangerousAvatarMesh(normalizedRel))
-                {
-                    continue;
-                }
-
-                string destinationPath = Path.Combine(versionFolder, relativePath);
-                string? destDir = Path.GetDirectoryName(destinationPath);
-                if (!string.IsNullOrEmpty(destDir))
-                {
-                    Directory.CreateDirectory(destDir);
-                }
-
-                // 4. Assert ReadOnly attribute removed before copying
-                if (File.Exists(destinationPath))
-                {
-                    var attr = File.GetAttributes(destinationPath);
-                    if (attr.HasFlag(FileAttributes.ReadOnly))
+                    // 0. Exclude internal mod backup cache and (optionally) ClientSettings owned by FastFlagManager
+                    if (normalizedRel.StartsWith(BackupsFolderName + "/", StringComparison.OrdinalIgnoreCase) ||
+                        normalizedRel.Equals(BackupsFolderName, StringComparison.OrdinalIgnoreCase))
                     {
-                        File.SetAttributes(destinationPath, attr & ~FileAttributes.ReadOnly);
-                    }
-
-                    // 5. MD5 check to skip identical redundant writes
-                    if (ComputeFileMd5(file.FullName) == ComputeFileMd5(destinationPath))
-                    {
-                        currentManifestedFiles.Add(normalizedRel);
                         continue;
                     }
-                }
 
-                file.CopyTo(destinationPath, overwrite: true);
-                currentManifestedFiles.Add(normalizedRel);
-                appliedCount++;
+                    if (excludeClientSettings &&
+                        normalizedRel.Equals("ClientSettings/ClientAppSettings.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // 1. Exclude README.txt and .lock files
+                    if (file.Name.Equals("README.txt", StringComparison.OrdinalIgnoreCase) ||
+                        file.Extension.Equals(".lock", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    // 2. Exclude reserved device names
+                    string baseName = Path.GetFileNameWithoutExtension(file.Name).ToUpperInvariant();
+                    if (ReservedDeviceNames.Contains(baseName))
+                    {
+                        continue;
+                    }
+
+                    // 3. Exclude dangerous avatar mesh files
+                    if (IsDangerousAvatarMesh(normalizedRel))
+                    {
+                        continue;
+                    }
+
+                    string destinationPath = Path.Combine(versionFolder, relativePath);
+                    string? destDir = Path.GetDirectoryName(destinationPath);
+                    if (!string.IsNullOrEmpty(destDir))
+                    {
+                        Directory.CreateDirectory(destDir);
+                    }
+
+                    // 4. Assert ReadOnly attribute removed before copying
+                    if (File.Exists(destinationPath))
+                    {
+                        var attr = File.GetAttributes(destinationPath);
+                        if (attr.HasFlag(FileAttributes.ReadOnly))
+                        {
+                            File.SetAttributes(destinationPath, attr & ~FileAttributes.ReadOnly);
+                        }
+
+                        // 5. MD5 check to skip identical redundant writes
+                        if (ComputeFileMd5(file.FullName) == ComputeFileMd5(destinationPath))
+                        {
+                            currentManifestedFiles.Add(normalizedRel);
+                            continue;
+                        }
+
+                        // Backup original file before overwriting if not already manifested by a previous mod run
+                        if ((previousSet == null || !previousSet.Contains(normalizedRel)) &&
+                            !normalizedRel.Equals("AppSettings.xml", StringComparison.OrdinalIgnoreCase))
+                        {
+                            TryBackupOriginalFile(modificationsFolder, versionFolderKey, relativePath, destinationPath);
+                        }
+                    }
+
+                    file.CopyTo(destinationPath, overwrite: true);
+                    currentManifestedFiles.Add(normalizedRel);
+                    appliedCount++;
+                }
             }
 
             // 6. Generate default AppSettings.xml if absent in version directory
             EnsureAppSettingsXml(versionFolder, robloxDomain);
 
             // 7. Mod Manifest Reconciliation: detect deleted mods
-            if (previousManifest != null && previousManifest.Count > 0)
+            if (hasPreviousManifest)
             {
-                var removedFiles = previousManifest.Except(currentManifestedFiles, StringComparer.OrdinalIgnoreCase).ToList();
+                var removedFiles = previousManifest!.Except(currentManifestedFiles, StringComparer.OrdinalIgnoreCase).ToList();
                 foreach (string removed in removedFiles)
                 {
                     ct.ThrowIfCancellationRequested();
-                    string targetFile = Path.Combine(versionFolder, removed.Replace('/', Path.DirectorySeparatorChar));
+
+                    if (excludeClientSettings &&
+                        removed.Equals("ClientSettings/ClientAppSettings.json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    string relNative = removed.Replace('/', Path.DirectorySeparatorChar);
+                    string targetFile = Path.Combine(versionFolder, relNative);
+
+                    if (!string.IsNullOrWhiteSpace(modificationsFolder) &&
+                        TryRestoreFromBackup(modificationsFolder, versionFolderKey, relNative, targetFile))
+                    {
+                        restoredCount++;
+                        continue;
+                    }
 
                     bool belongsToPackage = TryMapToPackage(removed, out string? packageName, out string? packageRelativeFile);
-                    if (belongsToPackage && packageFileRestorer != null && packageName != null && packageRelativeFile != null)
+                    if (belongsToPackage && packageFileRestorerWithOutcome != null && packageName != null && packageRelativeFile != null)
                     {
-                        await packageFileRestorer(packageName, packageRelativeFile);
+                        var outcome = await packageFileRestorerWithOutcome(packageName, packageRelativeFile).ConfigureAwait(false);
+                        if (outcome == PackageFileRestoreOutcome.Restored)
+                        {
+                            restoredCount++;
+                        }
+                        else if (outcome == PackageFileRestoreOutcome.NotInPackage)
+                        {
+                            if (DeleteTargetFileIfExists(targetFile))
+                            {
+                                restoredCount++;
+                            }
+                        }
+                    }
+                    else if (belongsToPackage && packageFileRestorer != null && packageName != null && packageRelativeFile != null)
+                    {
+                        await packageFileRestorer(packageName, packageRelativeFile).ConfigureAwait(false);
                         restoredCount++;
                     }
                     else
                     {
-                        if (File.Exists(targetFile))
+                        if (DeleteTargetFileIfExists(targetFile))
                         {
-                            try
-                            {
-                                var attr = File.GetAttributes(targetFile);
-                                if (attr.HasFlag(FileAttributes.ReadOnly))
-                                {
-                                    File.SetAttributes(targetFile, attr & ~FileAttributes.ReadOnly);
-                                }
-                                File.Delete(targetFile);
-                                restoredCount++;
-                            }
-                            catch { }
+                            restoredCount++;
                         }
                     }
                 }
@@ -158,6 +258,94 @@ public class ModOverlayEngine : IModOverlayEngine
         catch (Exception ex)
         {
             return new ModApplyResult(false, appliedCount, restoredCount, currentManifestedFiles, ex.Message);
+        }
+    }
+
+    private static string GetVersionBackupKey(string versionFolder)
+    {
+        string trimmed = Path.TrimEndingDirectorySeparator(versionFolder);
+        string key = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(key) ? "default" : key;
+    }
+
+    private static void TryBackupOriginalFile(
+        string modificationsFolder,
+        string versionFolderKey,
+        string relativePath,
+        string originalTargetFile)
+    {
+        try
+        {
+            string backupPath = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey, relativePath);
+            if (File.Exists(backupPath)) return;
+
+            string? backupDir = Path.GetDirectoryName(backupPath);
+            if (!string.IsNullOrEmpty(backupDir))
+            {
+                Directory.CreateDirectory(backupDir);
+            }
+
+            File.Copy(originalTargetFile, backupPath, overwrite: false);
+        }
+        catch
+        {
+            // Backup is best-effort; package cache fallback still applies
+        }
+    }
+
+    private static bool TryRestoreFromBackup(
+        string modificationsFolder,
+        string versionFolderKey,
+        string relativeNativePath,
+        string targetFile)
+    {
+        try
+        {
+            string backupPath = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey, relativeNativePath);
+            if (!File.Exists(backupPath)) return false;
+
+            string? targetDir = Path.GetDirectoryName(targetFile);
+            if (!string.IsNullOrEmpty(targetDir))
+            {
+                Directory.CreateDirectory(targetDir);
+            }
+
+            if (File.Exists(targetFile))
+            {
+                var attr = File.GetAttributes(targetFile);
+                if (attr.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(targetFile, attr & ~FileAttributes.ReadOnly);
+                }
+            }
+
+            File.Copy(backupPath, targetFile, overwrite: true);
+            File.Delete(backupPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool DeleteTargetFileIfExists(string targetFile)
+    {
+        if (!File.Exists(targetFile)) return false;
+
+        try
+        {
+            var attr = File.GetAttributes(targetFile);
+            if (attr.HasFlag(FileAttributes.ReadOnly))
+            {
+                File.SetAttributes(targetFile, attr & ~FileAttributes.ReadOnly);
+            }
+            File.Delete(targetFile);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 

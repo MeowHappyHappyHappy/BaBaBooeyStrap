@@ -146,7 +146,8 @@ public partial class AccountsPage : Page
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.VerifyCookies", ex);
-            ViewModel.AccountManagement.AppendActivityLog($"Cookie verification failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog(
+                LocalizationService.Instance.Format("Str_Accounts_LogCookieVerificationFailedFormat", ex.Message));
         }
     }
 
@@ -160,7 +161,8 @@ public partial class AccountsPage : Page
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.VerifySelectedCookie", ex);
-            ViewModel.AccountManagement.AppendActivityLog($"Cookie verification failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog(
+                LocalizationService.Instance.Format("Str_Accounts_LogCookieVerificationFailedFormat", ex.Message));
         }
     }
 
@@ -290,7 +292,8 @@ public partial class AccountsPage : Page
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.LaunchSelected", ex);
-            ViewModel.AccountManagement.AppendActivityLog($"Launch failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog(
+                LocalizationService.Instance.Format("Str_Accounts_LogLaunchFailedFormat", ex.Message));
         }
     }
 
@@ -319,7 +322,8 @@ public partial class AccountsPage : Page
         catch (Exception ex)
         {
             Logger.ExceptionStatic("AccountsPage.LaunchChecked", ex);
-            ViewModel.AccountManagement.AppendActivityLog($"Batch launch failed: {ex.Message}");
+            ViewModel.AccountManagement.AppendActivityLog(
+                LocalizationService.Instance.Format("Str_Accounts_LogBatchLaunchFailedFormat", ex.Message));
         }
     }
 

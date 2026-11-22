@@ -135,9 +135,13 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
                 value.CompletedPackages,
                 value.TotalPackages,
                 value.ProgressPercentage);
-            _message = string.IsNullOrWhiteSpace(value.CurrentPackage)
-                ? LocalizationService.Instance.GetString("Str_Bootstrapper_DownloadingPackages")
-                : LocalizationService.Instance.Format("Str_Bootstrapper_DownloadingNamedFormat", value.CurrentPackage);
+            _message = value.IsExtracting
+                ? (string.IsNullOrWhiteSpace(value.CurrentPackage)
+                    ? LocalizationService.Instance.GetString("Str_Bootstrapper_StatusExtracting")
+                    : LocalizationService.Instance.Format("Str_Bootstrapper_ExtractingNamedFormat", value.CurrentPackage))
+                : (string.IsNullOrWhiteSpace(value.CurrentPackage)
+                    ? LocalizationService.Instance.GetString("Str_Bootstrapper_DownloadingPackages")
+                    : LocalizationService.Instance.Format("Str_Bootstrapper_DownloadingNamedFormat", value.CurrentPackage));
             OnPropertyChanged(nameof(Message));
         }
 

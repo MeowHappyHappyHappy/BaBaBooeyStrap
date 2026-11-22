@@ -12,6 +12,7 @@ using Xunit;
 
 namespace BaBaBooeyStrap.Tests.Tier3_CrossFeatureCombinations;
 
+[Collection("LocalizationSingleton")]
 public sealed class AppUi_With_SystemTrayAndThemesTests : IClassFixture<MockRobloxEnvironment>
 {
     private readonly MockRobloxEnvironment _env;

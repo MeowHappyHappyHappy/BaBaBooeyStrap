@@ -43,7 +43,8 @@ public static class DiagnosticsService
             CleanLogs: true,
             CleanCrashDumps: true,
             CleanLauncherLogs: true,
-            CleanHttpCache: true);
+            CleanHttpCache: true,
+            CleanStudioCache: true);
 
         return cleaner.ExecuteCleanup(policy);
     }

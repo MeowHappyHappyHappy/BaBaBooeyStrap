@@ -6,7 +6,8 @@ public record CleanerPolicy(
     bool CleanLogs,
     bool CleanCrashDumps,
     bool CleanLauncherLogs,
-    bool CleanHttpCache
+    bool CleanHttpCache,
+    bool CleanStudioCache = false
 );
 
 public record CleanerReport(

@@ -108,3 +108,111 @@ public sealed class LocalizedFormatMultiConverter : IMultiValueConverter
     public object[] ConvertBack(object? value, Type[] targetTypes, object? parameter, CultureInfo culture) =>
         Array.Empty<object>();
 }
+
+public sealed class NullableDoubleToIntConverter : IValueConverter
+{
+    public static NullableDoubleToIntConverter Instance { get; } = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value switch
+        {
+            int i => (double)i,
+            long l => (double)l,
+            double d => d,
+            float f => (double)f,
+            _ => 0d
+        };
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value == null)
+        {
+            return Binding.DoNothing;
+        }
+
+        if (value is double d && double.IsFinite(d))
+        {
+            return (int)Math.Round(d);
+        }
+
+        if (value is string s && double.TryParse(s, NumberStyles.Float, culture, out double parsed) && double.IsFinite(parsed))
+        {
+            return (int)Math.Round(parsed);
+        }
+
+        return Binding.DoNothing;
+    }
+}
+
+public sealed class NullableDoubleToFloatConverter : IValueConverter
+{
+    public static NullableDoubleToFloatConverter Instance { get; } = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        return value switch
+        {
+            float f => (double)f,
+            double d => d,
+            int i => (double)i,
+            _ => 0d
+        };
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value == null)
+        {
+            return Binding.DoNothing;
+        }
+
+        if (value is double d && double.IsFinite(d))
+        {
+            return (float)d;
+        }
+
+        if (value is string s && float.TryParse(s, NumberStyles.Float, culture, out float parsed) && float.IsFinite(parsed))
+        {
+            return parsed;
+        }
+
+        return Binding.DoNothing;
+    }
+}
+
+public static class NumberBoxGuard
+{
+    public static readonly DependencyProperty RestoreOnEmptyProperty =
+        DependencyProperty.RegisterAttached(
+            "RestoreOnEmpty",
+            typeof(bool),
+            typeof(NumberBoxGuard),
+            new PropertyMetadata(false, OnRestoreOnEmptyChanged));
+
+    public static bool GetRestoreOnEmpty(DependencyObject obj) => (bool)obj.GetValue(RestoreOnEmptyProperty);
+    public static void SetRestoreOnEmpty(DependencyObject obj, bool value) => obj.SetValue(RestoreOnEmptyProperty, value);
+
+    private static void OnRestoreOnEmptyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not Wpf.Ui.Controls.NumberBox numberBox)
+        {
+            return;
+        }
+
+        numberBox.LostFocus -= OnNumberBoxLostFocus;
+        if (e.NewValue is true)
+        {
+            numberBox.LostFocus += OnNumberBoxLostFocus;
+        }
+    }
+
+    private static void OnNumberBoxLostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Wpf.Ui.Controls.NumberBox numberBox && numberBox.Value == null)
+        {
+            BindingOperations.GetBindingExpression(numberBox, Wpf.Ui.Controls.NumberBox.ValueProperty)?.UpdateTarget();
+        }
+    }
+}

@@ -10,6 +10,15 @@ namespace BaBaBooeyStrap.Integrations.Matchmaking;
 public sealed class RoValraService : IRoValraService
 {
     private const double EarthRadiusKm = 6371.0;
+    private const int LockStripeCount = 64;
+    private const int MaxBestRegionsToQuery = 6;
+    private const int MaxConcurrentRegionQueries = 3;
+    private static readonly TimeSpan PositiveCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromMinutes(2);
+
+    private readonly record struct CacheEntry<T>(T Value, DateTime ExpiresUtc);
+    private readonly record struct IpInfoLookup(bool Success, bool IsBogon, string City, string Region, string Country, double Latitude, double Longitude);
+    private readonly record struct DataCenterEndpoint(string Country, double Latitude, double Longitude);
 
     private static readonly Dictionary<string, string> CountryNameToIso = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -61,8 +70,12 @@ public sealed class RoValraService : IRoValraService
     private readonly ILogger _logger;
     private readonly double? _clientLatitude;
     private readonly double? _clientLongitude;
-    private readonly ConcurrentDictionary<string, ServerLocationInfo?> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _ipLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CacheEntry<ServerLocationInfo?>> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CacheEntry<IpInfoLookup>> _ipInfoCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CacheEntry<IReadOnlyList<DataCenterEndpoint>>> _dataCenterCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim[] _stripedLocks = Enumerable.Range(0, LockStripeCount)
+        .Select(_ => new SemaphoreSlim(1, 1))
+        .ToArray();
 
     public RoValraService(
         HttpClient? httpClient = null,
@@ -78,6 +91,12 @@ public sealed class RoValraService : IRoValraService
         _clientLongitude = clientLongitude;
     }
 
+    private SemaphoreSlim GetStripedLock(string key)
+    {
+        int index = (StringComparer.OrdinalIgnoreCase.GetHashCode(key) & 0x7FFFFFFF) % LockStripeCount;
+        return _stripedLocks[index];
+    }
+
     public async Task<ServerLocationInfo?> ResolveServerLocationAsync(string ip, CancellationToken ct = default)
     {
         if (!IsPublicRoutableIp(ip, out IPAddress? parsedIp) || parsedIp == null)
@@ -86,25 +105,25 @@ public sealed class RoValraService : IRoValraService
         }
 
         string normalizedIp = parsedIp.ToString();
-        if (_cache.TryGetValue(normalizedIp, out var cached))
+        DateTime now = DateTime.UtcNow;
+        if (_cache.TryGetValue(normalizedIp, out var cached) && cached.ExpiresUtc > now)
         {
-            return cached;
+            return cached.Value;
         }
 
-        var ipLock = _ipLocks.GetOrAdd(normalizedIp, _ => new SemaphoreSlim(1, 1));
+        var ipLock = GetStripedLock(normalizedIp);
         await ipLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_cache.TryGetValue(normalizedIp, out cached))
+            now = DateTime.UtcNow;
+            if (_cache.TryGetValue(normalizedIp, out cached) && cached.ExpiresUtc > now)
             {
-                return cached;
+                return cached.Value;
             }
 
             ServerLocationInfo? resolved = await FetchLocationInternalAsync(normalizedIp, ct).ConfigureAwait(false);
-            if (resolved != null)
-            {
-                _cache[normalizedIp] = resolved;
-            }
+            TimeSpan ttl = resolved != null ? PositiveCacheTtl : NegativeCacheTtl;
+            _cache[normalizedIp] = new CacheEntry<ServerLocationInfo?>(resolved, DateTime.UtcNow.Add(ttl));
             return resolved;
         }
         finally
@@ -274,67 +293,66 @@ public sealed class RoValraService : IRoValraService
     {
         try
         {
-            var selfInfo = await QueryIpInfoAsync("https://ipinfo.io/json", ct).ConfigureAwait(false);
-            if (!selfInfo.Success || string.IsNullOrWhiteSpace(selfInfo.Country))
+            double clientLat = _clientLatitude ?? 0;
+            double clientLon = _clientLongitude ?? 0;
+            bool hasClientCoords = _clientLatitude.HasValue && _clientLongitude.HasValue;
+
+            var selfInfo = await GetCachedSelfIpInfoAsync(ct).ConfigureAwait(false);
+            if (!hasClientCoords)
             {
-                return null;
-            }
-
-            using var dcResp = await _httpClient.GetAsync("https://apis.rovalra.com/v1/datacenters/list", ct).ConfigureAwait(false);
-            if (!dcResp.IsSuccessStatusCode) return null;
-
-            string dcJson = await dcResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            using var dcDoc = JsonDocument.Parse(dcJson);
-            if (dcDoc.RootElement.ValueKind != JsonValueKind.Array) return null;
-
-            var candidates = new List<(string Country, double DistanceKm)>();
-            foreach (var dc in dcDoc.RootElement.EnumerateArray())
-            {
-                if (!dc.TryGetProperty("location", out var loc) || loc.ValueKind != JsonValueKind.Object) continue;
-                string dcCountry = loc.TryGetProperty("country", out var cProp) ? cProp.GetString() ?? string.Empty : string.Empty;
-                if (string.IsNullOrWhiteSpace(dcCountry)) continue;
-
-                double dcLat = 0;
-                double dcLon = 0;
-                if (loc.TryGetProperty("latLong", out var llProp) && llProp.ValueKind == JsonValueKind.Array && llProp.GetArrayLength() >= 2)
+                if (!selfInfo.Success || string.IsNullOrWhiteSpace(selfInfo.Country))
                 {
-                    TryReadJsonDouble(llProp[0], out dcLat);
-                    TryReadJsonDouble(llProp[1], out dcLon);
+                    return null;
                 }
 
-                double dist = CalculateHaversineKm(selfInfo.Latitude, selfInfo.Longitude, dcLat, dcLon);
-                candidates.Add((dcCountry, dist));
+                clientLat = selfInfo.Latitude;
+                clientLon = selfInfo.Longitude;
             }
 
-            if (candidates.Count == 0) return null;
+            var dataCenters = await GetCachedDataCentersAsync(ct).ConfigureAwait(false);
+            if (dataCenters.Count == 0) return null;
+
+            var candidates = new List<(string Country, double DistanceKm)>(dataCenters.Count);
+            foreach (var dc in dataCenters)
+            {
+                double dist = CalculateHaversineKm(clientLat, clientLon, dc.Latitude, dc.Longitude);
+                candidates.Add((dc.Country, dist));
+            }
 
             var orderedRegions = candidates
-                .OrderByDescending(c => string.Equals(c.Country, selfInfo.Country, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(c => !string.IsNullOrWhiteSpace(selfInfo.Country) &&
+                                        string.Equals(c.Country, selfInfo.Country, StringComparison.OrdinalIgnoreCase))
                 .ThenBy(c => c.DistanceKm)
                 .Select(c => c.Country)
-                .Distinct(StringComparer.OrdinalIgnoreCase);
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(MaxBestRegionsToQuery)
+                .ToList();
 
-            foreach (string region in orderedRegions)
+            if (orderedRegions.Count == 0) return null;
+
+            string?[] results = new string?[orderedRegions.Count];
+            using var concurrencyGate = new SemaphoreSlim(MaxConcurrentRegionQueries, MaxConcurrentRegionQueries);
+
+            var tasks = orderedRegions.Select(async (region, index) =>
             {
-                string serversUrl = $"https://apis.rovalra.com/v1/servers/region?place_id={placeId}&region={Uri.EscapeDataString(region)}";
-                using var srvResp = await _httpClient.GetAsync(serversUrl, ct).ConfigureAwait(false);
-                if (!srvResp.IsSuccessStatusCode) continue;
-
-                string srvJson = await srvResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-                using var srvDoc = JsonDocument.Parse(srvJson);
-                if (!srvDoc.RootElement.TryGetProperty("servers", out var servers) ||
-                    servers.ValueKind != JsonValueKind.Array ||
-                    servers.GetArrayLength() == 0)
+                await concurrencyGate.WaitAsync(ct).ConfigureAwait(false);
+                try
                 {
-                    continue;
+                    results[index] = await QueryRegionServerIdAsync(placeId, region, randomize, ct).ConfigureAwait(false);
                 }
-
-                int index = randomize ? Random.Shared.Next(0, servers.GetArrayLength()) : 0;
-                var chosen = servers[index];
-                if (chosen.TryGetProperty("server_id", out var idProp))
+                finally
                 {
-                    string? serverId = idProp.GetString();
-                    if (!string.IsNullOrWhiteSpace(serverId)) return serverId;
+                    concurrencyGate.Release();
+                }
+            }).ToArray();
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+
+            foreach (string? serverId in results)
+            {
+                if (!string.IsNullOrWhiteSpace(serverId))
+                {
+                    return serverId;
                 }
             }
         }
@@ -345,6 +363,142 @@ public sealed class RoValraService : IRoValraService
         catch (Exception ex)
         {
             _logger.Debug("RoValraService", $"Better matchmaking failed for place {placeId}: {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private async Task<IpInfoLookup> GetCachedSelfIpInfoAsync(CancellationToken ct)
+    {
+        const string key = "ipinfo:self";
+        DateTime now = DateTime.UtcNow;
+        if (_ipInfoCache.TryGetValue(key, out var cached) && cached.ExpiresUtc > now)
+        {
+            return cached.Value;
+        }
+
+        var stripe = GetStripedLock(key);
+        await stripe.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            now = DateTime.UtcNow;
+            if (_ipInfoCache.TryGetValue(key, out cached) && cached.ExpiresUtc > now)
+            {
+                return cached.Value;
+            }
+
+            var raw = await QueryIpInfoAsync("https://ipinfo.io/json", ct).ConfigureAwait(false);
+            var lookup = new IpInfoLookup(raw.Success, raw.IsBogon, raw.City, raw.Region, raw.Country, raw.Latitude, raw.Longitude);
+            TimeSpan ttl = lookup.Success ? PositiveCacheTtl : NegativeCacheTtl;
+            _ipInfoCache[key] = new CacheEntry<IpInfoLookup>(lookup, DateTime.UtcNow.Add(ttl));
+            return lookup;
+        }
+        finally
+        {
+            stripe.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<DataCenterEndpoint>> GetCachedDataCentersAsync(CancellationToken ct)
+    {
+        const string key = "rovalra:datacenters";
+        DateTime now = DateTime.UtcNow;
+        if (_dataCenterCache.TryGetValue(key, out var cached) && cached.ExpiresUtc > now)
+        {
+            return cached.Value;
+        }
+
+        var stripe = GetStripedLock(key);
+        await stripe.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            now = DateTime.UtcNow;
+            if (_dataCenterCache.TryGetValue(key, out cached) && cached.ExpiresUtc > now)
+            {
+                return cached.Value;
+            }
+
+            var list = new List<DataCenterEndpoint>();
+            try
+            {
+                using var dcResp = await _httpClient.GetAsync("https://apis.rovalra.com/v1/datacenters/list", ct).ConfigureAwait(false);
+                if (dcResp.IsSuccessStatusCode)
+                {
+                    string dcJson = await dcResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                    using var dcDoc = JsonDocument.Parse(dcJson);
+                    if (dcDoc.RootElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var dc in dcDoc.RootElement.EnumerateArray())
+                        {
+                            if (!dc.TryGetProperty("location", out var loc) || loc.ValueKind != JsonValueKind.Object) continue;
+                            string dcCountry = loc.TryGetProperty("country", out var cProp) ? cProp.GetString() ?? string.Empty : string.Empty;
+                            if (string.IsNullOrWhiteSpace(dcCountry)) continue;
+
+                            double dcLat = 0;
+                            double dcLon = 0;
+                            if (loc.TryGetProperty("latLong", out var llProp) && llProp.ValueKind == JsonValueKind.Array && llProp.GetArrayLength() >= 2)
+                            {
+                                TryReadJsonDouble(llProp[0], out dcLat);
+                                TryReadJsonDouble(llProp[1], out dcLon);
+                            }
+
+                            list.Add(new DataCenterEndpoint(dcCountry, dcLat, dcLon));
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug("RoValraService", $"Datacenters list query failed: {ex.Message}");
+            }
+
+            TimeSpan ttl = list.Count > 0 ? PositiveCacheTtl : NegativeCacheTtl;
+            IReadOnlyList<DataCenterEndpoint> result = list;
+            _dataCenterCache[key] = new CacheEntry<IReadOnlyList<DataCenterEndpoint>>(result, DateTime.UtcNow.Add(ttl));
+            return result;
+        }
+        finally
+        {
+            stripe.Release();
+        }
+    }
+
+    private async Task<string?> QueryRegionServerIdAsync(long placeId, string region, bool randomize, CancellationToken ct)
+    {
+        try
+        {
+            string serversUrl = $"https://apis.rovalra.com/v1/servers/region?place_id={placeId}&region={Uri.EscapeDataString(region)}";
+            using var srvResp = await _httpClient.GetAsync(serversUrl, ct).ConfigureAwait(false);
+            if (!srvResp.IsSuccessStatusCode) return null;
+
+            string srvJson = await srvResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var srvDoc = JsonDocument.Parse(srvJson);
+            if (!srvDoc.RootElement.TryGetProperty("servers", out var servers) ||
+                servers.ValueKind != JsonValueKind.Array ||
+                servers.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            int index = randomize ? Random.Shared.Next(0, servers.GetArrayLength()) : 0;
+            var chosen = servers[index];
+            if (chosen.TryGetProperty("server_id", out var idProp))
+            {
+                string? serverId = idProp.GetString();
+                if (!string.IsNullOrWhiteSpace(serverId)) return serverId;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("RoValraService", $"Region query failed for {region}: {ex.Message}");
         }
 
         return null;

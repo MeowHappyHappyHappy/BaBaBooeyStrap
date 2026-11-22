@@ -16,6 +16,8 @@
   "Str_Common_Ready": "就緒",
   "Str_Common_NotTestedYet": "尚未測試",
   "Str_Common_NotInstalledYet": "尚未安裝",
+  "Str_Common_None": "無",
+  "Str_Common_Unknown": "未知",
 
   "Str_MainWindow_Title": "BaBaBooeyStrap 設定",
   "Str_MainWindow_Save": "儲存",
@@ -238,6 +240,8 @@
   "Str_FastFlags_ManualFullscreen": "允許 Alt+Enter 手動切換全螢幕",
   "Str_FastFlags_ManualFullscreenDesc": "允許在遊戲中使用 Alt+Enter 手動切換視窗與全螢幕模式。",
   "Str_FastFlags_ApplyPresets": "立即套用預設",
+  "Str_FastFlags_StatusPresetsApplied": "已將 FastFlag 預設套用至 ClientAppSettings.json。",
+  "Str_FastFlags_StatusManagerDisabled": "請先啟用 FastFlag 管理器後再套用預設。",
 
   "Str_Mods_PageTitle": "模組 (Mods)",
   "Str_Mods_Header": "Mods 與檔案覆蓋層",
@@ -286,7 +290,9 @@
   "Str_Appearance_RobloxIdentityHeader": "Roblox 遊戲視窗識別",
   "Str_Appearance_RobloxTitle": "Roblox 視窗標題：",
   "Str_Appearance_RobloxIcon": "Roblox 視窗圖示：",
+  "Str_Appearance_RobloxCustomIcon": "自訂 Roblox 圖示：",
   "Str_Appearance_IconFileFilter": "圖示檔案 (*.ico)|*.ico",
+  "Str_Appearance_RobloxIconFileFilter": "圖示與執行檔 (*.ico;*.exe;*.dll)|*.ico;*.exe;*.dll",
 
   "Str_Behaviour_PageTitle": "行為與整合",
   "Str_Behaviour_Header": "行為設定、整合功能與清理工具",
@@ -305,6 +311,8 @@
   "Str_Behaviour_ActivityTracking": "啟用活動狀態追蹤",
   "Str_Behaviour_DiscordRpc": "使用 Discord RPC 動態狀態",
   "Str_Behaviour_HideRpcButtons": "隱藏 Discord RPC 加入按鈕",
+  "Str_Behaviour_RpcStatusDisplay": "Discord 狀態顯示項目：",
+  "Str_Behaviour_ShowAccountOnRpc": "在 Discord RPC 顯示目前帳號名稱",
   "Str_Behaviour_ShowServerDetails": "顯示伺服器所在地資訊（RoValra）",
   "Str_Behaviour_WindowManipulation": "啟用視窗控制掛鉤",
   "Str_Behaviour_WindowManipulationDesc": "啟用後才可套用自訂 Roblox 視窗標題、圖示與無邊框調整。",
@@ -312,6 +320,8 @@
   "Str_Behaviour_FakeBorderlessDesc": "移除視窗邊框並最大化以模擬無邊框全螢幕體驗。",
   "Str_Behaviour_BetterMatchmaking": "啟用最佳化配對搜尋",
   "Str_Behaviour_BetterMatchmakingDesc": "整合 RoValra 伺服器地區資訊以優先配對較佳區域的伺服器。",
+  "Str_Behaviour_BetterMatchmakingRandomization": "隨機選取最佳區域伺服器",
+  "Str_Behaviour_BetterMatchmakingRandomizationDesc": "從最鄰近地區的伺服器清單中隨機挑選，而非每次都加入第一個伺服器。",
   "Str_Behaviour_CleanerHeader": "快取與紀錄清理工具",
   "Str_Behaviour_CleanNow": "立即清理",
   "Str_Behaviour_RetentionPolicy": "保留週期：",
@@ -321,6 +331,7 @@
   "Str_Behaviour_CleanBaBaBooeyStrapLogs": "BaBaBooeyStrap 紀錄檔",
   "Str_Behaviour_CleanCrashDumps": "當機傾印檔",
   "Str_Behaviour_CleanerReportFormat": "已刪除 {0} 個檔案（釋放 {1:F2} MB）。",
+  "Str_Behaviour_CleanerErrorFormat": "清理失敗：{0}",
 
   "Str_Channel_PageTitle": "頻道與 CDN",
   "Str_Channel_Header": "部署頻道與 CDN 鏡像",
@@ -348,6 +359,7 @@
   "Str_GlobalSettings_MouseSensitivity": "滑鼠靈敏度：",
   "Str_GlobalSettings_QualityLevel": "預設畫質等級（1-10）：",
   "Str_GlobalSettings_TextSize": "偏好的文字大小（1-4）：",
+  "Str_GlobalSettings_PreferredTransparency": "偏好的背景透明度（0-1）：",
   "Str_GlobalSettings_VrEnabled": "啟用 VR 模式",
   "Str_GlobalSettings_ReducedMotion": "減少動態效果",
   "Str_GlobalSettings_StatusSaved": "已儲存 GlobalBasicSettings_13.xml",
@@ -424,6 +436,8 @@
   "Str_FastFlagEditor_MsgInvalidJson": "JSON 格式無效，原有旗標未做變更。",
   "Str_FastFlagEditor_MsgExportedFileFormat": "已匯出 JSON 至 {0}（並複製到剪貼簿）。",
   "Str_FastFlagEditor_MsgExportedClipboard": "已將匯出的 JSON 複製到剪貼簿。",
+  "Str_FastFlagEditor_MsgExportClipboardFailedFormat": "複製 JSON 至剪貼簿失敗：{0}",
+  "Str_FastFlagEditor_MsgExportFileFailedFormat": "儲存 JSON 檔案失敗：{0}",
   "Str_FastFlagEditor_MsgCleared": "已清空所有旗標。",
   "Str_FastFlagEditor_MsgResetDefaults": "已重設為預設旗標。",
   "Str_FastFlagEditor_JsonFileFilter": "JSON 檔案 (*.json)|*.json|所有檔案 (*.*)|*.*",
@@ -506,6 +520,10 @@
   "Str_Bootstrapper_StatusDownloadingManifestFormat": "正在下載 {0} 部署清單...",
   "Str_Bootstrapper_StatusDownloadingCountFormat": "正在下載 {0} 個 Roblox 封包...",
   "Str_Bootstrapper_StatusExtracting": "正在解壓縮封包...",
+  "Str_Bootstrapper_ExtractingNamedFormat": "正在解壓縮 {0}...",
+  "Str_Bootstrapper_ErrorDiskSpaceFormat": "{0} 可用磁碟空間不足（需要 {1:F0} MB，目前僅剩 {2:F0} MB）。",
+  "Str_Bootstrapper_ErrorDeploymentIncompleteFormat": "解壓後偵測到版本 {0} 檔案不完整，請確認空間與檔案鎖定狀況後重試。",
+  "Str_Bootstrapper_ErrorDeploymentFailedFormat": "Roblox 部署失敗：{0}",
 
   "Enum_AppLanguage_Auto": "跟隨系統",
   "Enum_AppLanguage_TraditionalChinese": "繁體中文",
@@ -588,6 +606,9 @@
   "Enum_FastFlagType_String": "String",
   "Enum_FastFlagType_Log": "Log",
   "Enum_FastFlagType_Unknown": "未知",
+
+  "Enum_DiscordRPCStatusDisplay_Name": "活動名稱 (Roblox)",
+  "Enum_DiscordRPCStatusDisplay_Details": "遊戲／場所詳細資訊",
 
   "Str_Common_Edit": "編輯",
 
@@ -680,5 +701,17 @@
   "Str_About_RepairProtocolsDone": "已重新註冊 Roblox Player 與 Studio 的瀏覽器啟動協定。",
   "Str_About_ExportDiagnostics": "匯出診斷壓縮包 (.zip)",
   "Str_About_ExportDiagnosticsDoneFormat": "診斷壓縮包已儲存（不含帳號與 Cookie）至：\n{0}",
-  "Str_About_OpenFolder": "開啟所在資料夾"
+  "Str_About_OpenFolder": "開啟所在資料夾",
+
+  "Str_Toast_Copied": "已複製",
+  "Str_Filter_ProgramsAndScripts": "程式與指令碼 (*.exe;*.bat;*.cmd;*.ps1)|*.exe;*.bat;*.cmd;*.ps1|所有檔案 (*.*)|*.*",
+  "Str_Filter_ProfileJson": "BaBaBooeyStrap 設定檔 (*.json)|*.json",
+  "Str_Filter_ZipArchive": "ZIP 壓縮檔 (*.zip)|*.zip",
+
+  "Str_Accounts_LogCookieVerificationFailedFormat": "Cookie 驗證失敗：{0}",
+  "Str_Accounts_LogLaunchFailedFormat": "啟動失敗：{0}",
+  "Str_Accounts_LogBatchLaunchFailedFormat": "批次啟動失敗：{0}",
+  "Str_Accounts_LogNotesSaveFailedFormat": "儲存備註失敗：{0}",
+  "Str_Accounts_PlaceIdFormat": "地點 ID：{0}",
+  "Str_Accounts_LogLastErrorPartFormat": "，最後錯誤={0}"
 }
