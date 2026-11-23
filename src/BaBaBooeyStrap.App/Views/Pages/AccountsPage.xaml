@@ -491,13 +491,43 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
-                                <DataGridTextColumn Binding="{Binding Username}" Width="*" MinWidth="110" IsReadOnly="True">
-                                    <DataGridTextColumn.HeaderTemplate>
+                                <DataGridTemplateColumn Width="*" MinWidth="135" IsReadOnly="True" SortMemberPath="Username">
+                                    <DataGridTemplateColumn.HeaderTemplate>
                                         <DataTemplate>
                                             <TextBlock Text="{DynamicResource Str_Accounts_ColUsername}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                                         </DataTemplate>
-                                    </DataGridTextColumn.HeaderTemplate>
-                                </DataGridTextColumn>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Border Width="24"
+                                                        Height="24"
+                                                        CornerRadius="12"
+                                                        Margin="0,0,8,0"
+                                                        VerticalAlignment="Center"
+                                                        ClipToBounds="True"
+                                                        Background="{DynamicResource ControlFillColorDefaultBrush}">
+                                                    <Grid>
+                                                        <TextBlock Text="{Binding AvatarInitial}"
+                                                                   FontSize="11"
+                                                                   FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center"
+                                                                   Opacity="0.7"
+                                                                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                        <Image Source="{Binding AvatarUrl, TargetNullValue={x:Null}}"
+                                                               Stretch="UniformToFill"
+                                                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                    </Grid>
+                                                </Border>
+                                                <TextBlock Text="{Binding Username}"
+                                                           VerticalAlignment="Center"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTemplateColumn x:Name="RunStatusColumn" Width="90" IsReadOnly="True">
                                     <DataGridTemplateColumn.HeaderTemplate>
                                         <DataTemplate>

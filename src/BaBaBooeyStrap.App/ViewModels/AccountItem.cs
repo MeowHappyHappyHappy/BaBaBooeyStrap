@@ -45,6 +45,7 @@ public sealed class AccountItem : ViewModelBase
     private int? _runningSlotIndex;
     private int? _runningMonitorIndex;
     private bool _isRunningFocused;
+    private string? _avatarUrl;
 
     public AccountItem(RobloxAccount account)
     {
@@ -57,6 +58,21 @@ public sealed class AccountItem : ViewModelBase
     public string Username => Account.Username;
     public string DisplayName => Account.DisplayName;
     public long UserId => Account.UserId;
+
+    public string? AvatarUrl
+    {
+        get => _avatarUrl;
+        set
+        {
+            string? normalized = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+            SetProperty(ref _avatarUrl, normalized);
+        }
+    }
+
+    public string AvatarInitial =>
+        !string.IsNullOrWhiteSpace(Username)
+            ? char.ToUpperInvariant(Username.Trim()[0]).ToString()
+            : "?";
 
     public string Notes
     {
@@ -310,6 +326,7 @@ public sealed class AccountItem : ViewModelBase
         OnPropertyChanged(nameof(Username));
         OnPropertyChanged(nameof(DisplayName));
         OnPropertyChanged(nameof(UserId));
+        OnPropertyChanged(nameof(AvatarInitial));
         OnPropertyChanged(nameof(Notes));
         OnPropertyChanged(nameof(SettingsSummary));
         OnPropertyChanged(nameof(LastLaunchedDisplay));

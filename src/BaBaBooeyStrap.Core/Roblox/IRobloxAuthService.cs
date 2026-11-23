@@ -22,6 +22,24 @@ public interface IRobloxAuthService : IDisposable
     Task<string> GenerateAuthTicketAsync(string cookie, CancellationToken ct = default);
     Task<ResolvedShareLink> ResolveShareLinkAsync(string cookie, string shareCode, CancellationToken ct = default);
     Task<string?> GetAvatarThumbnailUrlAsync(long userId, string size = "150x150", bool isCircular = true, CancellationToken ct = default);
+    async Task<IReadOnlyDictionary<long, string>> GetAvatarThumbnailUrlsAsync(
+        IEnumerable<long> userIds,
+        string size = "150x150",
+        bool isCircular = true,
+        CancellationToken ct = default)
+    {
+        var result = new Dictionary<long, string>();
+        foreach (long id in userIds.Where(static id => id > 0).Distinct())
+        {
+            ct.ThrowIfCancellationRequested();
+            string? url = await GetAvatarThumbnailUrlAsync(id, size, isCircular, ct).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                result[id] = url;
+            }
+        }
+        return result;
+    }
     Task<long> ResolveUserIdByUsernameAsync(string username, CancellationToken ct = default);
     Task<AuthenticatedUser?> GetUserByIdAsync(long userId, CancellationToken ct = default) => Task.FromResult<AuthenticatedUser?>(null);
     Task<RobloxUserPresence> GetUserPresenceAsync(string cookie, long userId, CancellationToken ct = default);

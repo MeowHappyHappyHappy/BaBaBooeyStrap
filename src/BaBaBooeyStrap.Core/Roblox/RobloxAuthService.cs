@@ -234,6 +234,77 @@ public sealed class RobloxAuthService : IRobloxAuthService
         return null;
     }
 
+    public async Task<IReadOnlyDictionary<long, string>> GetAvatarThumbnailUrlsAsync(
+        IEnumerable<long> userIds,
+        string size = "150x150",
+        bool isCircular = true,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(userIds);
+
+        var distinctIds = userIds.Where(static id => id > 0).Distinct().ToList();
+        var result = new Dictionary<long, string>();
+        if (distinctIds.Count == 0)
+        {
+            return result;
+        }
+
+        string safeSize = Uri.EscapeDataString(string.IsNullOrWhiteSpace(size) ? "150x150" : size.Trim());
+        string circularStr = isCircular ? "true" : "false";
+
+        foreach (long[] chunk in distinctIds.Chunk(100))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            string url = $"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={string.Join(",", chunk)}&size={safeSize}&format=Png&isCircular={circularStr}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Add("User-Agent", "BaBaBooeyStrap/1.0");
+
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                continue;
+            }
+
+            string json = await ReadBoundedStringAsync(response.Content, MaxJsonResponseBytes, ct).ConfigureAwait(false);
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                    !doc.RootElement.TryGetProperty("data", out var dataArr) ||
+                    dataArr.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var entry in dataArr.EnumerateArray())
+                {
+                    if (entry.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    if (!entry.TryGetProperty("targetId", out var targetIdProp) ||
+                        targetIdProp.ValueKind != JsonValueKind.Number ||
+                        !targetIdProp.TryGetInt64(out long targetId) ||
+                        targetId <= 0)
+                    {
+                        continue;
+                    }
+
+                    string? imageUrl = TryGetOptionalNonEmptyString(entry, "imageUrl");
+                    if (!string.IsNullOrWhiteSpace(imageUrl))
+                    {
+                        result[targetId] = imageUrl;
+                    }
+                }
+            }
+            catch (JsonException) { }
+        }
+
+        return result;
+    }
+
     public async Task<long> ResolveUserIdByUsernameAsync(string username, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(username);

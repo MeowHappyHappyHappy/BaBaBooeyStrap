@@ -52,9 +52,11 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
     private readonly Queue<string> _activityLogLines = new();
     private readonly StringBuilder _activityLogBuilder = new();
     private readonly ConcurrentDictionary<long, RobloxGameInfo?> _gameInfoCache = new();
+    private readonly ConcurrentDictionary<long, string> _avatarUrlCache = new();
     private readonly ConcurrentDictionary<string, UserPreviewInfo> _userPreviewCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly EventHandler<IReadOnlyList<RunningRobloxInstance>>? _instancesChangedHandler;
     private CancellationTokenSource? _gameInfoCts;
+    private CancellationTokenSource? _avatarLoadCts;
     private string _resolvedGameName = string.Empty;
     private string _resolvedGamePlaceIdText = string.Empty;
     private string? _resolvedGameThumbnailUrl;
@@ -642,6 +644,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         FilteredAccountItems.Refresh();
         SyncAccountRunningStates(RunningInstances);
         OnPropertyChanged(nameof(AccountCountText));
+        ScheduleLoadAccountAvatars(AccountItems.ToList());
     }
 
     public void ReloadSavedTargets()
@@ -901,6 +904,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
             FilteredAccountItems.Refresh();
             SyncAccountRunningStates(RunningInstances);
             OnPropertyChanged(nameof(AccountCountText));
+            ScheduleLoadAccountAvatars([newItem]);
         }
 
         _setLocalizedStatus("Str_Accounts_StatusAdded", [account.Username]);
@@ -1834,6 +1838,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
                     FilteredAccountItems.Refresh();
                     SyncAccountRunningStates(RunningInstances);
                     OnPropertyChanged(nameof(AccountCountText));
+                    ScheduleLoadAccountAvatars(AccountItems.ToList());
                 }
             }
 
@@ -2462,6 +2467,108 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         try { _gameInfoCts?.Dispose(); } catch { }
         _gameInfoCts = null;
 
+        try { _avatarLoadCts?.Cancel(); } catch { }
+        try { _avatarLoadCts?.Dispose(); } catch { }
+        _avatarLoadCts = null;
+
         try { _launchCts?.Cancel(); } catch { }
+    }
+
+    private void ScheduleLoadAccountAvatars(IReadOnlyList<AccountItem> items)
+    {
+        if (Volatile.Read(ref _disposed) != 0 || items.Count == 0)
+        {
+            return;
+        }
+
+        var missingUserIds = new List<long>();
+        var seen = new HashSet<long>();
+        foreach (var item in items)
+        {
+            if (item.UserId <= 0)
+            {
+                continue;
+            }
+
+            if (_avatarUrlCache.TryGetValue(item.UserId, out string? cachedUrl))
+            {
+                item.AvatarUrl = cachedUrl;
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(item.AvatarUrl) && seen.Add(item.UserId))
+            {
+                missingUserIds.Add(item.UserId);
+            }
+        }
+
+        if (missingUserIds.Count == 0)
+        {
+            return;
+        }
+
+        try { _avatarLoadCts?.Cancel(); } catch { }
+        try { _avatarLoadCts?.Dispose(); } catch { }
+        var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromSeconds(15));
+        _avatarLoadCts = cts;
+
+        _ = FetchAccountAvatarsAsync(missingUserIds, cts.Token);
+    }
+
+    private async Task FetchAccountAvatarsAsync(IReadOnlyList<long> userIds, CancellationToken ct)
+    {
+        try
+        {
+            using IRobloxAuthService? ownedAuth = _injectedAuthService == null ? new RobloxAuthService() : null;
+            var auth = _injectedAuthService ?? ownedAuth!;
+
+            var urls = await auth.GetAvatarThumbnailUrlsAsync(userIds, size: "150x150", isCircular: true, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested || Volatile.Read(ref _disposed) != 0 || urls.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (uid, url) in urls)
+            {
+                if (uid > 0 && !string.IsNullOrWhiteSpace(url))
+                {
+                    _avatarUrlCache[uid] = url;
+                }
+            }
+
+            void Apply()
+            {
+                if (Volatile.Read(ref _disposed) != 0)
+                {
+                    return;
+                }
+
+                foreach (var item in AccountItems)
+                {
+                    if (item.UserId > 0 && urls.TryGetValue(item.UserId, out string? url))
+                    {
+                        item.AvatarUrl = url;
+                    }
+                }
+            }
+
+            var dispatcher = Application.Current?.Dispatcher;
+            if (dispatcher != null && !dispatcher.CheckAccess())
+            {
+                await dispatcher.InvokeAsync(Apply);
+            }
+            else
+            {
+                Apply();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Core.Logging.Logger.WarnStatic("AccountsViewModel", $"Failed to fetch account avatars: {ex.Message}");
+        }
     }
 }
