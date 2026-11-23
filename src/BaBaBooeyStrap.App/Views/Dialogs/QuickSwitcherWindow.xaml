@@ -32,12 +32,17 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <DockPanel Grid.Row="0" Margin="0,0,0,10">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+            <Grid Grid.Row="0" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
                     <TextBlock Text="{DynamicResource Str_QuickSwitcher_Title}"
                                Foreground="White"
                                FontSize="15"
                                FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center"/>
                     <Border CornerRadius="6"
                             Padding="7,2"
@@ -51,7 +56,7 @@
                     </Border>
                 </StackPanel>
                 <Button x:Name="TileButton"
-                        DockPanel.Dock="Right"
+                        Grid.Column="1"
                         HorizontalAlignment="Right"
                         Content="{DynamicResource Str_QuickSwitcher_TileAll}"
                         Padding="10,4"
@@ -62,11 +67,12 @@
                         BorderThickness="1"
                         Cursor="Hand"
                         Click="TileAll_Click"/>
-            </DockPanel>
+            </Grid>
 
             <!-- Search Box -->
             <ui:TextBox x:Name="SearchBox"
                         Grid.Row="1"
+                        AutomationProperties.Name="{DynamicResource Str_QuickSwitcher_SearchPlaceholder}"
                         PlaceholderText="{DynamicResource Str_QuickSwitcher_SearchPlaceholder}"
                         Margin="0,0,0,10"
                         TextChanged="SearchBox_TextChanged"/>
@@ -180,6 +186,7 @@
                                 </Border>
                                 <Button Content="⇄"
                                         ToolTip="{DynamicResource Str_Switcher_MoveNextMonitorTip}"
+                                        AutomationProperties.Name="{DynamicResource Str_Switcher_MoveNextMonitorTip}"
                                         Visibility="{Binding MoveMonitorVisibility}"
                                         Tag="{Binding ProcessId}"
                                         Width="26"
@@ -193,6 +200,7 @@
                                         Click="MoveMonitor_Click"/>
                                 <Button Content="—"
                                         ToolTip="{DynamicResource Str_Switcher_MinimizeRestoreTip}"
+                                        AutomationProperties.Name="{DynamicResource Str_Switcher_MinimizeRestoreTip}"
                                         Tag="{Binding ProcessId}"
                                         Width="26"
                                         Height="26"
@@ -205,6 +213,7 @@
                                         Click="MinimizeItem_Click"/>
                                 <Button Content="✕"
                                         ToolTip="{DynamicResource Str_Switcher_CloseWindowTip}"
+                                        AutomationProperties.Name="{DynamicResource Str_Switcher_CloseWindowTip}"
                                         Tag="{Binding ProcessId}"
                                         Width="26"
                                         Height="26"

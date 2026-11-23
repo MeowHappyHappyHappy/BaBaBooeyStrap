@@ -7,12 +7,19 @@ namespace BaBaBooeyStrap.Integrations.Custom;
 
 public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
 {
+    private readonly record struct TrackedIntegrationProcess(int Pid, DateTime? StartTimeUtc);
+
+    private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
+
     private readonly ILogger _logger;
     private readonly Func<ProcessStartInfo, int?> _processStarter;
-    private readonly Action<int> _processTerminator;
+    private readonly bool _usesDefaultStarter;
+    private readonly Action<int>? _customProcessTerminator;
     private readonly Func<int, CancellationToken, Task> _delayAsync;
-    private readonly ConcurrentDictionary<int, ConcurrentBag<int>> _trackedByRobloxPid = new();
-    private bool _disposed;
+    private readonly ConcurrentDictionary<int, ConcurrentBag<TrackedIntegrationProcess>> _trackedByRobloxPid = new();
+    private readonly ConcurrentDictionary<int, DateTime?> _launchedStartTimes = new();
+    private readonly CancellationTokenSource _disposeCts = new();
+    private int _disposed;
 
     public CustomIntegrationRunner(
         ILogger? logger = null,
@@ -21,8 +28,9 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
         Func<int, CancellationToken, Task>? delayAsync = null)
     {
         _logger = logger ?? Logger.Current;
+        _usesDefaultStarter = processStarter == null;
         _processStarter = processStarter ?? StartProcessDefault;
-        _processTerminator = processTerminator ?? TerminateProcessDefault;
+        _customProcessTerminator = processTerminator;
         _delayAsync = delayAsync ?? ((ms, ct) => Task.Delay(ms, ct));
     }
 
@@ -33,7 +41,7 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(integrations);
-        if (_disposed) return Array.Empty<int>();
+        if (Volatile.Read(ref _disposed) != 0) return Array.Empty<int>();
 
         var matching = integrations
             .Where(i => i != null && i.PreLaunch == preLaunchOnly && !string.IsNullOrWhiteSpace(i.Location))
@@ -44,54 +52,80 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
             return Array.Empty<int>();
         }
 
+        CancellationTokenSource? linkedCts = null;
+        try
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _disposeCts.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            return Array.Empty<int>();
+        }
+
+        using var _ = linkedCts;
+        CancellationToken effectiveCt = linkedCts.Token;
+
         var autoClosePids = new List<int>();
         foreach (var entry in matching)
         {
-            ct.ThrowIfCancellationRequested();
+            effectiveCt.ThrowIfCancellationRequested();
 
-            string location = entry.Location.Trim();
-            if (Path.IsPathRooted(location) && !File.Exists(location))
+            if (!TryResolveLocalExecutablePath(entry.Location, out string fullPath, out string rejectReason))
             {
-                _logger.Warn("CustomIntegrationRunner", $"Skipping custom integration '{entry.Name}': file not found at '{location}'.");
+                _logger.Warn("CustomIntegrationRunner", $"Skipping custom integration '{entry.Name}': {rejectReason}");
+                continue;
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                _logger.Warn("CustomIntegrationRunner", $"Skipping custom integration '{entry.Name}': file not found at '{fullPath}'.");
                 continue;
             }
 
             int delayMs = Math.Clamp(entry.Delay, 0, 60000);
             if (delayMs > 0)
             {
-                await _delayAsync(delayMs, ct).ConfigureAwait(false);
+                await _delayAsync(delayMs, effectiveCt).ConfigureAwait(false);
             }
 
             try
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = location,
+                    FileName = fullPath,
                     Arguments = entry.LaunchArgs ?? string.Empty,
-                    UseShellExecute = true
+                    UseShellExecute = false
                 };
 
-                if (Path.IsPathRooted(location))
+                string? dir = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
                 {
-                    string? dir = Path.GetDirectoryName(location);
-                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                    {
-                        psi.WorkingDirectory = dir;
-                    }
+                    psi.WorkingDirectory = dir;
                 }
 
-                int? pid = _processStarter(psi);
+                int? pid;
+                DateTime? startTimeUtc = null;
+                if (_usesDefaultStarter)
+                {
+                    (pid, startTimeUtc) = StartProcessDefaultWithTime(psi);
+                }
+                else
+                {
+                    pid = _processStarter(psi);
+                }
+
                 if (pid.HasValue && pid.Value > 0 && entry.AutoClose)
                 {
+                    _launchedStartTimes[pid.Value] = startTimeUtc;
                     autoClosePids.Add(pid.Value);
                     if (trackedRobloxPid.HasValue && trackedRobloxPid.Value > 0)
                     {
-                        var bag = _trackedByRobloxPid.GetOrAdd(trackedRobloxPid.Value, _ => new ConcurrentBag<int>());
-                        bag.Add(pid.Value);
+                        var bag = _trackedByRobloxPid.GetOrAdd(trackedRobloxPid.Value, _ => new ConcurrentBag<TrackedIntegrationProcess>());
+                        bag.Add(new TrackedIntegrationProcess(pid.Value, startTimeUtc));
                     }
                 }
 
-                _logger.Info("CustomIntegrationRunner", $"Launched custom integration '{entry.Name}' (PID: {pid?.ToString() ?? "shell"}).");
+                _logger.Info("CustomIntegrationRunner", $"Launched custom integration '{entry.Name}' (PID: {pid?.ToString() ?? "none"}).");
             }
             catch (OperationCanceledException)
             {
@@ -108,17 +142,18 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
 
     public void BindPreLaunchedToPid(IReadOnlyList<int> integrationPids, int robloxPid)
     {
-        if (_disposed || robloxPid <= 0 || integrationPids == null || integrationPids.Count == 0)
+        if (Volatile.Read(ref _disposed) != 0 || robloxPid <= 0 || integrationPids == null || integrationPids.Count == 0)
         {
             return;
         }
 
-        var bag = _trackedByRobloxPid.GetOrAdd(robloxPid, _ => new ConcurrentBag<int>());
+        var bag = _trackedByRobloxPid.GetOrAdd(robloxPid, _ => new ConcurrentBag<TrackedIntegrationProcess>());
         foreach (int pid in integrationPids)
         {
             if (pid > 0)
             {
-                bag.Add(pid);
+                _launchedStartTimes.TryGetValue(pid, out DateTime? startTimeUtc);
+                bag.Add(new TrackedIntegrationProcess(pid, startTimeUtc));
             }
         }
     }
@@ -130,20 +165,65 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
             return 0;
         }
 
+        var seen = new HashSet<int>();
         int closed = 0;
-        foreach (int pid in bag.Distinct())
+        foreach (var entry in bag)
         {
-            if (pid <= 0) continue;
+            if (entry.Pid <= 0 || !seen.Add(entry.Pid)) continue;
+            DateTime? expectedStart = entry.StartTimeUtc;
+            if (!expectedStart.HasValue && _launchedStartTimes.TryGetValue(entry.Pid, out var knownStart))
+            {
+                expectedStart = knownStart;
+            }
+            _launchedStartTimes.TryRemove(entry.Pid, out _);
+
             try
             {
-                _processTerminator(pid);
-                closed++;
+                if (_customProcessTerminator != null)
+                {
+                    _customProcessTerminator(entry.Pid);
+                    closed++;
+                }
+                else if (TerminateProcessDefault(entry.Pid, expectedStart))
+                {
+                    closed++;
+                }
             }
             catch
             {
                 // Best-effort process cleanup
             }
         }
+        return closed;
+    }
+
+    public int CloseIntegrationPids(IEnumerable<int> integrationPids)
+    {
+        if (integrationPids == null) return 0;
+
+        int closed = 0;
+        foreach (int pid in integrationPids.Distinct())
+        {
+            if (pid <= 0) continue;
+
+            _launchedStartTimes.TryRemove(pid, out DateTime? expectedStart);
+            try
+            {
+                if (_customProcessTerminator != null)
+                {
+                    _customProcessTerminator(pid);
+                    closed++;
+                }
+                else if (TerminateProcessDefault(pid, expectedStart))
+                {
+                    closed++;
+                }
+            }
+            catch
+            {
+            }
+        }
+
         return closed;
     }
 
@@ -154,29 +234,115 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
         {
             total += CloseIntegrationsForPid(robloxPid);
         }
+        _launchedStartTimes.Clear();
         return total;
     }
 
-    private static int? StartProcessDefault(ProcessStartInfo psi)
+    public static bool TryResolveLocalExecutablePath(string? rawLocation, out string fullPath, out string reason)
     {
-        using var process = Process.Start(psi);
-        if (process == null) return null;
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(rawLocation))
+        {
+            reason = "empty path.";
+            return false;
+        }
+
+        string trimmed = rawLocation.Trim();
+        if (trimmed.Contains('\0'))
+        {
+            reason = "path contains invalid characters.";
+            return false;
+        }
+
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal) ||
+            trimmed.StartsWith("//", StringComparison.Ordinal))
+        {
+            reason = "UNC/network share paths are not allowed.";
+            return false;
+        }
+
+        if (trimmed.Contains("://", StringComparison.Ordinal))
+        {
+            reason = "URI schemes are not allowed.";
+            return false;
+        }
+
+        if (!Path.IsPathFullyQualified(trimmed))
+        {
+            reason = "executable path must be a rooted local path.";
+            return false;
+        }
+
         try
         {
-            return process.Id;
+            string normalized = Path.GetFullPath(trimmed);
+            if (normalized.Length < 3 ||
+                !char.IsAsciiLetter(normalized[0]) ||
+                normalized[1] != ':' ||
+                normalized[2] != '\\')
+            {
+                reason = "executable path must reside on a local drive letter.";
+                return false;
+            }
+
+            fullPath = normalized;
+            reason = string.Empty;
+            return true;
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            reason = $"invalid path ({ex.Message}).";
+            return false;
         }
     }
 
-    private static void TerminateProcessDefault(int pid)
+    private static int? StartProcessDefault(ProcessStartInfo psi) => StartProcessDefaultWithTime(psi).Pid;
+
+    private static (int? Pid, DateTime? StartTimeUtc) StartProcessDefaultWithTime(ProcessStartInfo psi)
     {
+        using var process = Process.Start(psi);
+        if (process == null) return (null, null);
+
+        int pid;
+        try
+        {
+            pid = process.Id;
+        }
+        catch
+        {
+            return (null, null);
+        }
+
+        DateTime? startTimeUtc = null;
+        try
+        {
+            startTimeUtc = process.StartTime.ToUniversalTime();
+        }
+        catch
+        {
+        }
+
+        return (pid, startTimeUtc);
+    }
+
+    private static bool TerminateProcessDefault(int pid, DateTime? expectedStartTimeUtc)
+    {
+        if (!expectedStartTimeUtc.HasValue)
+        {
+            return false;
+        }
+
         try
         {
             using var proc = Process.GetProcessById(pid);
-            if (proc.HasExited) return;
+            if (proc.HasExited) return true;
+
+            DateTime actualStartUtc = proc.StartTime.ToUniversalTime();
+            if ((actualStartUtc - expectedStartTimeUtc.Value).Duration() > StartTimeTolerance)
+            {
+                // Guard against terminating an unrelated recycled PID.
+                return false;
+            }
 
             if (proc.MainWindowHandle != nint.Zero)
             {
@@ -188,17 +354,22 @@ public sealed class CustomIntegrationRunner : ICustomIntegrationRunner
             {
                 proc.Kill(entireProcessTree: false);
             }
+
+            return true;
         }
         catch
         {
             // Process already exited or inaccessible
+            return false;
         }
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+        try { _disposeCts.Cancel(); } catch { }
         CloseAllAutoCloseIntegrations();
+        try { _disposeCts.Dispose(); } catch { }
     }
 }

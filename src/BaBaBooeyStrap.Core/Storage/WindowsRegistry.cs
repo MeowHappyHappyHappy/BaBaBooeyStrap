@@ -1,3 +1,4 @@
+using BaBaBooeyStrap.Core.Logging;
 using Microsoft.Win32;
 
 namespace BaBaBooeyStrap.Core.Storage;
@@ -8,13 +9,40 @@ public static class WindowsRegistry
     public const string AppRegistryRoot = @"Software\BaBaBooeyStrap";
     public const string StartupRunRegistryPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
-    public static void RegisterProtocol(string key, string name, string handlerPath, string handlerParam = "%1")
+    private static bool IsSafeClassesSubkey(string? key)
     {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+        string trimmed = key.Trim();
+        return !trimmed.Contains('\\') &&
+               !trimmed.Contains('/') &&
+               !trimmed.Contains("..", StringComparison.Ordinal);
+    }
+
+    private static bool IsSafeHandlerPath(string? handlerPath)
+    {
+        if (string.IsNullOrWhiteSpace(handlerPath)) return false;
+        foreach (char ch in handlerPath)
+        {
+            if (ch == '"' || char.IsControl(ch)) return false;
+        }
+        return true;
+    }
+
+    public static bool RegisterProtocol(string key, string name, string handlerPath, string handlerParam = "\"%1\"")
+    {
+        if (!IsSafeClassesSubkey(key) || !IsSafeHandlerPath(handlerPath))
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Rejected invalid protocol registration for key '{key}'.");
+            return false;
+        }
+
         try
         {
-            string command = $"\"{handlerPath}\" {handlerParam}";
-            using var regKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{key}");
-            if (regKey == null) return;
+            string safeParam = string.IsNullOrWhiteSpace(handlerParam) ? "\"%1\"" : handlerParam;
+            string command = $"\"{handlerPath}\" {safeParam}";
+            string iconValue = $"\"{handlerPath}\",0";
+            using var regKey = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{key.Trim()}");
+            if (regKey == null) return false;
 
             using var defaultIcon = regKey.CreateSubKey("DefaultIcon");
             using var shellOpenCmd = regKey.CreateSubKey(@"shell\open\command");
@@ -30,17 +58,23 @@ public static class WindowsRegistry
                 regKey.SetValue("URL Protocol", "");
             }
 
-            if (defaultIcon != null && defaultIcon.GetValue("") as string != handlerPath)
+            if (defaultIcon != null && defaultIcon.GetValue("") as string != iconValue)
             {
-                defaultIcon.SetValue("", handlerPath);
+                defaultIcon.SetValue("", iconValue);
             }
 
             if (shellOpenCmd != null && shellOpenCmd.GetValue("") as string != command)
             {
                 shellOpenCmd.SetValue("", command);
             }
+
+            return true;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Failed to register protocol '{key}': {ex.Message}");
+            return false;
+        }
     }
 
     public static string? ExtractExecutablePathFromCommand(string? commandLine)
@@ -62,10 +96,19 @@ public static class WindowsRegistry
             return trimmed.Trim('"').Trim();
         }
 
-        int exeIdx = trimmed.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
-        if (exeIdx > 0)
+        int searchPos = 0;
+        while (searchPos < trimmed.Length)
         {
-            return trimmed[..(exeIdx + 4)].Trim();
+            int exeIdx = trimmed.IndexOf(".exe", searchPos, StringComparison.OrdinalIgnoreCase);
+            if (exeIdx < 0) break;
+
+            int afterExe = exeIdx + 4;
+            if (afterExe == trimmed.Length || char.IsWhiteSpace(trimmed[afterExe]))
+            {
+                return trimmed[..afterExe].Trim();
+            }
+
+            searchPos = afterExe;
         }
 
         int spaceIdx = trimmed.IndexOf(' ');
@@ -145,6 +188,8 @@ public static class WindowsRegistry
 
     public static void RegisterStudioFileAssociations(string handlerPath)
     {
+        if (!IsSafeHandlerPath(handlerPath)) return;
+
         try
         {
             using var placeKey = Registry.CurrentUser.CreateSubKey(@"Software\Classes\Roblox.Place");
@@ -154,14 +199,17 @@ public static class WindowsRegistry
                 using var cmdKey = placeKey.CreateSubKey(@"shell\Open\command");
 
                 placeKey.SetValue("", "Roblox Place");
-                iconKey?.SetValue("", $"{handlerPath},0");
+                iconKey?.SetValue("", $"\"{handlerPath}\",0");
                 cmdKey?.SetValue("", $"\"{handlerPath}\" -studio \"%1\"");
             }
 
             RegisterExtension(".rbxl");
             RegisterExtension(".rbxlx");
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Failed to register Studio file associations: {ex.Message}");
+        }
 
         static void RegisterExtension(string ext)
         {
@@ -219,7 +267,7 @@ public static class WindowsRegistry
             using var key = Registry.CurrentUser.CreateSubKey(StartupRunRegistryPath);
             if (key == null) return;
 
-            if (enabled && !string.IsNullOrWhiteSpace(handlerPath))
+            if (enabled && IsSafeHandlerPath(handlerPath))
             {
                 key.SetValue(AppName, $"\"{handlerPath}\" -quiet -nolaunch");
             }
@@ -228,7 +276,10 @@ public static class WindowsRegistry
                 key.DeleteValue(AppName, throwOnMissingValue: false);
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Failed to update startup registry entry: {ex.Message}");
+        }
     }
 
     public static bool IsAppStartupEnabled()
@@ -244,30 +295,46 @@ public static class WindowsRegistry
         }
     }
 
-    public static void UnregisterProtocol(string key)
+    public static bool UnregisterProtocol(string key)
     {
+        if (!IsSafeClassesSubkey(key))
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Refused unsafe protocol key unregister: '{key}'.");
+            return false;
+        }
+
         try
         {
-            Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{key}", throwOnMissingSubKey: false);
+            Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{key.Trim()}", throwOnMissingSubKey: false);
+            return true;
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Failed to unregister protocol '{key}': {ex.Message}");
+            return false;
+        }
     }
 
     public static void RegisterUninstall(string handlerPath)
     {
+        if (!IsSafeHandlerPath(handlerPath)) return;
+
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey($@"Software\Microsoft\Windows\CurrentVersion\Uninstall\{AppName}");
             if (key == null) return;
 
             key.SetValue("DisplayName", AppName);
-            key.SetValue("DisplayIcon", handlerPath);
+            key.SetValue("DisplayIcon", $"\"{handlerPath}\",0");
             key.SetValue("UninstallString", $"\"{handlerPath}\" -uninstall");
             key.SetValue("Publisher", AppName);
             key.SetValue("NoModify", 1, RegistryValueKind.DWord);
             key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("WindowsRegistry", $"Failed to register uninstall entry: {ex.Message}");
+        }
     }
 
     public static void UnregisterAll()

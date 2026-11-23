@@ -1,18 +1,24 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using BaBaBooeyStrap.Core.Logging;
 
 namespace BaBaBooeyStrap.Integrations.Matchmaking;
 
-public sealed class RoValraService : IRoValraService
+public sealed class RoValraService : IRoValraService, IDisposable
 {
     private const double EarthRadiusKm = 6371.0;
     private const int LockStripeCount = 64;
     private const int MaxBestRegionsToQuery = 6;
     private const int MaxConcurrentRegionQueries = 3;
+    private const int MaxJsonResponseBytes = 512 * 1024;
+    private const int MaxServerLocationCacheEntries = 1024;
+    private static readonly TimeSpan MaxRetryAfterCooldown = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan PositiveCacheTtl = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan NegativeCacheTtl = TimeSpan.FromMinutes(2);
 
@@ -70,6 +76,7 @@ public sealed class RoValraService : IRoValraService
     };
 
     private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
     private readonly IPingProbe? _pingProbe;
     private readonly ILogger _logger;
     private readonly double? _clientLatitude;
@@ -80,6 +87,8 @@ public sealed class RoValraService : IRoValraService
     private readonly SemaphoreSlim[] _stripedLocks = Enumerable.Range(0, LockStripeCount)
         .Select(_ => new SemaphoreSlim(1, 1))
         .ToArray();
+    private long _rateLimitUntilUtcTicks;
+    private int _disposed;
 
     public RoValraService(
         HttpClient? httpClient = null,
@@ -88,11 +97,39 @@ public sealed class RoValraService : IRoValraService
         double? clientLatitude = null,
         double? clientLongitude = null)
     {
-        _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        if (httpClient != null)
+        {
+            _httpClient = httpClient;
+            _ownsHttpClient = false;
+        }
+        else
+        {
+            var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(10) };
+            _httpClient = new HttpClient(handler, disposeHandler: true) { Timeout = TimeSpan.FromSeconds(5) };
+            _ownsHttpClient = true;
+        }
         _pingProbe = pingProbe;
         _logger = logger ?? Logger.Current;
         _clientLatitude = clientLatitude;
         _clientLongitude = clientLongitude;
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (_ownsHttpClient)
+        {
+            try { _httpClient.Dispose(); } catch { }
+        }
+
+        foreach (var stripe in _stripedLocks)
+        {
+            try { stripe.Dispose(); } catch { }
+        }
     }
 
     private SemaphoreSlim GetStripedLock(string key)
@@ -127,13 +164,39 @@ public sealed class RoValraService : IRoValraService
 
             ServerLocationInfo? resolved = await FetchLocationInternalAsync(normalizedIp, ct).ConfigureAwait(false);
             TimeSpan ttl = resolved != null ? PositiveCacheTtl : NegativeCacheTtl;
-            _cache[normalizedIp] = new CacheEntry<ServerLocationInfo?>(resolved, DateTime.UtcNow.Add(ttl));
+            SetCappedServerCacheEntry(normalizedIp, new CacheEntry<ServerLocationInfo?>(resolved, DateTime.UtcNow.Add(ttl)));
             return resolved;
         }
         finally
         {
             ipLock.Release();
         }
+    }
+
+    private void SetCappedServerCacheEntry(string key, CacheEntry<ServerLocationInfo?> entry)
+    {
+        if (_cache.Count >= MaxServerLocationCacheEntries && !_cache.ContainsKey(key))
+        {
+            DateTime now = DateTime.UtcNow;
+            foreach (var kvp in _cache)
+            {
+                if (kvp.Value.ExpiresUtc <= now)
+                {
+                    _cache.TryRemove(kvp.Key, out _);
+                }
+            }
+
+            if (_cache.Count >= MaxServerLocationCacheEntries)
+            {
+                int removeCount = Math.Max(1, _cache.Count - MaxServerLocationCacheEntries + 1);
+                foreach (var oldest in _cache.OrderBy(kvp => kvp.Value.ExpiresUtc).Take(removeCount).ToList())
+                {
+                    _cache.TryRemove(oldest.Key, out _);
+                }
+            }
+        }
+
+        _cache[key] = entry;
     }
 
     private async Task<ServerLocationInfo?> FetchLocationInternalAsync(string ip, CancellationToken ct)
@@ -204,13 +267,12 @@ public sealed class RoValraService : IRoValraService
     {
         try
         {
-            using var resp = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
+            var (ok, json) = await FetchJsonCappedAsync(url, ct).ConfigureAwait(false);
+            if (!ok || json == null)
             {
                 return default;
             }
 
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
@@ -254,13 +316,12 @@ public sealed class RoValraService : IRoValraService
         try
         {
             string url = $"https://apis.rovalra.com/v1/geolocation?ip={Uri.EscapeDataString(ip)}";
-            using var resp = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
+            var (ok, json) = await FetchJsonCappedAsync(url, ct).ConfigureAwait(false);
+            if (!ok || json == null)
             {
                 return default;
             }
 
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
 
             if (!doc.RootElement.TryGetProperty("location", out var loc) || loc.ValueKind != JsonValueKind.Object)
@@ -488,10 +549,11 @@ public sealed class RoValraService : IRoValraService
         double clientLat = _clientLatitude ?? 0;
         double clientLon = _clientLongitude ?? 0;
         bool hasClientCoords = _clientLatitude.HasValue && _clientLongitude.HasValue;
+        string selfCountry = string.Empty;
 
-        var selfInfo = await GetCachedSelfIpInfoAsync(ct).ConfigureAwait(false);
         if (!hasClientCoords)
         {
+            var selfInfo = await GetCachedSelfIpInfoAsync(ct).ConfigureAwait(false);
             if (!selfInfo.Success || string.IsNullOrWhiteSpace(selfInfo.Country))
             {
                 return [];
@@ -499,6 +561,7 @@ public sealed class RoValraService : IRoValraService
 
             clientLat = selfInfo.Latitude;
             clientLon = selfInfo.Longitude;
+            selfCountry = selfInfo.Country;
         }
 
         var dataCenters = await GetCachedDataCentersAsync(ct).ConfigureAwait(false);
@@ -512,8 +575,8 @@ public sealed class RoValraService : IRoValraService
         }
 
         return candidates
-            .OrderByDescending(c => !string.IsNullOrWhiteSpace(selfInfo.Country) &&
-                                    string.Equals(c.Country, selfInfo.Country, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(c => !string.IsNullOrWhiteSpace(selfCountry) &&
+                                    string.Equals(c.Country, selfCountry, StringComparison.OrdinalIgnoreCase))
             .ThenBy(c => c.DistanceKm)
             .Select(c => c.Country)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -553,14 +616,12 @@ public sealed class RoValraService : IRoValraService
         try
         {
             string url = $"https://games.roblox.com/v1/games/{placeId}/servers/0?sortOrder=Desc&excludeFullGames=true&limit=100";
-            using var resp = await _httpClient.GetAsync(url, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
+            var (ok, json) = await FetchJsonCappedAsync(url, ct).ConfigureAwait(false);
+            if (!ok || json == null)
             {
-                _logger.Debug("RoValraService", $"Live server verification skipped for place {placeId}: HTTP {(int)resp.StatusCode}");
                 return liveServers;
             }
 
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
             {
@@ -648,10 +709,9 @@ public sealed class RoValraService : IRoValraService
             var list = new List<DataCenterEndpoint>();
             try
             {
-                using var dcResp = await _httpClient.GetAsync("https://apis.rovalra.com/v1/datacenters/list", ct).ConfigureAwait(false);
-                if (dcResp.IsSuccessStatusCode)
+                var (ok, dcJson) = await FetchJsonCappedAsync("https://apis.rovalra.com/v1/datacenters/list", ct).ConfigureAwait(false);
+                if (ok && dcJson != null)
                 {
-                    string dcJson = await dcResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                     using var dcDoc = JsonDocument.Parse(dcJson);
                     if (dcDoc.RootElement.ValueKind == JsonValueKind.Array)
                     {
@@ -700,10 +760,9 @@ public sealed class RoValraService : IRoValraService
         try
         {
             string serversUrl = $"https://apis.rovalra.com/v1/servers/region?place_id={placeId}&region={Uri.EscapeDataString(region)}";
-            using var srvResp = await _httpClient.GetAsync(serversUrl, ct).ConfigureAwait(false);
-            if (!srvResp.IsSuccessStatusCode) return result;
+            var (ok, srvJson) = await FetchJsonCappedAsync(serversUrl, ct).ConfigureAwait(false);
+            if (!ok || srvJson == null) return result;
 
-            string srvJson = await srvResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var srvDoc = JsonDocument.Parse(srvJson);
             if (!srvDoc.RootElement.TryGetProperty("servers", out var servers) ||
                 servers.ValueKind != JsonValueKind.Array ||
@@ -739,14 +798,16 @@ public sealed class RoValraService : IRoValraService
     public async Task<Dictionary<string, int>> GetRegionLatenciesAsync(string endpoint, CancellationToken ct = default)
     {
         var latencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        if (string.IsNullOrWhiteSpace(endpoint)) return latencies;
+        if (!TryValidateExternalHttpsEndpoint(endpoint))
+        {
+            return latencies;
+        }
 
         try
         {
-            using var resp = await _httpClient.GetAsync(endpoint, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return latencies;
+            var (ok, json) = await FetchJsonCappedAsync(endpoint.Trim(), ct).ConfigureAwait(false);
+            if (!ok || json == null) return latencies;
 
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.ValueKind != JsonValueKind.Object) return latencies;
 
@@ -770,6 +831,103 @@ public sealed class RoValraService : IRoValraService
         return latencies;
     }
 
+    private async Task<(bool Ok, string? Json)> FetchJsonCappedAsync(string url, CancellationToken ct)
+    {
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            long rateLimitUntilTicks = Volatile.Read(ref _rateLimitUntilUtcTicks);
+            if (rateLimitUntilTicks > DateTimeOffset.UtcNow.UtcTicks)
+            {
+                return (false, null);
+            }
+
+            using var resp = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (resp.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                TimeSpan? retryAfter = resp.Headers.RetryAfter?.Delta;
+                if (retryAfter == null && resp.Headers.RetryAfter?.Date is DateTimeOffset retryDate)
+                {
+                    retryAfter = retryDate - DateTimeOffset.UtcNow;
+                }
+
+                if (retryAfter.HasValue && retryAfter.Value > TimeSpan.Zero)
+                {
+                    if (attempt == 0 && retryAfter.Value <= TimeSpan.FromSeconds(5))
+                    {
+                        await Task.Delay(retryAfter.Value, ct).ConfigureAwait(false);
+                        continue;
+                    }
+
+                    TimeSpan capped = retryAfter.Value <= MaxRetryAfterCooldown ? retryAfter.Value : MaxRetryAfterCooldown;
+                    long untilTicks = DateTimeOffset.UtcNow.Add(capped).UtcTicks;
+                    Interlocked.Exchange(ref _rateLimitUntilUtcTicks, untilTicks);
+                }
+
+                return (false, null);
+            }
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                return (false, null);
+            }
+
+            if (resp.Content.Headers.ContentLength > MaxJsonResponseBytes)
+            {
+                _logger.Warn("RoValraService", $"Rejected oversized JSON response ({resp.Content.Headers.ContentLength} bytes) from '{url}'.");
+                return (false, null);
+            }
+
+            using Stream stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var ms = new MemoryStream();
+            byte[] buffer = new byte[16 * 1024];
+            int totalRead = 0;
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false);
+                if (read == 0) break;
+                totalRead += read;
+                if (totalRead > MaxJsonResponseBytes)
+                {
+                    _logger.Warn("RoValraService", $"Aborted streaming JSON response exceeding {MaxJsonResponseBytes} bytes from '{url}'.");
+                    return (false, null);
+                }
+                ms.Write(buffer, 0, read);
+            }
+
+            string json = Encoding.UTF8.GetString(ms.ToArray());
+            return (true, json);
+        }
+
+        return (false, null);
+    }
+
+    private static bool TryValidateExternalHttpsEndpoint(string? endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint)) return false;
+        if (!Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out Uri? uri)) return false;
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(uri.Host) ||
+            uri.IsLoopback)
+        {
+            return false;
+        }
+
+        string host = uri.Host.Trim('[', ']');
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (IPAddress.TryParse(host, out _))
+        {
+            return IsPublicRoutableIp(host, out _);
+        }
+
+        return true;
+    }
+
     public static bool IsPublicRoutableIp(string? ip, out IPAddress? parsed)
     {
         parsed = null;
@@ -784,7 +942,7 @@ public sealed class RoValraService : IRoValraService
         if (parsed.AddressFamily == AddressFamily.InterNetwork)
         {
             byte[] b = parsed.GetAddressBytes();
-            return IsPublicRoutableIpv4Bytes(b[0], b[1]);
+            return IsPublicRoutableIpv4Bytes(b[0], b[1], b[2], b[3]);
         }
 
         if (parsed.AddressFamily == AddressFamily.InterNetworkV6)
@@ -803,6 +961,16 @@ public sealed class RoValraService : IRoValraService
             // Unique Local Address fc00::/7
             if ((b[0] & 0xFE) == 0xFC) return false;
 
+            // Documentation prefix 2001:db8::/32
+            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x0D && b[3] == 0xB8) return false;
+
+            // Discard-Only 100::/64
+            if (b[0] == 0x01 && b[1] == 0 && b[2] == 0 && b[3] == 0 &&
+                b[4] == 0 && b[5] == 0 && b[6] == 0 && b[7] == 0)
+            {
+                return false;
+            }
+
             // Deprecated RFC 4291 IPv4-compatible IPv6 addresses ::/96 (e.g. ::127.0.0.1, ::10.0.0.1)
             bool isIpv4Compatible96 = true;
             for (int i = 0; i < 12; i++)
@@ -815,7 +983,7 @@ public sealed class RoValraService : IRoValraService
             }
             if (isIpv4Compatible96)
             {
-                return IsPublicRoutableIpv4Bytes(b[12], b[13]);
+                return IsPublicRoutableIpv4Bytes(b[12], b[13], b[14], b[15]);
             }
 
             return true;
@@ -824,7 +992,7 @@ public sealed class RoValraService : IRoValraService
         return false;
     }
 
-    private static bool IsPublicRoutableIpv4Bytes(byte b0, byte b1)
+    private static bool IsPublicRoutableIpv4Bytes(byte b0, byte b1, byte b2, byte b3)
     {
         // 0.0.0.0/8 (unspecified)
         if (b0 == 0) return false;
@@ -838,11 +1006,22 @@ public sealed class RoValraService : IRoValraService
         if (b0 == 169 && b1 == 254) return false;
         // 172.16.0.0/12 (RFC1918)
         if (b0 == 172 && b1 >= 16 && b1 <= 31) return false;
+        // 192.0.0.0/24 (IETF Protocol Assignments) & 192.0.2.0/24 (TEST-NET-1)
+        if (b0 == 192 && b1 == 0 && (b2 == 0 || b2 == 2)) return false;
+        // 192.88.99.0/24 (deprecated 6to4 relay)
+        if (b0 == 192 && b1 == 88 && b2 == 99) return false;
         // 192.168.0.0/16 (RFC1918)
         if (b0 == 192 && b1 == 168) return false;
+        // 198.18.0.0/15 (benchmarking)
+        if (b0 == 198 && (b1 == 18 || b1 == 19)) return false;
+        // 198.51.100.0/24 (TEST-NET-2)
+        if (b0 == 198 && b1 == 51 && b2 == 100) return false;
+        // 203.0.113.0/24 (TEST-NET-3)
+        if (b0 == 203 && b1 == 0 && b2 == 113) return false;
         // 224.0.0.0/4+ (multicast / reserved)
         if (b0 >= 224) return false;
 
+        _ = b3;
         return true;
     }
 
@@ -938,7 +1117,8 @@ public sealed class RoValraService : IRoValraService
         double a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
                    Math.Cos(rLat1) * Math.Cos(rLat2) *
                    Math.Sin(dLon / 2) * Math.Sin(dLon / 2);
-        double c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        double clampedA = Math.Clamp(a, 0.0, 1.0);
+        double c = 2 * Math.Atan2(Math.Sqrt(clampedA), Math.Sqrt(1.0 - clampedA));
         return EarthRadiusKm * c;
     }
 

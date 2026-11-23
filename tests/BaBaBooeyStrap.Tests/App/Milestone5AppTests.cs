@@ -119,7 +119,8 @@ public sealed class Milestone5AppTests : IDisposable
         result.LaunchUri.Should().StartWith("roblox-player:1+launchmode:play");
         capturedPsi.Should().NotBeNull();
         capturedPsi!.FileName.Should().Be(fakeExe);
-        capturedPsi.Arguments.Should().Contain("roblox-player:1+launchmode:play");
+        capturedPsi.Arguments.Should().BeEmpty();
+        capturedPsi.ArgumentList.Should().Contain(a => a.Contains("roblox-player:1+launchmode:play"));
     }
 
     [Fact]
@@ -147,11 +148,13 @@ public sealed class Milestone5AppTests : IDisposable
         var result = await launcher.LaunchAccountAsync(account, target);
 
         result.Success.Should().BeTrue();
-        result.LaunchUri.Should().Contain("gameinfo:TICKET_OK");
+        result.LaunchUri.Should().Contain("gameinfo:[REDACTED]");
+        result.LaunchUri.Should().NotContain("TICKET_OK");
         result.LaunchUri.Should().Contain("920587237");
         result.LaunchUri.Should().Contain("LINK_CODE_ABC");
         account.LastLaunchedAt.Should().NotBeNull();
         capturedPsi.Should().NotBeNull();
+        capturedPsi!.ArgumentList.Should().Contain(a => a.Contains("gameinfo:TICKET_OK"));
     }
 
     [Fact]
@@ -479,7 +482,7 @@ public sealed class Milestone5AppTests : IDisposable
         primary.StartPipeServer();
 
         bool sent = await secondary.SendArgumentsToPrimaryAsync(["-player", "roblox-player:1+test"]);
-        sent.Should().BeTrue();
+        sent.Should().BeTrue(because: secondary.LastIpcError ?? "no error captured");
 
         var completed = await Task.WhenAny(receivedTcs.Task, Task.Delay(3000));
         completed.Should().Be(receivedTcs.Task);

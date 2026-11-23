@@ -67,6 +67,7 @@
             <TextBlock x:Name="ErrorText"
                        Foreground="#FFEF4444"
                        FontSize="12"
+                       TextWrapping="Wrap"
                        Visibility="Collapsed"
                        Margin="0,8,0,0" />
         </StackPanel>

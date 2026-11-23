@@ -8,7 +8,7 @@ namespace BaBaBooeyStrap.MultiInstance;
 /// Supervises running Roblox client processes, enforces anti-cheat launch throttling delays,
 /// and probes for client main window visibility.
 /// </summary>
-public sealed class ProcessSupervisor : IProcessSupervisor
+public sealed class ProcessSupervisor : IProcessSupervisor, IDisposable
 {
     public static readonly TimeSpan DefaultLaunchDelay = TimeSpan.FromMilliseconds(1500);
     public static readonly TimeSpan MinimumDelayFloor = TimeSpan.FromMilliseconds(500);
@@ -19,7 +19,8 @@ public sealed class ProcessSupervisor : IProcessSupervisor
     private readonly List<int> _trackedPids = new();
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _throttleSemaphore = new(1, 1);
-    private DateTime _lastLaunchTimeUtc = DateTime.MinValue;
+    private long _lastLaunchTickMs = -1;
+    private int _disposed;
 
     /// <summary>
     /// Initializes a process supervisor. Optionally accepts a client window probe delegate for deterministic testing.
@@ -58,7 +59,7 @@ public sealed class ProcessSupervisor : IProcessSupervisor
             if (!_trackedPids.Contains(pid))
             {
                 _trackedPids.Add(pid);
-                _lastLaunchTimeUtc = DateTime.UtcNow;
+                _lastLaunchTickMs = Environment.TickCount64;
             }
         }
     }
@@ -109,6 +110,10 @@ public sealed class ProcessSupervisor : IProcessSupervisor
             {
                 pids.Add(proc.Id);
             }
+            catch
+            {
+                // Process exited concurrently
+            }
             finally
             {
                 proc.Dispose();
@@ -131,6 +136,7 @@ public sealed class ProcessSupervisor : IProcessSupervisor
     /// </summary>
     public async Task<TimeSpan> ThrottleLaunchAsync(TimeSpan? minDelay = null, CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ct.ThrowIfCancellationRequested();
 
         var requestedDelay = minDelay ?? DefaultLaunchDelay;
@@ -139,23 +145,29 @@ public sealed class ProcessSupervisor : IProcessSupervisor
         await _throttleSemaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             ct.ThrowIfCancellationRequested();
 
-            var now = DateTime.UtcNow;
-            var elapsedSinceLast = now - _lastLaunchTimeUtc;
-            var delayNeeded = effectiveDelay - elapsedSinceLast;
+            TimeSpan delayNeeded = TimeSpan.Zero;
+            long lastTick = Volatile.Read(ref _lastLaunchTickMs);
+            if (lastTick >= 0)
+            {
+                long elapsedMs = Math.Max(0, Environment.TickCount64 - lastTick);
+                TimeSpan elapsedSinceLast = TimeSpan.FromMilliseconds(elapsedMs);
+                delayNeeded = effectiveDelay - elapsedSinceLast;
+            }
 
             if (delayNeeded > TimeSpan.Zero)
             {
                 await Task.Delay(delayNeeded, ct).ConfigureAwait(false);
             }
 
-            _lastLaunchTimeUtc = DateTime.UtcNow;
+            Volatile.Write(ref _lastLaunchTickMs, Environment.TickCount64);
             return delayNeeded > TimeSpan.Zero ? delayNeeded : TimeSpan.Zero;
         }
         finally
         {
-            _throttleSemaphore.Release();
+            try { _throttleSemaphore.Release(); } catch (ObjectDisposedException) { }
         }
     }
 
@@ -325,5 +337,16 @@ public sealed class ProcessSupervisor : IProcessSupervisor
         }
 
         return list;
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _throttleSemaphore.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

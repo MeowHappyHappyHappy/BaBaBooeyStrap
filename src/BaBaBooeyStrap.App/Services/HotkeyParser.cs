@@ -54,7 +54,29 @@ public static class HotkeyParser
         ["."] = 0xBE,
         ["OemPeriod"] = 0xBE,
         ["/"] = 0xBF,
-        ["OemQuestion"] = 0xBF
+        ["OemQuestion"] = 0xBF,
+        ["+"] = 0xBB,
+        ["Escape"] = 0x1B,
+        ["Esc"] = 0x1B,
+        ["Add"] = 0x6B,
+        ["Numpad+"] = 0x6B,
+        ["Subtract"] = 0x6D,
+        ["Numpad-"] = 0x6D,
+        ["Multiply"] = 0x6A,
+        ["Numpad*"] = 0x6A,
+        ["Divide"] = 0x6F,
+        ["Numpad/"] = 0x6F,
+        ["Decimal"] = 0x6E,
+        ["Numpad."] = 0x6E,
+        ["PrintScreen"] = 0x2C,
+        ["Snapshot"] = 0x2C,
+        ["Pause"] = 0x13,
+        ["CapsLock"] = 0x14,
+        ["Capital"] = 0x14,
+        ["NumLock"] = 0x90,
+        ["Scroll"] = 0x91,
+        ["ScrollLock"] = 0x91,
+        ["Spacebar"] = 0x20
     };
 
     private static readonly Dictionary<uint, string> VirtualKeyDisplayNames = new()
@@ -94,8 +116,7 @@ public static class HotkeyParser
             return false;
         }
 
-        string[] parts = text.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length < 2)
+        if (!TrySplitHotkeyTokens(text, out List<string> parts))
         {
             return false;
         }
@@ -127,6 +148,46 @@ public static class HotkeyParser
         string normalized = FormatNormalized(modifiers, vk.Value);
         result = new ParsedHotkey(modifiers | User32.MOD_NOREPEAT, vk.Value, normalized);
         return true;
+    }
+
+    private static bool TrySplitHotkeyTokens(string text, out List<string> tokens)
+    {
+        tokens = new List<string>();
+        string trimmed = text.Trim();
+        if (trimmed.Length == 0)
+        {
+            return false;
+        }
+
+        bool trailingPlusKey = false;
+        if (trimmed.EndsWith('+'))
+        {
+            string beforeLast = trimmed[..^1].TrimEnd();
+            if (!beforeLast.EndsWith('+'))
+            {
+                return false;
+            }
+
+            trimmed = beforeLast[..^1];
+            trailingPlusKey = true;
+        }
+
+        foreach (string rawPart in trimmed.Split('+', StringSplitOptions.TrimEntries))
+        {
+            if (string.IsNullOrEmpty(rawPart))
+            {
+                return false;
+            }
+
+            tokens.Add(rawPart);
+        }
+
+        if (trailingPlusKey)
+        {
+            tokens.Add("+");
+        }
+
+        return tokens.Count >= 2;
     }
 
     public static bool TryParseModifiersOnly(string? text, out uint modifiers, out string normalizedText)
@@ -268,6 +329,20 @@ public static class HotkeyParser
         {
             virtualKey = (uint)(0x60 + numNum);
             return true;
+        }
+
+        if (!int.TryParse(token, out _) &&
+            Enum.TryParse<Key>(token, ignoreCase: true, out Key wpfKey) &&
+            wpfKey is not (Key.None or Key.DeadCharProcessed or Key.ImeProcessed
+                or Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt
+                or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.System))
+        {
+            int mappedVk = KeyInterop.VirtualKeyFromKey(wpfKey);
+            if (mappedVk > 0)
+            {
+                virtualKey = (uint)mappedVk;
+                return true;
+            }
         }
 
         virtualKey = 0;

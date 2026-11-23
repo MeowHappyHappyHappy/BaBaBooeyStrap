@@ -21,7 +21,7 @@ public static class CleanerPolicyMapper
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        if (settings.CleanerOptions == CleanerOptions.Never)
+        if (!Enum.IsDefined(settings.CleanerOptions) || settings.CleanerOptions == CleanerOptions.Never)
         {
             return new CleanerPolicy(TimeSpan.Zero, 0, false, false, false, false, false);
         }

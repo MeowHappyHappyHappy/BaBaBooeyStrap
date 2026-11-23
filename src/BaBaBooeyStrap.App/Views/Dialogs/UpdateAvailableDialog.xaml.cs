@@ -23,40 +23,55 @@ public partial class UpdateAvailableDialog : FluentWindow
 
         VersionSummaryText.Text = LocalizationService.Instance.Format(
             "Str_Update_VersionSummaryFormat",
-            _updateInfo.CurrentVersion.ToString(3),
-            _updateInfo.LatestVersion.ToString(3));
+            FormatVersion(_updateInfo.CurrentVersion),
+            FormatVersion(_updateInfo.LatestVersion));
 
         ReleaseNotesBox.Text = string.IsNullOrWhiteSpace(_updateInfo.ReleaseNotes)
             ? LocalizationService.Instance.GetString("Str_Update_NoReleaseNotes")
             : _updateInfo.ReleaseNotes;
 
-        if (string.IsNullOrWhiteSpace(_updateInfo.AssetDownloadUrl))
+        bool canAutoInstall = !string.IsNullOrWhiteSpace(_updateInfo.AssetDownloadUrl) &&
+                              !string.IsNullOrWhiteSpace(_updateInfo.AssetSha256);
+        if (!canAutoInstall)
         {
             UpdateNowButton.Content = LocalizationService.Instance.GetString("Str_Update_OpenDownloadPage");
         }
 
-        Closed += (_, _) => _downloadCts?.Cancel();
+        Closed += (_, _) =>
+        {
+            _downloadCts?.Cancel();
+            _downloadCts?.Dispose();
+            _downloadCts = null;
+        };
     }
+
+    private static string FormatVersion(Version version) =>
+        version.Build >= 0 ? version.ToString(3) : version.ToString(2);
 
     private async void UpdateNow_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(_updateInfo.AssetDownloadUrl))
-        {
-            OpenUrlSafe(_updateInfo.HtmlUrl);
-            DialogResult = true;
-            Close();
-            return;
-        }
-
-        UpdateNowButton.IsEnabled = false;
-        OpenGitHubButton.IsEnabled = false;
-        SkipVersionButton.IsEnabled = false;
-        DownloadProgressPanel.Visibility = Visibility.Visible;
-        ProgressStatusText.Text = LocalizationService.Instance.GetString("Str_Update_Downloading");
-
-        _downloadCts = new CancellationTokenSource();
         try
         {
+            bool canAutoInstall = !string.IsNullOrWhiteSpace(_updateInfo.AssetDownloadUrl) &&
+                                  !string.IsNullOrWhiteSpace(_updateInfo.AssetSha256);
+            if (!canAutoInstall)
+            {
+                OpenUrlSafe(_updateInfo.HtmlUrl);
+                DialogResult = true;
+                Close();
+                return;
+            }
+
+            UpdateNowButton.IsEnabled = false;
+            OpenGitHubButton.IsEnabled = false;
+            SkipVersionButton.IsEnabled = false;
+            DownloadProgressPanel.Visibility = Visibility.Visible;
+            ProgressStatusText.Text = LocalizationService.Instance.GetString("Str_Update_Downloading");
+
+            _downloadCts?.Cancel();
+            _downloadCts?.Dispose();
+            _downloadCts = new CancellationTokenSource();
+
             var progress = new Progress<double>(ratio =>
             {
                 double pct = Math.Clamp(ratio * 100.0, 0.0, 100.0);
@@ -64,8 +79,8 @@ public partial class UpdateAvailableDialog : FluentWindow
                 ProgressStatusText.Text = LocalizationService.Instance.Format("Str_Update_DownloadingPctFormat", pct);
             });
 
-            string? scriptPath = await _updateService.DownloadAndScheduleInstallAsync(_updateInfo, progress, _downloadCts.Token);
-            if (!string.IsNullOrWhiteSpace(scriptPath))
+            string? result = await _updateService.DownloadAndScheduleInstallAsync(_updateInfo, progress, _downloadCts.Token);
+            if (!string.IsNullOrWhiteSpace(result))
             {
                 UpdateInstalledNeedsRestart = true;
                 DialogResult = true;
@@ -109,10 +124,10 @@ public partial class UpdateAvailableDialog : FluentWindow
 
     private static void OpenUrlSafe(string? url)
     {
-        if (string.IsNullOrWhiteSpace(url)) return;
+        if (!AppUpdateService.IsAllowedGitHubWebUrl(url)) return;
         try
         {
-            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(url!) { UseShellExecute = true });
         }
         catch { }
     }

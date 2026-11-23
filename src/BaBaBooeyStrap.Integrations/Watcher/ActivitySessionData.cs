@@ -9,7 +9,7 @@ public enum ServerType
 
 public sealed class ActivityWatcherOptions
 {
-    public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(25);
+    public TimeSpan PollInterval { get; init; } = TimeSpan.FromMilliseconds(150);
     public TimeSpan RpcRateLimit { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan DirectoryScanWindow { get; init; } = TimeSpan.FromSeconds(15);
     public Func<string, bool>? ExcludedLogFilePredicate { get; init; }

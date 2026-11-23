@@ -16,7 +16,8 @@ public sealed class WatcherSession : IDisposable
     private readonly ILogger _logger;
     private readonly Dictionary<int, DateTime> _registeredAutocloseStartTimes = new();
     private readonly TimeSpan _gracefulCloseTimeout;
-    private bool _disposed;
+    private readonly bool _ownsIntegrations;
+    private int _disposed;
 
     public WatcherSession(
         WatcherData data,
@@ -25,7 +26,8 @@ public sealed class WatcherSession : IDisposable
         IDiscordRpcService? discordRpc = null,
         IWindowManipulation? windowManipulation = null,
         ILogger? logger = null,
-        TimeSpan? gracefulCloseTimeout = null)
+        TimeSpan? gracefulCloseTimeout = null,
+        bool ownsIntegrations = false)
     {
         _data = data ?? throw new ArgumentNullException(nameof(data));
         _activityWatcher = activityWatcher ?? throw new ArgumentNullException(nameof(activityWatcher));
@@ -34,11 +36,12 @@ public sealed class WatcherSession : IDisposable
         _windowManipulation = windowManipulation;
         _logger = logger ?? Logger.Current;
         _gracefulCloseTimeout = gracefulCloseTimeout ?? TimeSpan.FromSeconds(2);
+        _ownsIntegrations = ownsIntegrations;
     }
 
     public async Task RunAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
         DateTime? mainStartTime = null;
         if (_processMonitor.TryGetProcessStartTimeUtc(_data.ProcessId, out var startUtc))
@@ -72,7 +75,7 @@ public sealed class WatcherSession : IDisposable
             {
                 await _processMonitor.WaitForProcessExitAsync(currentPid, currentStartTime, ct).ConfigureAwait(false);
 
-                int nextRobloxChildPid = FindRunningRobloxChildPid(currentPid, visitedPids);
+                int nextRobloxChildPid = FindRunningRobloxChildPid(currentPid, currentStartTime, visitedPids);
                 if (nextRobloxChildPid <= 0)
                 {
                     break;
@@ -87,15 +90,22 @@ public sealed class WatcherSession : IDisposable
         }
         finally
         {
-            CleanupOnExit();
+            await CleanupOnExitAsync(mainStartTime).ConfigureAwait(false);
         }
     }
 
-    private int FindRunningRobloxChildPid(int parentPid, HashSet<int> visitedPids)
+    private int FindRunningRobloxChildPid(int parentPid, DateTime? parentStartTimeUtc, HashSet<int> visitedPids)
     {
         foreach (int childPid in _processMonitor.GetChildProcessIds(parentPid))
         {
             if (visitedPids.Contains(childPid))
+            {
+                continue;
+            }
+
+            if (parentStartTimeUtc.HasValue &&
+                _processMonitor.TryGetProcessStartTimeUtc(childPid, out DateTime childStartTimeUtc) &&
+                childStartTimeUtc < parentStartTimeUtc.Value - TimeSpan.FromSeconds(1))
             {
                 continue;
             }
@@ -124,14 +134,18 @@ public sealed class WatcherSession : IDisposable
         }
     }
 
-    private void CleanupOnExit()
+    private async Task CleanupOnExitAsync(DateTime? parentStartTimeUtc)
     {
         try { _activityWatcher.StopWatching(); } catch { }
         try { _windowManipulation?.StopHook(); } catch { }
 
         if (_discordRpc != null)
         {
-            try { _discordRpc.ClearPresenceAsync().GetAwaiter().GetResult(); } catch { }
+            try
+            {
+                await _discordRpc.ClearPresenceAsync().WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            }
+            catch { }
             try { _discordRpc.Disconnect(); } catch { }
         }
 
@@ -155,9 +169,18 @@ public sealed class WatcherSession : IDisposable
 
             if (!pidsToClose.ContainsKey(childPid))
             {
-                pidsToClose[childPid] = _processMonitor.TryGetProcessStartTimeUtc(childPid, out var childStart)
+                DateTime? childStartTimeUtc = _processMonitor.TryGetProcessStartTimeUtc(childPid, out var childStart)
                     ? childStart
                     : null;
+
+                if (parentStartTimeUtc.HasValue &&
+                    childStartTimeUtc.HasValue &&
+                    childStartTimeUtc.Value < parentStartTimeUtc.Value - TimeSpan.FromSeconds(1))
+                {
+                    continue;
+                }
+
+                pidsToClose[childPid] = childStartTimeUtc;
             }
         }
 
@@ -176,9 +199,14 @@ public sealed class WatcherSession : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _activityWatcher.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+
+        try { _activityWatcher.Dispose(); } catch { }
+        if (_ownsIntegrations)
+        {
+            try { (_windowManipulation as IDisposable)?.Dispose(); } catch { }
+            try { (_discordRpc as IDisposable)?.Dispose(); } catch { }
+        }
         GC.SuppressFinalize(this);
     }
 }

@@ -22,14 +22,15 @@ public sealed class WindowSwitcherCoordinator : IDisposable
     private readonly NotifyIconWrapper? _trayWrapper;
     private readonly Dispatcher? _dispatcher;
     private readonly bool _enableFloatingWindows;
+    private readonly object _stateSyncLock = new();
 
     private QuickSwitcherWindow? _quickSwitcher;
     private FloatingSwitcherBarWindow? _floatingBar;
     private WindowFocusHighlightOverlay? _highlightOverlay;
-    private int? _lastFocusedRobloxPid;
+    private int _lastFocusedRobloxPid;
     private bool _floatingBarManuallyHidden;
     private bool _floatingBarManuallyShown;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesChanged;
 
@@ -154,11 +155,12 @@ public sealed class WindowSwitcherCoordinator : IDisposable
             }
         }
 
-        if (currentIdx < 0 && _lastFocusedRobloxPid.HasValue)
+        int lastFocusedPid = Volatile.Read(ref _lastFocusedRobloxPid);
+        if (currentIdx < 0 && lastFocusedPid > 0)
         {
             for (int i = 0; i < instances.Count; i++)
             {
-                if (instances[i].ProcessId == _lastFocusedRobloxPid.Value)
+                if (instances[i].ProcessId == lastFocusedPid)
                 {
                     currentIdx = i;
                     break;
@@ -191,10 +193,10 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var inst = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid);
         if (inst == null) return;
 
-        bool activated = _focusHelper.ActivateWindow(inst.WindowHandle);
+        bool activated = _focusHelper.ActivateWindow(inst.WindowHandle, (uint)pid);
         if (activated)
         {
-            _lastFocusedRobloxPid = pid;
+            Volatile.Write(ref _lastFocusedRobloxPid, pid);
         }
         _tracker.RefreshNow();
 
@@ -213,10 +215,10 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var monitor = _monitorProvider.FindMonitorByDeviceName(deviceName);
         if (inst == null || monitor == null) return;
 
-        bool moved = _focusHelper.MoveWindowToMonitor(inst.WindowHandle, monitor, activateAfterMove: true);
+        bool moved = _focusHelper.MoveWindowToMonitor(inst.WindowHandle, monitor, activateAfterMove: true, (uint)pid);
         if (moved)
         {
-            _lastFocusedRobloxPid = pid;
+            Volatile.Write(ref _lastFocusedRobloxPid, pid);
         }
         _tracker.RefreshNow();
 
@@ -258,7 +260,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var inst = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid);
         if (inst == null) return;
 
-        _focusHelper.ToggleMinimizeRestore(inst.WindowHandle);
+        _focusHelper.ToggleMinimizeRestore(inst.WindowHandle, (uint)pid);
         _tracker.RefreshNow();
     }
 
@@ -268,7 +270,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
 
         foreach (var inst in _tracker.GetRunningInstances())
         {
-            _focusHelper.MinimizeWindow(inst.WindowHandle);
+            _focusHelper.MinimizeWindow(inst.WindowHandle, (uint)inst.ProcessId);
         }
         _tracker.RefreshNow();
     }
@@ -280,7 +282,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var inst = _tracker.GetRunningInstances().FirstOrDefault(i => i.ProcessId == pid);
         if (inst == null) return;
 
-        _focusHelper.CloseWindow(inst.WindowHandle);
+        _focusHelper.CloseWindow(inst.WindowHandle, (uint)pid);
     }
 
     public int TileInstances(
@@ -305,12 +307,13 @@ public sealed class WindowSwitcherCoordinator : IDisposable
                 break;
 
             case WindowTilingMode.MainAndSide:
+                int mainLastFocusedPid = Volatile.Read(ref _lastFocusedRobloxPid);
                 var mainInst = (mainPidOverride.HasValue
                     ? instances.FirstOrDefault(i => i.ProcessId == mainPidOverride.Value)
                     : null)
                     ?? instances.FirstOrDefault(i => i.IsFocused)
-                    ?? (_lastFocusedRobloxPid.HasValue
-                        ? instances.FirstOrDefault(i => i.ProcessId == _lastFocusedRobloxPid.Value)
+                    ?? (mainLastFocusedPid > 0
+                        ? instances.FirstOrDefault(i => i.ProcessId == mainLastFocusedPid)
                         : null)
                     ?? instances[0];
 
@@ -380,11 +383,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
 
         if (!_enableFloatingWindows)
         {
-            _stateManager.Prop.FloatingBarMonitorDevice = null;
-            _stateManager.Prop.FloatingBarLeft = null;
-            _stateManager.Prop.FloatingBarTop = null;
-            _stateManager.Prop.FloatingBarCollapsed = false;
-            _stateManager.Save();
+            ResetFloatingBarStateSynchronized();
             return;
         }
 
@@ -396,13 +395,29 @@ public sealed class WindowSwitcherCoordinator : IDisposable
             }
             else
             {
-                _stateManager.Prop.FloatingBarMonitorDevice = null;
-                _stateManager.Prop.FloatingBarLeft = null;
-                _stateManager.Prop.FloatingBarTop = null;
-                _stateManager.Prop.FloatingBarCollapsed = false;
-                _stateManager.Save();
+                ResetFloatingBarStateSynchronized();
             }
         });
+    }
+
+    private void ResetFloatingBarStateSynchronized()
+    {
+        lock (_stateSyncLock)
+        {
+            _stateManager.Prop.FloatingBarMonitorDevice = null;
+            _stateManager.Prop.FloatingBarLeft = null;
+            _stateManager.Prop.FloatingBarTop = null;
+            _stateManager.Prop.FloatingBarCollapsed = false;
+            _stateManager.Save();
+        }
+    }
+
+    private void SaveStateSynchronized()
+    {
+        lock (_stateSyncLock)
+        {
+            _stateManager.Save();
+        }
     }
 
     public void ReloadSettings()
@@ -423,11 +438,11 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         var focused = instances.FirstOrDefault(i => i.IsFocused);
         if (focused != null)
         {
-            _lastFocusedRobloxPid = focused.ProcessId;
+            Volatile.Write(ref _lastFocusedRobloxPid, focused.ProcessId);
         }
 
-        _trayWrapper?.RefreshRunningInstancesMenu();
-        InstancesChanged?.Invoke(this, instances);
+        try { _trayWrapper?.RefreshRunningInstancesMenu(); } catch { }
+        RaiseInstancesChangedSafe(instances);
 
         if (_enableFloatingWindows)
         {
@@ -441,17 +456,38 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         }
     }
 
+    private void RaiseInstancesChangedSafe(IReadOnlyList<RunningRobloxInstance> instances)
+    {
+        var handler = InstancesChanged;
+        if (handler == null) return;
+
+        foreach (EventHandler<IReadOnlyList<RunningRobloxInstance>> subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(this, instances);
+            }
+            catch (Exception ex)
+            {
+                BaBaBooeyStrap.Core.Logging.Logger.Current.Debug("WindowSwitcherCoordinator", $"InstancesChanged subscriber error: {ex.Message}");
+            }
+        }
+    }
+
     private void OnTrackerInstancesRefreshed(object? sender, IReadOnlyList<RunningRobloxInstance> instances)
     {
         if (_disposed) return;
-        _accountLayoutService.ProcessInstances(instances, _settingsManager.Prop, _stateManager.Prop, () => _stateManager.Save());
+        lock (_stateSyncLock)
+        {
+            _accountLayoutService.ProcessInstances(instances, _settingsManager.Prop, _stateManager.Prop, () => _stateManager.Save());
+        }
     }
 
     private void OnTrackerFocusedChanged(object? sender, RunningRobloxInstance? focused)
     {
         if (focused != null)
         {
-            _lastFocusedRobloxPid = focused.ProcessId;
+            Volatile.Write(ref _lastFocusedRobloxPid, focused.ProcessId);
         }
     }
 
@@ -544,13 +580,40 @@ public sealed class WindowSwitcherCoordinator : IDisposable
 
     private void RunOnUi(Action action)
     {
-        if (_dispatcher == null || _dispatcher.CheckAccess())
+        try
         {
-            action();
+            if (_dispatcher == null)
+            {
+                action();
+                return;
+            }
+
+            if (_dispatcher.HasShutdownStarted || _dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            if (_dispatcher.CheckAccess())
+            {
+                action();
+            }
+            else
+            {
+                _ = _dispatcher.BeginInvoke(() =>
+                {
+                    try
+                    {
+                        action();
+                    }
+                    catch (Exception ex)
+                    {
+                        BaBaBooeyStrap.Core.Logging.Logger.Current.Debug("WindowSwitcherCoordinator", $"UI dispatch action error: {ex.Message}");
+                    }
+                });
+            }
         }
-        else
+        catch (Exception ex) when (ex is TaskCanceledException or OperationCanceledException or InvalidOperationException)
         {
-            _dispatcher.BeginInvoke(action);
         }
     }
 
@@ -563,7 +626,7 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         _tracker.InstancesRefreshed -= OnTrackerInstancesRefreshed;
         _tracker.FocusedInstanceChanged -= OnTrackerFocusedChanged;
 
-        _accountLayoutService.FlushIfDirty(() => _stateManager.Save());
+        SaveSynchronizedFlush();
 
         if (_hotkeyService != null)
         {
@@ -584,5 +647,13 @@ public sealed class WindowSwitcherCoordinator : IDisposable
         });
 
         GC.SuppressFinalize(this);
+    }
+
+    private void SaveSynchronizedFlush()
+    {
+        lock (_stateSyncLock)
+        {
+            _accountLayoutService.FlushIfDirty(() => _stateManager.Save());
+        }
     }
 }

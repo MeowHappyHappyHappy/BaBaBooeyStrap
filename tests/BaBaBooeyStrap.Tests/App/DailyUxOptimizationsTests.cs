@@ -132,12 +132,13 @@ public sealed class DailyUxOptimizationsTests : IDisposable
         ProfileTransferService.ApplyImportedProfile(imported, dstSettings, dstFlagMgr, dstTargetStore, replaceSavedTargets: false);
 
         dstSettings.Theme.Should().Be(Theme.Dark);
-        dstSettings.CustomIntegrations.Should().ContainSingle(i => i.Name == "OBS");
+        dstSettings.CustomIntegrations.Should().BeEmpty();
         dstFlagMgr.GetFlag("OldFlagToRemove").Should().BeNull();
         dstFlagMgr.GetFlag("FFlagTestBool")?.ToString().Should().Be("True");
         dstTargetStore.LoadAll().Should().HaveCount(2);
 
-        ProfileTransferService.ApplyImportedProfile(imported, dstSettings, dstFlagMgr, dstTargetStore, replaceSavedTargets: true);
+        ProfileTransferService.ApplyImportedProfile(imported, dstSettings, dstFlagMgr, dstTargetStore, replaceSavedTargets: true, allowCustomIntegrations: true);
+        dstSettings.CustomIntegrations.Should().ContainSingle(i => i.Name == "OBS");
         dstTargetStore.LoadAll().Should().ContainSingle(t => t.Name == "Blox Fruits");
     }
 
@@ -183,6 +184,7 @@ public sealed class DailyUxOptimizationsTests : IDisposable
     public async Task AppUpdateService_CheckForUpdateAsync_DetectsNewerAndSameVersions()
     {
         var paths = new PathProvider(_tempDir);
+        const string sampleSha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         string newerReleaseJson = """
             {
               "tag_name": "v1.4.0",
@@ -191,7 +193,8 @@ public sealed class DailyUxOptimizationsTests : IDisposable
               "assets": [
                 {
                   "name": "BaBaBooeyStrap.exe",
-                  "browser_download_url": "https://example.com/BaBaBooeyStrap.exe",
+                  "browser_download_url": "https://github.com/MeowHappyHappyHappy/BaBaBooeyStrap/releases/download/v1.4.0/BaBaBooeyStrap.exe",
+                  "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                   "size": 1048576
                 }
               ]
@@ -208,7 +211,8 @@ public sealed class DailyUxOptimizationsTests : IDisposable
         var infoNewer = await updaterNewer.CheckForUpdateAsync();
         infoNewer.IsUpdateAvailable.Should().BeTrue();
         infoNewer.LatestVersion.Should().Be(new Version(1, 4, 0, 0));
-        infoNewer.AssetDownloadUrl.Should().Be("https://example.com/BaBaBooeyStrap.exe");
+        infoNewer.AssetDownloadUrl.Should().Be("https://github.com/MeowHappyHappyHappy/BaBaBooeyStrap/releases/download/v1.4.0/BaBaBooeyStrap.exe");
+        infoNewer.AssetSha256.Should().Be(sampleSha256);
         infoNewer.ReleaseNotes.Should().Contain("WebView2");
 
         var updaterSame = new AppUpdateService(paths, newerClient, currentVersionOverride: new Version(1, 4, 0, 0));
@@ -284,6 +288,12 @@ public sealed class DailyUxOptimizationsTests : IDisposable
         int nextPid = 5000;
 
         string missingExe = Path.Combine(_tempDir, "missing_tool.exe");
+        string preToolExe = Path.Combine(_tempDir, "pre_tool.exe");
+        string postAutoExe = Path.Combine(_tempDir, "post_auto.exe");
+        string postKeepExe = Path.Combine(_tempDir, "post_keep.exe");
+        File.WriteAllText(preToolExe, "stub");
+        File.WriteAllText(postAutoExe, "stub");
+        File.WriteAllText(postKeepExe, "stub");
 
         using var runner = new CustomIntegrationRunner(
             processStarter: psi =>
@@ -296,15 +306,18 @@ public sealed class DailyUxOptimizationsTests : IDisposable
 
         var integrations = new List<CustomIntegration>
         {
-            new() { Name = "PreTool", Location = "cmd.exe", LaunchArgs = "/c echo pre", Delay = 10, PreLaunch = true, AutoClose = true },
+            new() { Name = "PreTool", Location = preToolExe, LaunchArgs = "/c echo pre", Delay = 10, PreLaunch = true, AutoClose = true },
             new() { Name = "MissingTool", Location = missingExe, PreLaunch = true, AutoClose = true },
-            new() { Name = "PostToolAuto", Location = "notepad.exe", LaunchArgs = "", PreLaunch = false, AutoClose = true },
-            new() { Name = "PostToolKeep", Location = "calc.exe", LaunchArgs = "", PreLaunch = false, AutoClose = false }
+            new() { Name = "UnrootedTool", Location = "cmd.exe", PreLaunch = true, AutoClose = true },
+            new() { Name = "UncTool", Location = @"\\evil-server\share\tool.exe", PreLaunch = true, AutoClose = true },
+            new() { Name = "UriTool", Location = "https://example.com/tool.exe", PreLaunch = false, AutoClose = true },
+            new() { Name = "PostToolAuto", Location = postAutoExe, LaunchArgs = "", PreLaunch = false, AutoClose = true },
+            new() { Name = "PostToolKeep", Location = postKeepExe, LaunchArgs = "", PreLaunch = false, AutoClose = false }
         };
 
         var prePids = await runner.LaunchIntegrationsAsync(integrations, preLaunchOnly: true);
         prePids.Should().ContainSingle().Which.Should().Be(5001);
-        launched.Should().ContainSingle(s => s.StartsWith("cmd.exe"));
+        launched.Should().ContainSingle(s => s.StartsWith(preToolExe, StringComparison.OrdinalIgnoreCase));
 
         runner.BindPreLaunchedToPid(prePids, robloxPid: 777);
 

@@ -83,26 +83,26 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ShowWindow(nint hWnd, int nCmdShow);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern int GetWindowTextW(nint hWnd, StringBuilder lpString, int nMaxCount);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowTextW(nint hWnd, string lpString);
 
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", ExactSpelling = true, SetLastError = true)]
     private static extern nint GetWindowLongPtr64(nint hWnd, int nIndex);
 
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", SetLastError = true)]
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW", ExactSpelling = true, SetLastError = true)]
     private static extern int GetWindowLong32(nint hWnd, int nIndex);
 
     public static nint GetWindowLongPtr(nint hWnd, int nIndex) =>
         IntPtr.Size == 8 ? GetWindowLongPtr64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
 
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", ExactSpelling = true, SetLastError = true)]
     private static extern nint SetWindowLongPtr64(nint hWnd, int nIndex, nint dwNewLong);
 
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW", ExactSpelling = true, SetLastError = true)]
     private static extern int SetWindowLong32(nint hWnd, int nIndex, int dwNewLong);
 
     public static nint SetWindowLongPtr(nint hWnd, int nIndex, nint dwNewLong) =>
@@ -116,7 +116,7 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool FlashWindow(nint hWnd, [MarshalAs(UnmanagedType.Bool)] bool bInvert);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     public static extern nint SendMessageW(nint hWnd, uint Msg, nint wParam, nint lParam);
 
     public delegate void WinEventDelegate(
@@ -270,10 +270,10 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindow(nint hWnd);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern int GetClassNameW(nint hWnd, StringBuilder lpClassName, int nMaxCount);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern int GetWindowTextLengthW(nint hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -286,11 +286,11 @@ public static class User32
     [DllImport("user32.dll")]
     public static extern nint MonitorFromWindow(nint hwnd, uint dwFlags);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetMonitorInfoW(nint hMonitor, ref MONITORINFO lpmi);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint LoadImageW(
         nint hInst,
         string name,
@@ -303,10 +303,10 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(nint hIcon);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     public static extern int GetMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PeekMessageW(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
 
@@ -314,10 +314,10 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool TranslateMessage(ref MSG lpMsg);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", ExactSpelling = true)]
     public static extern nint DispatchMessageW(ref MSG lpMsg);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostThreadMessageW(uint idThread, uint Msg, nint wParam, nint lParam);
 
@@ -340,7 +340,7 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsZoomed(nint hWnd);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool PostMessageW(nint hWnd, uint Msg, nint wParam, nint lParam);
 
@@ -355,7 +355,7 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumDisplayMonitors(nint hdc, nint lprcClip, MonitorEnumDelegate lpfnEnum, nint dwData);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetMonitorInfoW(nint hMonitor, ref MONITORINFOEX lpmi);
 
@@ -367,12 +367,22 @@ public static class User32
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool UnregisterHotKey(nint hWnd, int id);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint SendMessageTimeoutW(
         nint hWnd,
         uint Msg,
         nint wParam,
         string lParam,
+        uint fuFlags,
+        uint uTimeout,
+        out nint lpdwResult);
+
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
+    public static extern nint SendMessageTimeoutW(
+        nint hWnd,
+        uint Msg,
+        nint wParam,
+        nint lParam,
         uint fuFlags,
         uint uTimeout,
         out nint lpdwResult);
@@ -390,7 +400,7 @@ public static class User32
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
 
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)]
     public static extern nint SetWindowsHookExW(int idHook, LowLevelKeyboardProc lpfn, nint hMod, uint dwThreadId);
 
     [DllImport("user32.dll", SetLastError = true)]

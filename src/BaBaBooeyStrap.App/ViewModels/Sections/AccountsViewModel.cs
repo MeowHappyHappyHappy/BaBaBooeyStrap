@@ -19,12 +19,13 @@ using BaBaBooeyStrap.MultiInstance.Abstractions;
 
 namespace BaBaBooeyStrap.App.ViewModels.Sections;
 
-public sealed class AccountsViewModel : ViewModelBase
+public sealed class AccountsViewModel : ViewModelBase, IDisposable
 {
     private const string HexSuccess = "#FF10B981";
     private const string HexWarning = "#FFF59E0B";
     private const string HexDanger = "#FFEF4444";
     private const string HexMuted = "#FF9CA3AF";
+    private const int MaxActivityLogLines = 500;
 
     private readonly Settings _settings;
     private readonly IPaths _paths;
@@ -47,9 +48,12 @@ public sealed class AccountsViewModel : ViewModelBase
         string? AvatarUrl,
         string? FormattedLabel = null);
 
+    private readonly object _activityLogLock = new();
+    private readonly Queue<string> _activityLogLines = new();
     private readonly StringBuilder _activityLogBuilder = new();
     private readonly ConcurrentDictionary<long, RobloxGameInfo?> _gameInfoCache = new();
     private readonly ConcurrentDictionary<string, UserPreviewInfo> _userPreviewCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly EventHandler<IReadOnlyList<RunningRobloxInstance>>? _instancesChangedHandler;
     private CancellationTokenSource? _gameInfoCts;
     private string _resolvedGameName = string.Empty;
     private string _resolvedGamePlaceIdText = string.Empty;
@@ -88,6 +92,9 @@ public sealed class AccountsViewModel : ViewModelBase
     private bool _isLaunching;
     private bool _isVerifyingCookies;
     private CancellationTokenSource? _launchCts;
+    private int _launchActiveFlag;
+    private int _disposed;
+    private string? _accountLoadError;
     private string? _lastLoggedMutexState;
     private string? _lastLoggedMutexError;
 
@@ -127,7 +134,8 @@ public sealed class AccountsViewModel : ViewModelBase
 
         if (_switcherCoordinator != null)
         {
-            _switcherCoordinator.InstancesChanged += (_, instances) => UpdateRunningInstancesOnDispatcher(instances);
+            _instancesChangedHandler = (_, instances) => UpdateRunningInstancesOnDispatcher(instances);
+            _switcherCoordinator.InstancesChanged += _instancesChangedHandler;
         }
 
         ReloadAccounts();
@@ -528,7 +536,31 @@ public sealed class AccountsViewModel : ViewModelBase
     }
 
     public bool IsNotVerifyingCookies => !IsVerifyingCookies;
-    public string ActivityLogText => _activityLogBuilder.ToString();
+
+    public string? AccountLoadError
+    {
+        get => _accountLoadError;
+        private set
+        {
+            if (SetProperty(ref _accountLoadError, value))
+            {
+                OnPropertyChanged(nameof(HasAccountLoadError));
+            }
+        }
+    }
+
+    public bool HasAccountLoadError => !string.IsNullOrWhiteSpace(_accountLoadError);
+
+    public string ActivityLogText
+    {
+        get
+        {
+            lock (_activityLogLock)
+            {
+                return _activityLogBuilder.ToString();
+            }
+        }
+    }
 
     public void PersistLastTargetState()
     {
@@ -545,6 +577,7 @@ public sealed class AccountsViewModel : ViewModelBase
 
         Accounts.Clear();
         AccountItems.Clear();
+        AccountLoadError = null;
         if (_accountStore != null)
         {
             try
@@ -560,9 +593,11 @@ public sealed class AccountsViewModel : ViewModelBase
                     AccountItems.Add(item);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Corrupted DPAPI store renders empty list safely
+                Core.Logging.Logger.WarnStatic("AccountsViewModel", $"Failed to load accounts from store: {ex.Message}");
+                AccountLoadError = ex.Message;
+                AppendActivityLog($"Failed to load accounts: {ex.Message}");
             }
         }
 
@@ -589,9 +624,10 @@ public sealed class AccountsViewModel : ViewModelBase
                 SavedTargets.Add(target);
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Corrupted target store renders empty list safely
+            Core.Logging.Logger.WarnStatic("AccountsViewModel", $"Failed to load saved join targets: {ex.Message}");
+            AppendActivityLog($"Failed to load saved join targets: {ex.Message}");
         }
     }
 
@@ -1311,7 +1347,14 @@ public sealed class AccountsViewModel : ViewModelBase
         try
         {
             await Task.Delay(350, ct).ConfigureAwait(false);
-            PostToCaller(() => IsResolvingGameInfo = true);
+            if (ct.IsCancellationRequested) return;
+            PostToCaller(() =>
+            {
+                if (!ct.IsCancellationRequested)
+                {
+                    IsResolvingGameInfo = true;
+                }
+            });
 
             UserPreviewInfo? info;
             if (_injectedAuthService != null)
@@ -1359,7 +1402,16 @@ public sealed class AccountsViewModel : ViewModelBase
         }
         finally
         {
-            PostToCaller(() => IsResolvingGameInfo = false);
+            if (!ct.IsCancellationRequested)
+            {
+                PostToCaller(() =>
+                {
+                    if (!ct.IsCancellationRequested)
+                    {
+                        IsResolvingGameInfo = false;
+                    }
+                });
+            }
         }
     }
 
@@ -1553,7 +1605,14 @@ public sealed class AccountsViewModel : ViewModelBase
         try
         {
             await Task.Delay(350, ct).ConfigureAwait(false);
-            PostToCaller(() => IsResolvingGameInfo = true);
+            if (ct.IsCancellationRequested) return;
+            PostToCaller(() =>
+            {
+                if (!ct.IsCancellationRequested)
+                {
+                    IsResolvingGameInfo = true;
+                }
+            });
 
             RobloxGameInfo? info;
             if (_injectedAuthService != null)
@@ -1596,7 +1655,16 @@ public sealed class AccountsViewModel : ViewModelBase
         }
         finally
         {
-            PostToCaller(() => IsResolvingGameInfo = false);
+            if (!ct.IsCancellationRequested)
+            {
+                PostToCaller(() =>
+                {
+                    if (!ct.IsCancellationRequested)
+                    {
+                        IsResolvingGameInfo = false;
+                    }
+                });
+            }
         }
     }
 
@@ -1774,9 +1842,12 @@ public sealed class AccountsViewModel : ViewModelBase
         return (importedAccounts, importedTargets);
     }
 
+    private bool TryEnterLaunchGate() => Interlocked.CompareExchange(ref _launchActiveFlag, 1, 0) == 0;
+    private void ExitLaunchGate() => Interlocked.Exchange(ref _launchActiveFlag, 0);
+
     public async Task<LaunchResult?> LaunchSelectedAccountAsync(CancellationToken ct = default)
     {
-        if (_launcher == null || IsLaunching) return null;
+        if (_launcher == null || Volatile.Read(ref _launchActiveFlag) != 0) return null;
 
         AccountItem? targetItem = SelectedAccountItem
             ?? (_selectedAccount != null
@@ -1786,8 +1857,18 @@ public sealed class AccountsViewModel : ViewModelBase
 
         if (targetItem == null)
         {
-            var settings = new LaunchSettings();
-            return await _launcher.LaunchPlayerAsync(settings, ct);
+            if (!TryEnterLaunchGate()) return null;
+            IsLaunching = true;
+            try
+            {
+                var settings = new LaunchSettings();
+                return await _launcher.LaunchPlayerAsync(settings, ct);
+            }
+            finally
+            {
+                IsLaunching = false;
+                ExitLaunchGate();
+            }
         }
 
         var batchResult = await LaunchAccountsSequentiallyCoreAsync([targetItem], ct);
@@ -1796,7 +1877,7 @@ public sealed class AccountsViewModel : ViewModelBase
 
     public async Task<LaunchResult?> LaunchSelectedFromUiAsync(CancellationToken ct = default)
     {
-        if (IsLaunching) return null;
+        if (Volatile.Read(ref _launchActiveFlag) != 0) return null;
 
         if (SelectedAccountItem is not AccountItem selected)
         {
@@ -1811,7 +1892,7 @@ public sealed class AccountsViewModel : ViewModelBase
 
     public async Task<int> LaunchCheckedAccountsAsync(CancellationToken ct = default)
     {
-        if (IsLaunching) return 0;
+        if (Volatile.Read(ref _launchActiveFlag) != 0) return 0;
 
         var checkedAccounts = AccountItems.Where(a => a.IsChecked).ToList();
         if (checkedAccounts.Count == 0)
@@ -1835,81 +1916,86 @@ public sealed class AccountsViewModel : ViewModelBase
         IReadOnlyList<AccountItem> targets,
         CancellationToken externalCt)
     {
-        if (_launcher == null || targets.Count == 0 || IsLaunching)
+        if (_launcher == null || targets.Count == 0 || !TryEnterLaunchGate())
         {
             return (0, null);
         }
 
-        string effectiveTargetInput;
-        LaunchTarget parsedTarget;
-        try
-        {
-            effectiveTargetInput = ResolveEffectiveTargetInput();
-            parsedTarget = RobloxLauncher.ParseTargetInput(effectiveTargetInput, _isFollowUserTargetMode);
-        }
-        catch (Exception ex)
-        {
-            _setLocalizedStatus("Str_Accounts_StatusInvalidLaunchTarget", Array.Empty<object?>());
-            AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogInvalidLaunchTargetFormat", ex.Message));
-            return (0, new LaunchResult(false, string.Empty, new LaunchTarget(LaunchTargetKind.Standard, null), DateTimeOffset.UtcNow, null, ex.Message));
-        }
-
-        if (_settings.MultiInstanceEnabled && _multiInstanceController != null)
-        {
-            var gateResult = LaunchGate.VerifyLaunchReadiness(_multiInstanceController, true);
-            if (!gateResult.CanLaunch)
-            {
-                string reason = gateResult.WarningMessage ?? LaunchGate.BuildDiagnosticBlockedMessage(gateResult.Status);
-                _setLocalizedStatus("Str_Accounts_StatusBlockedNoMutex", Array.Empty<object?>());
-                AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogBlockedNoMutexFormat", reason));
-                RefreshMultiInstanceStatus();
-                return (0, new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, reason));
-            }
-        }
-
-        _launchCts?.Dispose();
-        _launchCts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
-        OnPropertyChanged(nameof(CanCancelLaunch));
-        var ct = _launchCts.Token;
-
-        bool hasAnySettingsOverride = targets.Any(t => t.Account.RobloxSettings?.HasOverrides == true);
-        var initialRunningPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
-        bool shouldProtectSettings = hasAnySettingsOverride ||
-                                     (_settings.MultiInstanceEnabled && (targets.Count > 1 || initialRunningPids.Count > 0));
-        var pidsToProtect = new HashSet<int>(initialRunningPids);
-
-        IAsyncDisposable? guardSession = null;
-        try
-        {
-            guardSession = await _globalSettingsGuard.BeginLaunchSessionAsync(ct);
-
-            if (shouldProtectSettings)
-            {
-                try
-                {
-                    _globalSettingsGuard.EnsureBackupCaptured();
-                    AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsBackedUp"));
-                }
-                catch (Exception ex)
-                {
-                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsBackupFailedFormat", ex.Message));
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            return (0, new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, "Operation canceled."));
-        }
-
-        IsLaunching = true;
-        _setLocalizedStatus("Str_Accounts_StatusBatchLaunchingFormat", [targets.Count]);
-
         int successCount = 0;
         LaunchResult? lastResult = null;
         bool lastAppliedOverride = false;
+        bool shouldProtectSettings = false;
+        var pidsToProtect = new HashSet<int>();
+        IAsyncDisposable? guardSession = null;
 
+        IsLaunching = true;
         try
         {
+            string effectiveTargetInput;
+            LaunchTarget parsedTarget;
+            try
+            {
+                effectiveTargetInput = ResolveEffectiveTargetInput();
+                parsedTarget = RobloxLauncher.ParseTargetInput(effectiveTargetInput, _isFollowUserTargetMode);
+            }
+            catch (Exception ex)
+            {
+                _setLocalizedStatus("Str_Accounts_StatusInvalidLaunchTarget", Array.Empty<object?>());
+                AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogInvalidLaunchTargetFormat", ex.Message));
+                return (0, new LaunchResult(false, string.Empty, new LaunchTarget(LaunchTargetKind.Standard, null), DateTimeOffset.UtcNow, null, ex.Message));
+            }
+
+            if (_settings.MultiInstanceEnabled && _multiInstanceController != null)
+            {
+                var gateResult = LaunchGate.VerifyLaunchReadiness(_multiInstanceController, true);
+                if (!gateResult.CanLaunch)
+                {
+                    string reason = gateResult.WarningMessage ?? LaunchGate.BuildDiagnosticBlockedMessage(gateResult.Status);
+                    _setLocalizedStatus("Str_Accounts_StatusBlockedNoMutex", Array.Empty<object?>());
+                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogBlockedNoMutexFormat", reason));
+                    RefreshMultiInstanceStatus();
+                    return (0, new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, reason));
+                }
+            }
+
+            _launchCts?.Dispose();
+            _launchCts = CancellationTokenSource.CreateLinkedTokenSource(externalCt);
+            OnPropertyChanged(nameof(CanCancelLaunch));
+            var ct = _launchCts.Token;
+
+            bool hasAnySettingsOverride = targets.Any(t => t.Account.RobloxSettings?.HasOverrides == true);
+            var initialRunningPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
+            shouldProtectSettings = hasAnySettingsOverride ||
+                                    (_settings.MultiInstanceEnabled && (targets.Count > 1 || initialRunningPids.Count > 0));
+            foreach (int p in initialRunningPids)
+            {
+                pidsToProtect.Add(p);
+            }
+
+            try
+            {
+                guardSession = await _globalSettingsGuard.BeginLaunchSessionAsync(ct);
+
+                if (shouldProtectSettings)
+                {
+                    try
+                    {
+                        _globalSettingsGuard.EnsureBackupCaptured();
+                        AppendActivityLog(LocalizationService.Instance.GetString("Str_Accounts_LogSettingsBackedUp"));
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsBackupFailedFormat", ex.Message));
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return (0, new LaunchResult(false, string.Empty, parsedTarget, DateTimeOffset.UtcNow, null, "Operation canceled."));
+            }
+
+            _setLocalizedStatus("Str_Accounts_StatusBatchLaunchingFormat", [targets.Count]);
+
             if (_launcher is BootstrapperOrchestrator orchestrator)
             {
                 _setLocalizedStatus("Str_Accounts_StatusPreparingBatch", Array.Empty<object?>());
@@ -2123,6 +2209,7 @@ public sealed class AccountsViewModel : ViewModelBase
             _launchCts?.Dispose();
             _launchCts = null;
             IsLaunching = false;
+            ExitLaunchGate();
             RefreshMultiInstanceStatus();
             RefreshProtocolStatus();
         }
@@ -2168,14 +2255,42 @@ public sealed class AccountsViewModel : ViewModelBase
 
     public void ClearActivityLog()
     {
-        _activityLogBuilder.Clear();
+        lock (_activityLogLock)
+        {
+            _activityLogLines.Clear();
+            _activityLogBuilder.Clear();
+        }
         OnPropertyChanged(nameof(ActivityLogText));
     }
 
     public void AppendActivityLog(string message)
     {
         if (string.IsNullOrWhiteSpace(message)) return;
-        _activityLogBuilder.AppendLine($"[{DateTime.Now:HH:mm:ss}] {message}");
+
+        string formatted = $"[{DateTime.Now:HH:mm:ss}] {message}";
+        lock (_activityLogLock)
+        {
+            if (_activityLogLines.Count >= MaxActivityLogLines)
+            {
+                while (_activityLogLines.Count >= MaxActivityLogLines)
+                {
+                    _activityLogLines.Dequeue();
+                }
+
+                _activityLogLines.Enqueue(formatted);
+                _activityLogBuilder.Clear();
+                foreach (string line in _activityLogLines)
+                {
+                    _activityLogBuilder.AppendLine(line);
+                }
+            }
+            else
+            {
+                _activityLogLines.Enqueue(formatted);
+                _activityLogBuilder.AppendLine(formatted);
+            }
+        }
+
         OnPropertyChanged(nameof(ActivityLogText));
         ActivityLogAppended?.Invoke(this, EventArgs.Empty);
     }
@@ -2243,5 +2358,24 @@ public sealed class AccountsViewModel : ViewModelBase
         {
             Apply();
         }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (_switcherCoordinator != null && _instancesChangedHandler != null)
+        {
+            _switcherCoordinator.InstancesChanged -= _instancesChangedHandler;
+        }
+
+        try { _gameInfoCts?.Cancel(); } catch { }
+        try { _gameInfoCts?.Dispose(); } catch { }
+        _gameInfoCts = null;
+
+        try { _launchCts?.Cancel(); } catch { }
     }
 }

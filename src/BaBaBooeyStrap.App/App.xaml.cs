@@ -26,6 +26,8 @@ public partial class App : Application
     private bool _isQuietMode;
     private bool _isShuttingDown;
     private bool _hasCheckedAppUpdateThisSession;
+    private int _handlingDispatcherException;
+    private int _isTrayLaunching;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -33,11 +35,17 @@ public partial class App : Application
 
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException += OnCurrentDomainUnhandledException;
 
         try
         {
             _services = AppServiceConfiguration.CreateCoreServices(initializeGlobalEnvironment: true);
             _services.GlobalSettingsGuard?.RecoverOnStartup();
+            ScheduleOldUpdateCleanup(e.Args, _services.Paths.Base);
+            _ = Task.Run(() =>
+            {
+                try { AddAccountDialog.CleanupOrphanedWebViewProfiles(Path.GetTempPath()); } catch { }
+            });
             var appSettings = _services.SettingsManager.Prop;
 
             if (appSettings.WPFSoftwareRender)
@@ -70,14 +78,30 @@ public partial class App : Application
                 return;
             }
 
-            // 2. Single-instance App Mutex + Named Pipe forwarding
+            // 2. Single-instance App Mutex + Named Pipe forwarding (retry briefly across primary startup/exit races)
             var ipc = AppServiceConfiguration.CreateSingleInstanceIpc();
             _services.Ipc = ipc;
-            if (!ipc.TryAcquirePrimary())
+            bool acquiredPrimary = ipc.TryAcquirePrimary();
+            if (!acquiredPrimary)
             {
-                await ipc.SendArgumentsToPrimaryAsync(e.Args);
-                ShutdownApp(0);
-                return;
+                for (int attempt = 0; attempt < 2 && !acquiredPrimary; attempt++)
+                {
+                    if (await ipc.SendArgumentsToPrimaryAsync(e.Args))
+                    {
+                        ShutdownApp(0);
+                        return;
+                    }
+
+                    await Task.Delay(150);
+                    acquiredPrimary = ipc.TryAcquirePrimary();
+                }
+
+                if (!acquiredPrimary)
+                {
+                    Logger.WarnStatic("App.OnStartup", "Secondary instance could not connect to primary IPC pipe; exiting cleanly.");
+                    ShutdownApp(0);
+                    return;
+                }
             }
 
             ipc.ArgumentsReceived += (_, forwardedArgs) =>
@@ -140,15 +164,36 @@ public partial class App : Application
         Logger.ExceptionStatic("App.DispatcherUnhandledException", e.Exception);
         e.Handled = true;
 
-        if (!_isQuietMode)
+        if (Interlocked.Exchange(ref _handlingDispatcherException, 1) != 0)
         {
-            try
+            return;
+        }
+
+        try
+        {
+            if (!_isQuietMode && !_isShuttingDown)
             {
                 FluentDialogService.ShowWarning(
                     LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
                     e.Exception.Message);
             }
-            catch { }
+        }
+        catch { }
+        finally
+        {
+            Interlocked.Exchange(ref _handlingDispatcherException, 0);
+        }
+    }
+
+    private static void OnCurrentDomainUnhandledException(object? sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.ExceptionObject is Exception ex)
+        {
+            Logger.ExceptionStatic("App.CurrentDomainUnhandledException", ex);
+        }
+        else
+        {
+            Logger.ErrorStatic("App.CurrentDomainUnhandledException", $"Non-CLS unhandled exception: {e.ExceptionObject}");
         }
     }
 
@@ -156,6 +201,68 @@ public partial class App : Application
     {
         Logger.ExceptionStatic("App.UnobservedTaskException", e.Exception);
         e.SetObserved();
+    }
+
+    private static void ScheduleOldUpdateCleanup(string[] args, string appBaseDir)
+    {
+        if (args == null || args.Length < 2) return;
+
+        string? candidatePath = null;
+        for (int i = 0; i < args.Length - 1; i++)
+        {
+            if (string.Equals(args[i], "-cleanup-old", StringComparison.OrdinalIgnoreCase))
+            {
+                candidatePath = args[i + 1];
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(candidatePath)) return;
+
+        try
+        {
+            string fullOldPath = Path.GetFullPath(candidatePath);
+            string normalizedBase = Path.GetFullPath(appBaseDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            string currentExeDir = (Path.GetDirectoryName(Environment.ProcessPath ?? string.Empty) ?? string.Empty);
+            string? normalizedExeDir = string.IsNullOrWhiteSpace(currentExeDir)
+                ? null
+                : Path.GetFullPath(currentExeDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+            bool inAllowedDir = fullOldPath.StartsWith(normalizedBase, StringComparison.OrdinalIgnoreCase) ||
+                (normalizedExeDir != null && fullOldPath.StartsWith(normalizedExeDir, StringComparison.OrdinalIgnoreCase));
+
+            if (!inAllowedDir || !fullOldPath.EndsWith(".old", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.WarnStatic("App.UpdateCleanup", "Ignoring -cleanup-old argument outside allowed directories or without .old suffix.");
+                return;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                for (int attempt = 0; attempt < 10; attempt++)
+                {
+                    try
+                    {
+                        if (!File.Exists(fullOldPath))
+                        {
+                            return;
+                        }
+                        File.Delete(fullOldPath);
+                        Logger.InfoStatic("App.UpdateCleanup", $"Removed previous binary backup '{Path.GetFileName(fullOldPath)}'.");
+                        return;
+                    }
+                    catch
+                    {
+                        await Task.Delay(300).ConfigureAwait(false);
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.WarnStatic("App.UpdateCleanup", $"Failed to schedule old update cleanup: {ex.Message}");
+        }
     }
 
     private async Task RouteCliCommandAsync(LaunchSettings launchSettings)
@@ -278,12 +385,20 @@ public partial class App : Application
         try
         {
             var forwarded = new LaunchSettings(args);
+            if (forwarded.UninstallFlag.Active ||
+                forwarded.WatcherFlag.Active ||
+                args.Any(a => string.Equals(a, "-cleanup-old", StringComparison.OrdinalIgnoreCase)))
+            {
+                Logger.WarnStatic("App.Ipc", "Ignoring privileged/mode CLI flag forwarded over IPC.");
+                return;
+            }
+
             if (forwarded.HoldFlag.Active)
             {
                 _services?.Orchestrator?.MultiInstanceController.Enable();
                 _mainWindow?.ViewModel.AccountManagement.RefreshMultiInstanceStatus();
                 _services?.TrayWrapper?.RefreshMultiInstanceMenuStatus();
-                if (forwarded.MenuFlag.Active)
+                if (forwarded.MenuFlag.Active && !forwarded.QuietFlag.Active)
                 {
                     ShowMainWindow();
                 }
@@ -292,13 +407,28 @@ public partial class App : Application
 
             if (forwarded.AccountFlag.Active)
             {
-                await LaunchAccountFromCliAsync(forwarded);
+                if (!forwarded.NoLaunchFlag.Active)
+                {
+                    await LaunchAccountFromCliAsync(forwarded);
+                }
+                return;
+            }
+
+            if (forwarded.NoLaunchFlag.Active)
+            {
+                if (forwarded.MenuFlag.Active && !forwarded.QuietFlag.Active)
+                {
+                    ShowMainWindow();
+                }
                 return;
             }
 
             if (forwarded.MenuFlag.Active || forwarded.RobloxLaunchMode == LaunchMode.None)
             {
-                ShowMainWindow();
+                if (!forwarded.QuietFlag.Active)
+                {
+                    ShowMainWindow();
+                }
             }
             else
             {
@@ -397,12 +527,8 @@ public partial class App : Application
         var accountStore = _services.AccountStore;
         var globalSettingsGuard = _services.GlobalSettingsGuard;
 
-        bool previousMultiInstance = settingsManager.Prop.MultiInstanceEnabled;
-        if (forceDisableMultiInstance)
-        {
-            settingsManager.Prop.MultiInstanceEnabled = false;
-        }
-        else if (previousMultiInstance)
+        bool effectiveMultiInstance = settingsManager.Prop.MultiInstanceEnabled && !forceDisableMultiInstance;
+        if (effectiveMultiInstance)
         {
             orchestrator.MultiInstanceController.Enable();
         }
@@ -433,7 +559,7 @@ public partial class App : Application
 
             var previousPids = orchestrator.ProcessSupervisor.CaptureRunningClientPids();
             bool hasOverride = account.RobloxSettings?.HasOverrides == true;
-            shouldProtect = hasOverride || (settingsManager.Prop.MultiInstanceEnabled && previousPids.Count > 0);
+            shouldProtect = hasOverride || (effectiveMultiInstance && previousPids.Count > 0);
 
             if (shouldProtect && globalSettingsGuard != null)
             {
@@ -457,14 +583,18 @@ public partial class App : Application
                 progress,
                 UpdateStatus,
                 skipDeploymentCheck: false,
-                cts.Token);
+                skipBetterMatchmaking: false,
+                cts.Token,
+                disableMultiInstanceForLaunch: forceDisableMultiInstance);
 
             dialog?.CloseBootstrapper();
 
             if (result.Success)
             {
                 launchSucceeded = true;
-                accountStore.Upsert(account);
+                var launchedAt = DateTimeOffset.UtcNow;
+                account.LastLaunchedAt = launchedAt;
+                accountStore.UpdateLastLaunchedAt(account.Id, launchedAt);
                 _mainWindow?.ViewModel.AccountManagement.ReloadAccounts();
 
                 if (result.ProcessId.HasValue)
@@ -488,7 +618,7 @@ public partial class App : Application
                     }
                 }
 
-                if (settingsManager.Prop.MultiInstanceEnabled)
+                if (effectiveMultiInstance)
                 {
                     foreach (int existingPid in previousPids)
                     {
@@ -522,7 +652,6 @@ public partial class App : Application
         finally
         {
             dialog?.CloseBootstrapper();
-            settingsManager.Prop.MultiInstanceEnabled = previousMultiInstance;
             if (globalSettingsGuard != null)
             {
                 try
@@ -647,81 +776,92 @@ public partial class App : Application
     private async Task LaunchPlayerFromTrayOrSettingsAsync(LaunchSettings launchSettings)
     {
         if (_services?.Orchestrator == null) return;
-
-        var orchestrator = _services.Orchestrator;
-        var settingsManager = _services.SettingsManager;
-        var trayWrapper = _services.TrayWrapper;
-
-        if (!launchSettings.QuietFlag.Active && settingsManager.Prop.ConfirmLaunches)
+        if (Interlocked.CompareExchange(ref _isTrayLaunching, 1, 0) != 0)
         {
-            bool confirmed = FluentDialogService.ShowConfirm(
-                LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchTitle"),
-                LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchGenericMessage"),
-                confirmText: LocalizationService.Instance.GetString("Str_Common_Launch"));
-            if (!confirmed)
-            {
-                return;
-            }
-        }
-
-        using var cts = new CancellationTokenSource();
-        IBootstrapperDialog? dialog = null;
-
-        if (!launchSettings.QuietFlag.Active)
-        {
-            dialog = BootstrapperDialogFactory.Create(settingsManager.Prop, cts, _services.Paths);
-            dialog.ShowBootstrapper();
+            return;
         }
 
         try
         {
-            var progress = dialog?.ViewModel;
-            void UpdateStatus(string msg)
+            var orchestrator = _services.Orchestrator;
+            var settingsManager = _services.SettingsManager;
+            var trayWrapper = _services.TrayWrapper;
+
+            if (!launchSettings.QuietFlag.Active && settingsManager.Prop.ConfirmLaunches)
             {
-                if (dialog == null) return;
-                Dispatcher.InvokeAsync(() => dialog.Message = msg);
+                bool confirmed = FluentDialogService.ShowConfirm(
+                    LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchTitle"),
+                    LocalizationService.Instance.GetString("Str_Dialog_ConfirmLaunchGenericMessage"),
+                    confirmText: LocalizationService.Instance.GetString("Str_Common_Launch"));
+                if (!confirmed)
+                {
+                    return;
+                }
             }
 
-            var result = await orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
-            dialog?.CloseBootstrapper();
+            using var cts = new CancellationTokenSource();
+            IBootstrapperDialog? dialog = null;
+
+            if (!launchSettings.QuietFlag.Active)
+            {
+                dialog = BootstrapperDialogFactory.Create(settingsManager.Prop, cts, _services.Paths);
+                dialog.ShowBootstrapper();
+            }
 
             try
             {
-                _services.InstallerService.EnsureProtocolsPreserved();
-                _mainWindow?.ViewModel.AccountManagement.RefreshProtocolStatus();
-            }
-            catch { }
+                var progress = dialog?.ViewModel;
+                void UpdateStatus(string msg)
+                {
+                    if (dialog == null) return;
+                    Dispatcher.InvokeAsync(() => dialog.Message = msg);
+                }
 
-            if (!result.Success && !launchSettings.QuietFlag.Active)
-            {
-                FluentDialogService.ShowWarning(
-                    LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
-                    result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"));
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            dialog?.CloseBootstrapper();
-            Logger.InfoStatic("App", "Launch cancelled by user.");
-        }
-        catch (Exception ex)
-        {
-            dialog?.CloseBootstrapper();
-            Logger.ExceptionStatic("App", ex);
-            if (!launchSettings.QuietFlag.Active)
-            {
-                FluentDialogService.ShowError(
-                    LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
-                    ex.Message);
-            }
-        }
+                var result = await orchestrator.LaunchWithProgressAsync(launchSettings, progress, UpdateStatus, cts.Token);
+                dialog?.CloseBootstrapper();
 
-        if (!settingsManager.Prop.MultiInstanceEnabled &&
-            !settingsManager.Prop.MinimizeToTray &&
-            (_mainWindow == null || !_mainWindow.IsVisible) &&
-            orchestrator.ProcessSupervisor.GetRunningRobloxPids().Count == 0)
+                try
+                {
+                    _services.InstallerService.EnsureProtocolsPreserved();
+                    _mainWindow?.ViewModel.AccountManagement.RefreshProtocolStatus();
+                }
+                catch { }
+
+                if (!result.Success && !launchSettings.QuietFlag.Active)
+                {
+                    FluentDialogService.ShowWarning(
+                        LocalizationService.Instance.GetString("Str_Dialog_LaunchErrorTitle"),
+                        result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback"));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                dialog?.CloseBootstrapper();
+                Logger.InfoStatic("App", "Launch cancelled by user.");
+            }
+            catch (Exception ex)
+            {
+                dialog?.CloseBootstrapper();
+                Logger.ExceptionStatic("App", ex);
+                if (!launchSettings.QuietFlag.Active)
+                {
+                    FluentDialogService.ShowError(
+                        LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                        ex.Message);
+                }
+            }
+
+            if (!settingsManager.Prop.MultiInstanceEnabled &&
+                !settingsManager.Prop.MinimizeToTray &&
+                (_mainWindow == null || !_mainWindow.IsVisible) &&
+                orchestrator.ProcessSupervisor.GetRunningRobloxPids().Count == 0)
+            {
+                ShutdownApp(0);
+            }
+        }
+        finally
         {
-            ShutdownApp(0);
+            Interlocked.Exchange(ref _isTrayLaunching, 0);
         }
     }
 
@@ -750,11 +890,21 @@ public partial class App : Application
 
             if (data == null)
             {
-                var running = Process.GetProcessesByName("RobloxPlayerBeta").FirstOrDefault();
-                if (running != null)
+                var runningProcesses = Process.GetProcessesByName("RobloxPlayerBeta");
+                try
                 {
-                    data = new WatcherData { ProcessId = running.Id, LogFile = _services.Paths.RobloxLogs };
-                    running.Dispose();
+                    var running = runningProcesses.FirstOrDefault();
+                    if (running != null)
+                    {
+                        data = new WatcherData { ProcessId = running.Id, LogFile = _services.Paths.RobloxLogs };
+                    }
+                }
+                finally
+                {
+                    foreach (var proc in runningProcesses)
+                    {
+                        proc.Dispose();
+                    }
                 }
             }
 
@@ -840,7 +990,12 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        DispatcherUnhandledException -= OnDispatcherUnhandledException;
+        TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
+        AppDomain.CurrentDomain.UnhandledException -= OnCurrentDomainUnhandledException;
+
         _services?.Dispose();
+        (Logger.Current as IDisposable)?.Dispose();
         base.OnExit(e);
     }
 }

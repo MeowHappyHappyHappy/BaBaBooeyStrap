@@ -6,5 +6,7 @@ public interface IMonitorProvider
     MonitorInfo GetPrimaryMonitor();
     MonitorInfo GetMonitorFromCursor();
     MonitorInfo GetMonitorFromWindow(nint hWnd);
+    MonitorInfo GetMonitorFromWindow(nint hWnd, IReadOnlyList<MonitorInfo> cachedMonitors) =>
+        GetMonitorFromWindow(hWnd);
     MonitorInfo? FindMonitorByDeviceName(string? deviceName);
 }

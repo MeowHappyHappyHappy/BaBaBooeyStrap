@@ -75,7 +75,7 @@ public sealed class InstallerService
                         foreach (string srcFile in Directory.GetFiles(sourceDir, pattern, SearchOption.TopDirectoryOnly))
                         {
                             string dstFile = Path.Combine(targetDir, Path.GetFileName(srcFile));
-                            if (!File.Exists(dstFile))
+                            if (IsFileOutOfSync(srcFile, dstFile))
                             {
                                 return true;
                             }
@@ -89,7 +89,7 @@ public sealed class InstallerService
                         {
                             string rel = Path.GetRelativePath(sourceDir, srcFile);
                             string dstFile = Path.Combine(targetDir, rel);
-                            if (!File.Exists(dstFile))
+                            if (IsFileOutOfSync(srcFile, dstFile))
                             {
                                 return true;
                             }
@@ -118,6 +118,7 @@ public sealed class InstallerService
             IsValidBootstrapperExecutable(currentExe) &&
             !string.Equals(Path.GetFullPath(currentExe), Path.GetFullPath(targetExe), StringComparison.OrdinalIgnoreCase))
         {
+            string tempExe = $"{targetExe}.{Guid.NewGuid():N}.tmp";
             try
             {
                 string? targetDir = Path.GetDirectoryName(targetExe);
@@ -126,13 +127,15 @@ public sealed class InstallerService
                     Directory.CreateDirectory(targetDir);
                 }
 
-                File.Copy(currentExe, targetExe, overwrite: true);
+                File.Copy(currentExe, tempExe, overwrite: true);
+                File.Move(tempExe, targetExe, overwrite: true);
                 CopyCompanionFiles(Path.GetDirectoryName(currentExe), targetDir);
                 _logger.Info("InstallerService", $"Copied executable and companion files to {targetExe}");
                 return targetExe;
             }
             catch (Exception ex)
             {
+                try { if (File.Exists(tempExe)) File.Delete(tempExe); } catch { }
                 _logger.Warn("InstallerService", $"Failed to copy executable to {targetExe}: {ex.Message}");
                 return File.Exists(targetExe) ? targetExe : currentExe;
             }
@@ -161,12 +164,26 @@ public sealed class InstallerService
 
         if (createStartMenuShortcuts)
         {
-            CreateStartMenuShortcuts(targetExe);
+            try
+            {
+                CreateStartMenuShortcuts(targetExe);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("InstallerService", $"Failed to create Start Menu shortcuts: {ex.Message}");
+            }
         }
 
         if (createDesktopShortcut)
         {
-            CreateDesktopShortcut(targetExe);
+            try
+            {
+                CreateDesktopShortcut(targetExe);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("InstallerService", $"Failed to create Desktop shortcut: {ex.Message}");
+            }
         }
 
         _stateManager.Prop.InstallLocation = _paths.Base;
@@ -253,25 +270,31 @@ public sealed class InstallerService
         }
     }
 
+    private static bool IsFileOutOfSync(string srcFile, string dstFile)
+    {
+        if (!File.Exists(dstFile)) return true;
+        var srcInfo = new FileInfo(srcFile);
+        var dstInfo = new FileInfo(dstFile);
+        return srcInfo.Length != dstInfo.Length ||
+               Math.Abs((srcInfo.LastWriteTimeUtc - dstInfo.LastWriteTimeUtc).TotalSeconds) > 2;
+    }
+
     private void TryCopyFileIfChanged(string srcFile, string dstFile)
     {
+        string tempDst = $"{dstFile}.{Guid.NewGuid():N}.tmp";
         try
         {
-            if (File.Exists(dstFile))
+            if (!IsFileOutOfSync(srcFile, dstFile))
             {
-                var srcInfo = new FileInfo(srcFile);
-                var dstInfo = new FileInfo(dstFile);
-                if (srcInfo.Length == dstInfo.Length &&
-                    Math.Abs((srcInfo.LastWriteTimeUtc - dstInfo.LastWriteTimeUtc).TotalSeconds) <= 2)
-                {
-                    return;
-                }
+                return;
             }
 
-            File.Copy(srcFile, dstFile, overwrite: true);
+            File.Copy(srcFile, tempDst, overwrite: true);
+            File.Move(tempDst, dstFile, overwrite: true);
         }
         catch (Exception ex)
         {
+            try { if (File.Exists(tempDst)) File.Delete(tempDst); } catch { }
             _logger.Warn("InstallerService", $"Failed to copy companion file '{Path.GetFileName(srcFile)}': {ex.Message}");
         }
     }
@@ -342,30 +365,101 @@ public sealed class InstallerService
 
         if (removeDataDirectory && Directory.Exists(_paths.Base))
         {
+            if (!IsSafeToDeleteBaseDirectory(_paths.Base))
+            {
+                _logger.Error("InstallerService", $"Refused unsafe recursive directory deletion for base path '{_paths.Base}'.");
+                return;
+            }
+
+            string fullBase = Path.GetFullPath(_paths.Base).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             if (scheduleSelfDelete && IsInstalledHere())
             {
                 try
                 {
-                    string escapedBase = _paths.Base.Replace("\"", "\\\"");
-                    Process.Start(new ProcessStartInfo
+                    var psi = new ProcessStartInfo
                     {
-                        FileName = "cmd.exe",
-                        Arguments = $"/c timeout /t 2 /nobreak >nul & rmdir /s /q \"{escapedBase}\"",
+                        FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"),
                         CreateNoWindow = true,
                         UseShellExecute = false
-                    });
+                    };
+                    psi.ArgumentList.Add("-NoProfile");
+                    psi.ArgumentList.Add("-NonInteractive");
+                    psi.ArgumentList.Add("-WindowStyle");
+                    psi.ArgumentList.Add("Hidden");
+                    psi.ArgumentList.Add("-Command");
+                    psi.ArgumentList.Add("Start-Sleep -Seconds 2; if (Test-Path -LiteralPath $env:BBBS_UNINSTALL_DIR) { Remove-Item -LiteralPath $env:BBBS_UNINSTALL_DIR -Recurse -Force -ErrorAction SilentlyContinue }");
+                    psi.Environment["BBBS_UNINSTALL_DIR"] = fullBase;
+
+                    using var proc = Process.Start(psi);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logger.Warn("InstallerService", $"Failed to schedule directory cleanup: {ex.Message}");
+                }
             }
             else
             {
                 try
                 {
-                    Directory.Delete(_paths.Base, recursive: true);
+                    Directory.Delete(fullBase, recursive: true);
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    _logger.Warn("InstallerService", $"Failed to delete base directory '{fullBase}': {ex.Message}");
+                }
             }
         }
+    }
+
+    internal static bool IsSafeToDeleteBaseDirectory(string? baseDir)
+    {
+        if (string.IsNullOrWhiteSpace(baseDir)) return false;
+
+        string full;
+        try
+        {
+            full = Path.GetFullPath(baseDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (full.StartsWith(@"\\", StringComparison.Ordinal)) return false;
+
+        string? root = Path.GetPathRoot(full)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (string.Equals(full, root, StringComparison.OrdinalIgnoreCase)) return false;
+
+        string[] forbiddenDirs =
+        [
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Path.GetTempPath()
+        ];
+
+        foreach (string forbidden in forbiddenDirs)
+        {
+            if (string.IsNullOrWhiteSpace(forbidden)) continue;
+            string normForbidden = Path.GetFullPath(forbidden).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(full, normForbidden, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        string leafName = Path.GetFileName(full);
+        bool hasAppLeafName = leafName.Contains("BaBaBooeyStrap", StringComparison.OrdinalIgnoreCase);
+        bool hasAppMarkers = File.Exists(Path.Combine(full, "Settings.json")) ||
+                             File.Exists(Path.Combine(full, "State.json")) ||
+                             File.Exists(Path.Combine(full, "BaBaBooeyStrap.exe"));
+        return hasAppLeafName || hasAppMarkers;
     }
 
     private string ResolveHandlerExe()

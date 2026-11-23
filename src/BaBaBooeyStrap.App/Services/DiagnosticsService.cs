@@ -4,7 +4,9 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.FastFlags;
 using BaBaBooeyStrap.Core.Logging;
@@ -13,8 +15,10 @@ using BaBaBooeyStrap.Integrations.Cleaner;
 
 namespace BaBaBooeyStrap.App.Services;
 
-public static class DiagnosticsService
+public static partial class DiagnosticsService
 {
+    private const int MaxLogFileExportBytes = 2 * 1024 * 1024;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -58,6 +62,22 @@ public static class DiagnosticsService
             registerProtocols: true);
     }
 
+    public static Task ExportDiagnosticsZipAsync(
+        string outputZipPath,
+        IPaths paths,
+        Settings settings,
+        State state,
+        RobloxState robloxState,
+        string? appVersion = null,
+        CancellationToken ct = default)
+    {
+        return Task.Run(() =>
+        {
+            ct.ThrowIfCancellationRequested();
+            ExportDiagnosticsZip(outputZipPath, paths, settings, state, robloxState, appVersion);
+        }, ct);
+    }
+
     public static void ExportDiagnosticsZip(
         string outputZipPath,
         IPaths paths,
@@ -94,24 +114,24 @@ public static class DiagnosticsService
                 sysInfo.AppendLine($"OS: {RuntimeInformation.OSDescription}");
                 sysInfo.AppendLine($"OSArchitecture: {RuntimeInformation.OSArchitecture}");
                 sysInfo.AppendLine($"Framework: {RuntimeInformation.FrameworkDescription}");
-                sysInfo.AppendLine($"BasePath: {paths.Base}");
-                sysInfo.AppendLine($"LogsPath: {paths.Logs}");
-                sysInfo.AppendLine($"RobloxLogsPath: {paths.RobloxLogs}");
-                sysInfo.AppendLine($"ProcessPath: {paths.Process}");
+                sysInfo.AppendLine($"BasePath: {SanitizeText(paths.Base, paths)}");
+                sysInfo.AppendLine($"LogsPath: {SanitizeText(paths.Logs, paths)}");
+                sysInfo.AppendLine($"RobloxLogsPath: {SanitizeText(paths.RobloxLogs, paths)}");
+                sysInfo.AppendLine($"ProcessPath: {SanitizeText(paths.Process, paths)}");
 
-                AddTextEntry(archive, "system_info.txt", sysInfo.ToString());
-                AddTextEntry(archive, "settings.json", JsonSerializer.Serialize(settings, JsonOptions));
-                AddTextEntry(archive, "state.json", JsonSerializer.Serialize(state, JsonOptions));
-                AddTextEntry(archive, "roblox_state.json", JsonSerializer.Serialize(robloxState, JsonOptions));
+                AddTextEntry(archive, "system_info.txt", SanitizeText(sysInfo.ToString(), paths));
+                AddTextEntry(archive, "settings.json", SerializeSanitizedSettings(settings, paths));
+                AddTextEntry(archive, "state.json", SerializeSanitizedState(state, paths));
+                AddTextEntry(archive, "roblox_state.json", SanitizeText(JsonSerializer.Serialize(robloxState, JsonOptions), paths));
 
                 string clientSettingsPath = paths.GetClientSettingsPath();
                 if (File.Exists(clientSettingsPath))
                 {
-                    AddFileCopySafe(archive, clientSettingsPath, "ClientAppSettings.json");
+                    AddSanitizedFileCopySafe(archive, clientSettingsPath, "ClientAppSettings.json", paths);
                 }
 
-                AddRecentLogs(archive, paths.Logs, "logs/app", maxFiles: 5);
-                AddRecentLogs(archive, paths.RobloxLogs, "logs/roblox", maxFiles: 3);
+                AddRecentLogs(archive, paths.Logs, "logs/app", maxFiles: 5, paths);
+                AddRecentLogs(archive, paths.RobloxLogs, "logs/roblox", maxFiles: 3, paths);
             }
 
             File.Move(tempZip, outputZipPath, overwrite: true);
@@ -123,6 +143,109 @@ public static class DiagnosticsService
         }
     }
 
+    private static string SerializeSanitizedSettings(Settings settings, IPaths paths)
+    {
+        var node = JsonSerializer.SerializeToNode(settings, JsonOptions) as JsonObject;
+        if (node == null)
+        {
+            return SanitizeText(JsonSerializer.Serialize(settings, JsonOptions), paths);
+        }
+
+        if (node["CustomIntegrations"] is JsonArray integrations)
+        {
+            foreach (var item in integrations.OfType<JsonObject>())
+            {
+                if (item["LaunchArgs"] is JsonValue argsVal &&
+                    argsVal.TryGetValue<string>(out string? args) &&
+                    !string.IsNullOrWhiteSpace(args))
+                {
+                    item["LaunchArgs"] = "[REDACTED]";
+                }
+            }
+        }
+
+        if (node["BootstrapperIconCustomLocation"] is JsonValue bootIcon &&
+            bootIcon.TryGetValue<string>(out string? bootPath) &&
+            !string.IsNullOrEmpty(bootPath))
+        {
+            node["BootstrapperIconCustomLocation"] = SanitizeText(bootPath, paths);
+        }
+
+        if (node["RobloxIconCustomLocation"] is JsonValue rbxIcon &&
+            rbxIcon.TryGetValue<string>(out string? rbxPath) &&
+            !string.IsNullOrEmpty(rbxPath))
+        {
+            node["RobloxIconCustomLocation"] = SanitizeText(rbxPath, paths);
+        }
+
+        return SanitizeText(node.ToJsonString(JsonOptions), paths);
+    }
+
+    private static string SerializeSanitizedState(State state, IPaths paths)
+    {
+        var node = JsonSerializer.SerializeToNode(state, JsonOptions) as JsonObject;
+        if (node == null)
+        {
+            return SanitizeText(JsonSerializer.Serialize(state, JsonOptions), paths);
+        }
+
+        if (node["LastTargetInput"] is JsonValue targetVal &&
+            targetVal.TryGetValue<string>(out string? target) &&
+            !string.IsNullOrWhiteSpace(target))
+        {
+            node["LastTargetInput"] = "[REDACTED]";
+        }
+
+        if (node["InstallLocation"] is JsonValue installVal &&
+            installVal.TryGetValue<string>(out string? installLoc) &&
+            !string.IsNullOrEmpty(installLoc))
+        {
+            node["InstallLocation"] = SanitizeText(installLoc, paths);
+        }
+
+        if (node["AccountWindowBounds"] is JsonObject boundsObj)
+        {
+            var anonymized = new JsonObject();
+            int idx = 1;
+            foreach (var kvp in boundsObj)
+            {
+                anonymized[$"Account_{idx++}"] = kvp.Value?.DeepClone();
+            }
+            node["AccountWindowBounds"] = anonymized;
+        }
+
+        return SanitizeText(node.ToJsonString(JsonOptions), paths);
+    }
+
+    internal static string SanitizeText(string? text, IPaths? paths = null)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        string redacted = Logger.RedactSensitiveText(text);
+
+        if (paths != null)
+        {
+            if (!string.IsNullOrEmpty(paths.UserProfile))
+            {
+                redacted = redacted.Replace(paths.UserProfile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
+            }
+            if (!string.IsNullOrEmpty(paths.LocalAppData))
+            {
+                redacted = redacted.Replace(paths.LocalAppData, "%LOCALAPPDATA%", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        redacted = WindowsUsersPathRegex().Replace(redacted, "$1%USER%");
+        redacted = TicketParamRegex().Replace(redacted, "$1=[REDACTED]");
+        return redacted;
+    }
+
+    [GeneratedRegex(@"([A-Za-z]:\\Users\\)[^\\/:*?""<>|\r\n]+", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex WindowsUsersPathRegex();
+
+    [GeneratedRegex(@"\b(ticket|authenticationTicket)=([^&\s""'+`#]+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex TicketParamRegex();
+
     private static void AddTextEntry(ZipArchive archive, string entryName, string content)
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
@@ -131,7 +254,7 @@ public static class DiagnosticsService
         writer.Write(content);
     }
 
-    private static void AddRecentLogs(ZipArchive archive, string directory, string entryPrefix, int maxFiles)
+    private static void AddRecentLogs(ZipArchive archive, string directory, string entryPrefix, int maxFiles, IPaths paths)
     {
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
@@ -148,20 +271,33 @@ public static class DiagnosticsService
 
             foreach (var log in recentLogs)
             {
-                AddFileCopySafe(archive, log.FullName, $"{entryPrefix}/{log.Name}");
+                AddSanitizedFileCopySafe(archive, log.FullName, $"{entryPrefix}/{log.Name}", paths);
             }
         }
         catch { }
     }
 
-    private static void AddFileCopySafe(ZipArchive archive, string sourceFilePath, string entryName)
+    private static void AddSanitizedFileCopySafe(ZipArchive archive, string sourceFilePath, string entryName, IPaths paths)
     {
         try
         {
             using var source = new FileStream(sourceFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
-            using var dest = entry.Open();
-            source.CopyTo(dest);
+            bool truncated = false;
+            if (source.Length > MaxLogFileExportBytes)
+            {
+                source.Seek(-MaxLogFileExportBytes, SeekOrigin.End);
+                truncated = true;
+            }
+
+            using var reader = new StreamReader(source, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string raw = reader.ReadToEnd();
+            string sanitized = SanitizeText(raw, paths);
+            if (truncated)
+            {
+                sanitized = $"[... truncated to last {MaxLogFileExportBytes / (1024 * 1024)} MB ...]{Environment.NewLine}{sanitized}";
+            }
+
+            AddTextEntry(archive, entryName, sanitized);
         }
         catch { }
     }

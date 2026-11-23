@@ -1,9 +1,13 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
+using BaBaBooeyStrap.Core.Storage;
 
 namespace BaBaBooeyStrap.Bootstrapper.Settings;
+
+public sealed record ProtectedProcessIdentity(int Pid, DateTime? StartTimeUtc, string? ProcessName);
 
 public sealed class GlobalSettingsGuardState
 {
@@ -12,6 +16,7 @@ public sealed class GlobalSettingsGuardState
     public bool OriginalReadOnly { get; set; }
     public bool ProfileCurrentlyApplied { get; set; }
     public List<int> ProtectedPids { get; set; } = [];
+    public List<ProtectedProcessIdentity> ProtectedProcesses { get; set; } = [];
     public DateTimeOffset CapturedAtUtc { get; set; }
 }
 
@@ -32,6 +37,7 @@ public interface IGlobalSettingsGuard : IDisposable
 public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
 {
     private const string StateFileName = "global_settings_guard.json";
+    private static readonly TimeSpan StartTimeTolerance = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
     private readonly IGlobalSettingsManager _globalSettingsManager;
@@ -39,12 +45,14 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
     private readonly Func<IReadOnlyList<int>>? _customRunningPidsProvider;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _launchGate = new(1, 1);
+    private readonly CancellationTokenSource _disposeCts = new();
     private readonly object _stateLock = new();
     private readonly Dictionary<int, CancellationTokenSource> _monitoredPids = new();
 
     private GlobalSettingsGuardState? _state;
     private int _activeSessionCount;
-    private bool _disposed;
+    private int _gateDisposed;
+    private volatile bool _disposed;
 
     public GlobalSettingsGuard(
         IGlobalSettingsManager globalSettingsManager,
@@ -122,9 +130,38 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
     public async Task<IAsyncDisposable> BeginLaunchSessionAsync(CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        await _launchGate.WaitAsync(ct).ConfigureAwait(false);
+
+        CancellationTokenSource linkedCts;
+        try
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _disposeCts.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            throw new ObjectDisposedException(nameof(GlobalSettingsGuard));
+        }
+
+        using var _ = linkedCts;
+        try
+        {
+            await _launchGate.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            throw new ObjectDisposedException(nameof(GlobalSettingsGuard));
+        }
+        catch (OperationCanceledException) when (_disposed && !ct.IsCancellationRequested)
+        {
+            throw new ObjectDisposedException(nameof(GlobalSettingsGuard));
+        }
+
         lock (_stateLock)
         {
+            if (_disposed)
+            {
+                try { _launchGate.Release(); } catch { }
+                throw new ObjectDisposedException(nameof(GlobalSettingsGuard));
+            }
             _activeSessionCount++;
         }
 
@@ -151,6 +188,7 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
                 OriginalReadOnly = _globalSettingsManager.ReadOnlyLocked,
                 ProfileCurrentlyApplied = false,
                 ProtectedPids = [],
+                ProtectedProcesses = [],
                 CapturedAtUtc = DateTimeOffset.UtcNow
             };
 
@@ -171,7 +209,25 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
             _state!.ProfileCurrentlyApplied = true;
             PersistStateLocked();
 
-            _globalSettingsManager.ApplyProfile(profile);
+            try
+            {
+                _globalSettingsManager.ApplyProfile(profile);
+            }
+            catch
+            {
+                try
+                {
+                    RestoreOriginalContentLocked();
+                }
+                catch (Exception restoreEx)
+                {
+                    _logger.Warn("GlobalSettingsGuard", $"Failed to roll back GlobalBasicSettings_13.xml after profile error: {restoreEx.Message}");
+                }
+
+                _state.ProfileCurrentlyApplied = false;
+                PersistStateLocked();
+                throw;
+            }
         }
     }
 
@@ -194,9 +250,21 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
                 EnsureBackupCapturedLocked();
                 foreach (int pid in pidsToProtect)
                 {
-                    if (pid > 0 && !_state!.ProtectedPids.Contains(pid) && IsPidAlive(pid))
+                    if (pid <= 0 || _state!.ProtectedProcesses.Any(p => p.Pid == pid))
                     {
-                        _state.ProtectedPids.Add(pid);
+                        continue;
+                    }
+
+                    if (_customRunningPidsProvider is not null)
+                    {
+                        if (_customRunningPidsProvider().Contains(pid))
+                        {
+                            _state.ProtectedProcesses.Add(new ProtectedProcessIdentity(pid, null, null));
+                        }
+                    }
+                    else if (TryReadRealProcessIdentity(pid, out var identity))
+                    {
+                        _state.ProtectedProcesses.Add(identity);
                     }
                 }
 
@@ -272,10 +340,13 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
 
     public void Dispose()
     {
+        bool disposeGateNow;
         lock (_stateLock)
         {
             if (_disposed) return;
             _disposed = true;
+
+            try { _disposeCts.Cancel(); } catch { }
 
             foreach (var cts in _monitoredPids.Values)
             {
@@ -283,13 +354,20 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
                 try { cts.Dispose(); } catch { }
             }
             _monitoredPids.Clear();
+
+            disposeGateNow = _activeSessionCount == 0;
         }
 
-        _launchGate.Dispose();
+        if (disposeGateNow && Interlocked.Exchange(ref _gateDisposed, 1) == 0)
+        {
+            try { _launchGate.Dispose(); } catch { }
+            try { _disposeCts.Dispose(); } catch { }
+        }
     }
 
     private void EndLaunchSession()
     {
+        bool disposeGateNow = false;
         try
         {
             lock (_stateLock)
@@ -307,11 +385,21 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
                         ReleaseProtectionAndDeleteStateLocked();
                     }
                 }
+
+                if (_disposed && _activeSessionCount == 0)
+                {
+                    disposeGateNow = true;
+                }
             }
         }
         finally
         {
             try { _launchGate.Release(); } catch { }
+            if (disposeGateNow && Interlocked.Exchange(ref _gateDisposed, 1) == 0)
+            {
+                try { _launchGate.Dispose(); } catch { }
+                try { _disposeCts.Dispose(); } catch { }
+            }
         }
     }
 
@@ -328,6 +416,7 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
             OriginalReadOnly = _globalSettingsManager.ReadOnlyLocked,
             ProfileCurrentlyApplied = false,
             ProtectedPids = [],
+            ProtectedProcesses = [],
             CapturedAtUtc = DateTimeOffset.UtcNow
         };
         PersistStateLocked();
@@ -383,17 +472,38 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
 
     private void PruneDeadPidsLocked()
     {
-        if (_state is null || _state.ProtectedPids.Count == 0) return;
+        if (_state is null) return;
+
+        NormalizeStateCollectionsLocked(_state);
+        if (_state.ProtectedProcesses.Count == 0) return;
 
         var aliveSet = GetAlivePidSet();
         if (aliveSet is not null)
         {
-            _state.ProtectedPids.RemoveAll(pid => !aliveSet.Contains(pid));
+            _state.ProtectedProcesses.RemoveAll(p => !aliveSet.Contains(p.Pid));
         }
         else
         {
-            _state.ProtectedPids.RemoveAll(pid => !IsRealProcessAlive(pid));
+            _state.ProtectedProcesses.RemoveAll(p => !IsRealProcessAlive(p));
         }
+
+        _state.ProtectedPids = _state.ProtectedProcesses.Select(p => p.Pid).Distinct().ToList();
+    }
+
+    private static void NormalizeStateCollectionsLocked(GlobalSettingsGuardState state)
+    {
+        state.ProtectedProcesses ??= [];
+        state.ProtectedPids ??= [];
+
+        if (state.ProtectedProcesses.Count == 0 && state.ProtectedPids.Count > 0)
+        {
+            foreach (int pid in state.ProtectedPids.Where(p => p > 0).Distinct())
+            {
+                state.ProtectedProcesses.Add(new ProtectedProcessIdentity(pid, null, null));
+            }
+        }
+
+        state.ProtectedPids = state.ProtectedProcesses.Select(p => p.Pid).Where(p => p > 0).Distinct().ToList();
     }
 
     private HashSet<int>? GetAlivePidSet()
@@ -402,24 +512,56 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
         return _customRunningPidsProvider().ToHashSet();
     }
 
-    private bool IsPidAlive(int pid)
+    private static bool TryReadRealProcessIdentity(int pid, out ProtectedProcessIdentity identity)
     {
-        if (_customRunningPidsProvider is not null)
-        {
-            return _customRunningPidsProvider().Contains(pid);
-        }
-        return IsRealProcessAlive(pid);
-    }
-
-    private static bool IsRealProcessAlive(int pid)
-    {
+        identity = default!;
         if (pid <= 0) return false;
+
         try
         {
             using var proc = Process.GetProcessById(pid);
-            return !proc.HasExited;
+            if (proc.HasExited) return false;
+
+            DateTime? startTimeUtc = null;
+            string? processName = null;
+            try { startTimeUtc = proc.StartTime.ToUniversalTime(); } catch { }
+            try { processName = proc.ProcessName; } catch { }
+
+            identity = new ProtectedProcessIdentity(pid, startTimeUtc, processName);
+            return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsRealProcessAlive(ProtectedProcessIdentity entry)
+    {
+        if (entry.Pid <= 0) return false;
+        try
+        {
+            using var proc = Process.GetProcessById(entry.Pid);
+            if (proc.HasExited) return false;
+
+            if (entry.StartTimeUtc.HasValue)
+            {
+                DateTime actualStartUtc = proc.StartTime.ToUniversalTime();
+                if ((actualStartUtc - entry.StartTimeUtc.Value).Duration() > StartTimeTolerance)
+                {
+                    return false;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.ProcessName) &&
+                !string.Equals(proc.ProcessName, entry.ProcessName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
         {
             return false;
         }
@@ -429,23 +571,24 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
     {
         if (_state is null) return;
 
-        foreach (int pid in _state.ProtectedPids)
+        NormalizeStateCollectionsLocked(_state);
+        foreach (var entry in _state.ProtectedProcesses)
         {
-            if (_monitoredPids.ContainsKey(pid)) continue;
+            if (_monitoredPids.ContainsKey(entry.Pid)) continue;
 
             var cts = new CancellationTokenSource();
-            _monitoredPids[pid] = cts;
-            _ = MonitorPidExitAsync(pid, cts.Token);
+            _monitoredPids[entry.Pid] = cts;
+            _ = MonitorPidExitAsync(entry, cts.Token);
         }
     }
 
-    private async Task MonitorPidExitAsync(int pid, CancellationToken ct)
+    private async Task MonitorPidExitAsync(ProtectedProcessIdentity entry, CancellationToken ct)
     {
         try
         {
             if (_customRunningPidsProvider is not null)
             {
-                while (!ct.IsCancellationRequested && _customRunningPidsProvider().Contains(pid))
+                while (!ct.IsCancellationRequested && _customRunningPidsProvider().Contains(entry.Pid))
                 {
                     await Task.Delay(30, ct).ConfigureAwait(false);
                 }
@@ -454,12 +597,15 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
             {
                 try
                 {
-                    using var proc = Process.GetProcessById(pid);
-                    await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+                    using var proc = Process.GetProcessById(entry.Pid);
+                    if (!proc.HasExited && MatchesIdentity(proc, entry))
+                    {
+                        await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+                    }
                 }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
                 {
-                    // Process already exited
+                    // Process already exited or inaccessible
                 }
             }
         }
@@ -469,31 +615,65 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
         }
         catch (Exception ex)
         {
-            _logger.Debug("GlobalSettingsGuard", $"PID {pid} monitor stopped: {ex.Message}");
+            _logger.Debug("GlobalSettingsGuard", $"PID {entry.Pid} monitor stopped: {ex.Message}");
         }
 
         lock (_stateLock)
         {
-            if (_monitoredPids.TryGetValue(pid, out var cts))
+            if (_monitoredPids.TryGetValue(entry.Pid, out var cts))
             {
-                _monitoredPids.Remove(pid);
-                cts.Dispose();
+                _monitoredPids.Remove(entry.Pid);
+                try { cts.Dispose(); } catch { }
             }
 
             if (_disposed || _state is null) return;
 
-            _state.ProtectedPids.Remove(pid);
-            PruneDeadPidsLocked();
+            try
+            {
+                _state.ProtectedProcesses.RemoveAll(p => p.Pid == entry.Pid);
+                PruneDeadPidsLocked();
 
-            if (_state.ProtectedPids.Count == 0 && !_state.ProfileCurrentlyApplied && _activeSessionCount == 0)
-            {
-                ReleaseProtectionAndDeleteStateLocked();
-                _logger.Info("GlobalSettingsGuard", "All protected Roblox instances exited; lifted temporary ReadOnly lock on GlobalBasicSettings_13.xml.");
+                if (_state.ProtectedPids.Count == 0 && !_state.ProfileCurrentlyApplied && _activeSessionCount == 0)
+                {
+                    ReleaseProtectionAndDeleteStateLocked();
+                    _logger.Info("GlobalSettingsGuard", "All protected Roblox instances exited; lifted temporary ReadOnly lock on GlobalBasicSettings_13.xml.");
+                }
+                else
+                {
+                    PersistStateLocked();
+                }
             }
-            else
+            catch (Exception ex)
             {
-                PersistStateLocked();
+                _logger.Warn("GlobalSettingsGuard", $"Cleanup after PID {entry.Pid} exit failed: {ex.Message}");
             }
+        }
+    }
+
+    private static bool MatchesIdentity(Process proc, ProtectedProcessIdentity entry)
+    {
+        try
+        {
+            if (entry.StartTimeUtc.HasValue)
+            {
+                DateTime actualStartUtc = proc.StartTime.ToUniversalTime();
+                if ((actualStartUtc - entry.StartTimeUtc.Value).Duration() > StartTimeTolerance)
+                {
+                    return false;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(entry.ProcessName) &&
+                !string.Equals(proc.ProcessName, entry.ProcessName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -501,15 +681,47 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
     {
         try
         {
+            using var fileLock = CrossProcessFileLock.Acquire(_stateFilePath);
             if (!File.Exists(_stateFilePath)) return null;
+
             string json = File.ReadAllText(_stateFilePath);
             if (string.IsNullOrWhiteSpace(json)) return null;
-            return JsonSerializer.Deserialize<GlobalSettingsGuardState>(json, JsonOptions);
+
+            var state = JsonSerializer.Deserialize<GlobalSettingsGuardState>(json, JsonOptions);
+            if (state is null)
+            {
+                QuarantineCorruptStateFile("deserialized to null");
+                return null;
+            }
+
+            NormalizeStateCollectionsLocked(state);
+            return state;
+        }
+        catch (JsonException ex)
+        {
+            _logger.Warn("GlobalSettingsGuard", $"Corrupt guard state file detected; quarantining: {ex.Message}");
+            QuarantineCorruptStateFile(ex.Message);
+            return null;
         }
         catch (Exception ex)
         {
             _logger.Warn("GlobalSettingsGuard", $"Failed to load guard state file: {ex.Message}");
             return null;
+        }
+    }
+
+    private void QuarantineCorruptStateFile(string reason)
+    {
+        try
+        {
+            if (!File.Exists(_stateFilePath)) return;
+            string backupPath = $"{_stateFilePath}.corrupted.{DateTime.UtcNow:yyyyMMddHHmmssfff}.{Guid.NewGuid():N}.bak";
+            File.Move(_stateFilePath, backupPath, overwrite: false);
+            _logger.Warn("GlobalSettingsGuard", $"Quarantined corrupt guard state ({reason}) to '{backupPath}'.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug("GlobalSettingsGuard", $"Failed to quarantine corrupt guard state file: {ex.Message}");
         }
     }
 
@@ -519,16 +731,10 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
 
         try
         {
-            string? dir = Path.GetDirectoryName(_stateFilePath);
-            if (!string.IsNullOrWhiteSpace(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
+            NormalizeStateCollectionsLocked(_state);
             string json = JsonSerializer.Serialize(_state, JsonOptions);
-            string tempPath = $"{_stateFilePath}.{Guid.NewGuid():N}.tmp";
-            File.WriteAllText(tempPath, json);
-            File.Move(tempPath, _stateFilePath, overwrite: true);
+            using var fileLock = CrossProcessFileLock.Acquire(_stateFilePath);
+            CrossProcessFileLock.AtomicWrite(_stateFilePath, tempPath => File.WriteAllText(tempPath, json));
         }
         catch (Exception ex)
         {
@@ -540,6 +746,7 @@ public sealed class GlobalSettingsGuard : IGlobalSettingsGuard
     {
         try
         {
+            using var fileLock = CrossProcessFileLock.Acquire(_stateFilePath);
             if (File.Exists(_stateFilePath))
             {
                 File.Delete(_stateFilePath);

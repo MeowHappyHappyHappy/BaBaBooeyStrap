@@ -9,13 +9,13 @@ namespace BaBaBooeyStrap.Core.Launch;
 
 internal static partial class LaunchTargetParser
 {
-    [GeneratedRegex(@"/games/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"/games/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex GamesPathRegex();
 
-    [GeneratedRegex(@"/users/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"/users/(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex UsersPathRegex();
 
-    [GeneratedRegex(@"^[A-Za-z0-9_]{3,20}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[A-Za-z0-9_]{3,20}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
     private static partial Regex UsernameRegex();
 
     public static string NormalizeLaunchArgs(string? rawArgs)
@@ -39,7 +39,12 @@ internal static partial class LaunchTargetParser
                     return builder.BuildProtocolUri();
                 }
             }
-            catch { }
+            catch
+            {
+                return string.Empty;
+            }
+
+            return string.Empty;
         }
 
         return trimmed;
@@ -64,15 +69,24 @@ internal static partial class LaunchTargetParser
                         parsed.PlaceId > 0 ? parsed.PlaceId : null,
                         parsed.JobId,
                         parsed.LinkCode,
-                        UserId: parsed.UserId);
+                        UserId: parsed.UserId,
+                        AccessCode: parsed.AccessCode);
                 }
 
                 var kind = !string.IsNullOrWhiteSpace(parsed.LinkCode) || !string.IsNullOrWhiteSpace(parsed.AccessCode)
                     ? LaunchTargetKind.PrivateServer
                     : LaunchTargetKind.Standard;
-                return new LaunchTarget(kind, parsed.PlaceId > 0 ? parsed.PlaceId : null, parsed.JobId, parsed.LinkCode);
+                return new LaunchTarget(
+                    kind,
+                    parsed.PlaceId > 0 ? parsed.PlaceId : null,
+                    parsed.JobId,
+                    parsed.LinkCode,
+                    AccessCode: parsed.AccessCode);
             }
-            catch { }
+            catch
+            {
+                return new LaunchTarget(LaunchTargetKind.Standard, null);
+            }
         }
 
         return new LaunchTarget(LaunchTargetKind.Standard, null);
@@ -138,9 +152,9 @@ internal static partial class LaunchTargetParser
             ? $"https://www.roblox.com{trimmed}"
             : trimmed;
 
-        if (!Uri.TryCreate(normalizedInput, UriKind.Absolute, out var uri))
+        if (!Uri.TryCreate(normalizedInput, UriKind.Absolute, out var uri) || !IsTrustedRobloxWebUri(uri))
         {
-            throw new ArgumentException($"Invalid Roblox target input: '{input}'.", nameof(input));
+            throw new ArgumentException($"Invalid or untrusted Roblox target URL: '{input}'.", nameof(input));
         }
 
         var userMatch = UsersPathRegex().Match(uri.AbsolutePath);
@@ -228,6 +242,20 @@ internal static partial class LaunchTargetParser
         }
 
         return rawTarget.Trim();
+    }
+
+    private static bool IsTrustedRobloxWebUri(Uri uri)
+    {
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string host = uri.Host;
+        return host.Equals("roblox.com", StringComparison.OrdinalIgnoreCase) ||
+               host.EndsWith(".roblox.com", StringComparison.OrdinalIgnoreCase) ||
+               host.Equals("ro.blox.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private static long? ExtractPlaceId(Uri uri, NameValueCollection query)

@@ -17,8 +17,15 @@ public partial class QuickSwitcherWindow : Window
 {
     private sealed class SwitcherRowItem
     {
-        private static readonly Brush FocusedSlotBrush = new SolidColorBrush(Color.FromRgb(0x25, 0x63, 0xEB));
-        private static readonly Brush NormalSlotBrush = new SolidColorBrush(Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush FocusedSlotBrush = FreezeBrush(Color.FromRgb(0x25, 0x63, 0xEB));
+        private static readonly Brush NormalSlotBrush = FreezeBrush(Color.FromArgb(0x45, 0xFF, 0xFF, 0xFF));
+
+        private static Brush FreezeBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
 
         public required RunningRobloxInstance Instance { get; init; }
         public int ProcessId => Instance.ProcessId;
@@ -91,6 +98,19 @@ public partial class QuickSwitcherWindow : Window
         };
     }
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        nint hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != nint.Zero)
+        {
+            long exStyle = User32.GetWindowLongPtr(hwnd, User32.GWL_EXSTYLE).ToInt64();
+            exStyle |= User32.WS_EX_TOOLWINDOW;
+            User32.SetWindowLongPtr(hwnd, User32.GWL_EXSTYLE, unchecked((nint)exStyle));
+        }
+    }
+
     public void UpdateAndShow(IReadOnlyList<RunningRobloxInstance> instances, MonitorInfo targetMonitor, int monitorCount)
     {
         ClearPendingDigitActivation();
@@ -103,26 +123,18 @@ public partial class QuickSwitcherWindow : Window
             SearchBox.Text = string.Empty;
             ApplyFilter();
 
-            // Place initially near target monitor so WPF picks that monitor's DPI before final physical centering.
+            // Place initially using physical screen coordinates so WPF picks the target monitor's DPI cleanly.
             var helper = new WindowInteropHelper(this);
-            if (helper.Handle == nint.Zero)
-            {
-                Left = targetMonitor.WorkArea.Left;
-                Top = targetMonitor.WorkArea.Top;
-                Show();
-            }
-            else
-            {
-                User32.SetWindowPos(
-                    helper.Handle,
-                    nint.Zero,
-                    targetMonitor.WorkArea.Left + 40,
-                    targetMonitor.WorkArea.Top + 40,
-                    0,
-                    0,
-                    User32.SWP_NOSIZE | User32.SWP_NOZORDER | User32.SWP_NOACTIVATE);
-                Show();
-            }
+            nint hwnd = helper.EnsureHandle();
+            User32.SetWindowPos(
+                hwnd,
+                nint.Zero,
+                targetMonitor.WorkArea.Left + 40,
+                targetMonitor.WorkArea.Top + 40,
+                0,
+                0,
+                User32.SWP_NOSIZE | User32.SWP_NOZORDER | User32.SWP_NOACTIVATE);
+            Show();
 
             UpdateLayout();
             CenterOnMonitorPhysical(targetMonitor);

@@ -184,12 +184,14 @@
                         <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <ui:Button Content="↑"
                                        ToolTip="{DynamicResource Str_Accounts_MoveUpTip}"
+                                       AutomationProperties.Name="{DynamicResource Str_Accounts_MoveUpTip}"
                                        IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
                                        Padding="8,4"
                                        Margin="0,2,4,2"
                                        Click="MoveUp_Click"/>
                             <ui:Button Content="↓"
                                        ToolTip="{DynamicResource Str_Accounts_MoveDownTip}"
+                                       AutomationProperties.Name="{DynamicResource Str_Accounts_MoveDownTip}"
                                        IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
                                        Padding="8,4"
                                        Margin="0,2,6,2"
@@ -232,6 +234,7 @@
 
                     <!-- Search Bar -->
                     <ui:TextBox Grid.Row="1"
+                                AutomationProperties.Name="{DynamicResource Str_Accounts_SearchPlaceholder}"
                                 PlaceholderText="{DynamicResource Str_Accounts_SearchPlaceholder}"
                                 Text="{Binding AccountManagement.AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Margin="0,0,0,8"/>
@@ -246,18 +249,25 @@
                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                             BorderThickness="1">
                         <StackPanel>
-                            <DockPanel Margin="0,0,0,6">
-                                <TextBlock Text="{DynamicResource Str_Accounts_RunningWindowsHeader}"
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{DynamicResource Str_Accounts_RunningWindowsHeader}"
                                            FontSize="12.5"
                                            FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,0,8,0"
                                            VerticalAlignment="Center"/>
-                                <ui:Button DockPanel.Dock="Right"
+                                <ui:Button Grid.Column="1"
                                            HorizontalAlignment="Right"
                                            Content="{DynamicResource Str_Tray_MinimizeAllWindows}"
                                            Padding="8,2"
                                            FontSize="11.5"
                                            Click="MinimizeAllRunning_Click"/>
-                            </DockPanel>
+                            </Grid>
                             <ItemsControl ItemsSource="{Binding AccountManagement.RunningInstances}">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -520,6 +530,21 @@
                                     Text="{Binding AccountManagement.LaunchTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Margin="0,0,0,8"/>
 
+                        <!-- Resolving Game Info Indicator -->
+                        <StackPanel Orientation="Horizontal"
+                                    Margin="0,0,0,8"
+                                    Visibility="{Binding AccountManagement.IsResolvingGameInfo, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <ui:ProgressRing Width="14"
+                                             Height="14"
+                                             IsIndeterminate="True"
+                                             Margin="0,0,8,0"
+                                             VerticalAlignment="Center"/>
+                            <TextBlock Text="{DynamicResource Str_Accounts_ResolvingTarget}"
+                                       FontSize="11.5"
+                                       Opacity="0.72"
+                                       VerticalAlignment="Center"/>
+                        </StackPanel>
+
                         <!-- Resolved Game Info Preview -->
                         <Border Visibility="{Binding AccountManagement.HasResolvedGameInfo, Converter={StaticResource BoolToVisibilityConverter}}"
                                 CornerRadius="6"
@@ -616,16 +641,24 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <DockPanel Grid.Row="0" Margin="0,0,0,6">
-                    <TextBlock Text="{DynamicResource Str_Accounts_ActivityLogHeader}"
+                <Grid Grid.Row="0" Margin="0,0,0,6">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{DynamicResource Str_Accounts_ActivityLogHeader}"
                                FontSize="13"
                                FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               Margin="0,0,8,0"
                                VerticalAlignment="Center"/>
-                    <ui:Button Content="{DynamicResource Str_Accounts_ClearLog}"
+                    <ui:Button Grid.Column="1"
+                               Content="{DynamicResource Str_Accounts_ClearLog}"
                                Padding="8,3"
                                HorizontalAlignment="Right"
                                Click="ClearLog_Click"/>
-                </DockPanel>
+                </Grid>
 
                 <TextBox x:Name="LogTextBox"
                          Grid.Row="1"

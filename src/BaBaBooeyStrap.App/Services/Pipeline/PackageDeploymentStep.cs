@@ -87,12 +87,16 @@ public sealed class PackageDeploymentStep : IBootstrapPipelineStep
 
     private async Task DownloadAndExtractVersionAsync(BootstrapPipelineContext context, CancellationToken ct)
     {
-        string targetGuid = context.ResolvedVersionGuid!;
+        string targetGuid = PathProvider.ValidateVersionGuid(context.ResolvedVersionGuid!);
         string cdnBaseUrl = context.CdnBaseUrl!;
         string exeName = context.IsStudio ? "RobloxStudioBeta.exe" : "RobloxPlayerBeta.exe";
         string targetVersionDir = _paths.GetVersionDirectory(targetGuid);
-        string targetExe = Path.Combine(targetVersionDir, exeName);
         string versionDownloadsDir = Path.Combine(_paths.Downloads, targetGuid);
+        bool targetWasEmpty = !Directory.Exists(targetVersionDir) || !Directory.EnumerateFileSystemEntries(targetVersionDir).Any();
+        string extractionDir = targetWasEmpty
+            ? $"{targetVersionDir}.staging_{Guid.NewGuid():N}"
+            : targetVersionDir;
+        string targetExe = Path.Combine(extractionDir, exeName);
 
         try
         {
@@ -137,7 +141,7 @@ public sealed class PackageDeploymentStep : IBootstrapPipelineStep
 
             context.ReportStatus(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusExtracting"));
             var extractor = new PackageExtractor();
-            Directory.CreateDirectory(targetVersionDir);
+            Directory.CreateDirectory(extractionDir);
 
             var extractWork = new List<(string PkgPath, string PkgName, string RelSubdir)>();
             for (int i = 0; i < packages.Count && i < downloadedPaths.Count; i++)
@@ -182,7 +186,7 @@ public sealed class PackageDeploymentStep : IBootstrapPipelineStep
                         foreach (var item in group)
                         {
                             ct.ThrowIfCancellationRequested();
-                            await extractor.ExtractPackageAsync(item.PkgPath, targetVersionDir, item.RelSubdir, null, ct).ConfigureAwait(false);
+                            await extractor.ExtractPackageAsync(item.PkgPath, extractionDir, item.RelSubdir, null, ct).ConfigureAwait(false);
 
                             int done = Interlocked.Increment(ref extractedCount);
                             double pct = 80.0 + ((double)done / totalExtract * 20.0);
@@ -205,15 +209,25 @@ public sealed class PackageDeploymentStep : IBootstrapPipelineStep
                 await Task.WhenAll(groupTasks).ConfigureAwait(false);
             }
 
-            VersionInstallationValidator.EnsureAppSettingsXml(targetVersionDir, context.AppSettings.RobloxDomain, _logger);
+            VersionInstallationValidator.EnsureAppSettingsXml(extractionDir, context.AppSettings.RobloxDomain, _logger);
 
-            if (!File.Exists(targetExe) || !VersionInstallationValidator.IsVersionInstallationComplete(targetVersionDir, context.IsStudio))
+            if (!File.Exists(targetExe) || !VersionInstallationValidator.IsVersionInstallationComplete(extractionDir, context.IsStudio))
             {
                 string incompleteMsg = LocalizationService.Instance.Format("Str_Bootstrapper_ErrorDeploymentIncompleteFormat", targetGuid);
                 _logger.Error("PackageDeploymentStep", incompleteMsg);
                 context.FailureReason = incompleteMsg;
                 context.ResolvedVersionGuid = context.ExistingVersionGuid;
                 return;
+            }
+
+            if (targetWasEmpty && !string.Equals(extractionDir, targetVersionDir, StringComparison.OrdinalIgnoreCase))
+            {
+                if (Directory.Exists(targetVersionDir) && !Directory.EnumerateFileSystemEntries(targetVersionDir).Any())
+                {
+                    Directory.Delete(targetVersionDir, recursive: false);
+                }
+
+                Directory.Move(extractionDir, targetVersionDir);
             }
 
             var packageHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -262,6 +276,19 @@ public sealed class PackageDeploymentStep : IBootstrapPipelineStep
             context.FailureException = ex;
             context.FailureReason = LocalizationService.Instance.Format("Str_Bootstrapper_ErrorDeploymentFailedFormat", ex.Message);
             context.ResolvedVersionGuid = context.ExistingVersionGuid;
+        }
+        finally
+        {
+            if (targetWasEmpty &&
+                !string.Equals(extractionDir, targetVersionDir, StringComparison.OrdinalIgnoreCase) &&
+                Directory.Exists(extractionDir))
+            {
+                try
+                {
+                    Directory.Delete(extractionDir, recursive: true);
+                }
+                catch { }
+            }
         }
     }
 

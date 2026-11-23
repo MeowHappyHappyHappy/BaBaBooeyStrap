@@ -9,13 +9,17 @@
       Title="{DynamicResource Str_GlobalSettings_PageTitle}">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
         <StackPanel>
-            <DockPanel Margin="0,0,0,16">
-                <TextBlock Text="{DynamicResource Str_GlobalSettings_Header}" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{DynamicResource Str_GlobalSettings_Header}" FontSize="24" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
                     <ui:Button Content="{DynamicResource Str_Common_Reload}" Click="Reload_Click" Margin="0,0,8,0"/>
                     <ui:Button Content="{DynamicResource Str_GlobalSettings_ApplyToDisk}" Appearance="Primary" Click="Apply_Click"/>
                 </StackPanel>
-            </DockPanel>
+            </Grid>
 
             <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
@@ -42,10 +46,14 @@
                         </StackPanel>
                     </Grid>
 
-                    <DockPanel Margin="0,4,0,10">
-                        <TextBlock Text="{DynamicResource Str_GlobalSettings_ReadOnlyLock}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ReadOnlyLocked}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_GlobalSettings_ReadOnlyLock}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_GlobalSettings_ReadOnlyLock}" IsChecked="{Binding LaunchSettings.ReadOnlyLocked}"/>
+                    </Grid>
 
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -104,8 +112,22 @@
                                    VerticalAlignment="Center"/>
                     </Grid>
 
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_VrEnabled}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.VREnabled}" HorizontalAlignment="Right"/></DockPanel>
-                    <DockPanel Margin="0,4"><TextBlock Text="{DynamicResource Str_GlobalSettings_ReducedMotion}" VerticalAlignment="Center"/><ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ReducedMotion}" HorizontalAlignment="Right"/></DockPanel>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_GlobalSettings_VrEnabled}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_GlobalSettings_VrEnabled}" IsChecked="{Binding LaunchSettings.VREnabled}"/>
+                    </Grid>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_GlobalSettings_ReducedMotion}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_GlobalSettings_ReducedMotion}" IsChecked="{Binding LaunchSettings.ReducedMotion}"/>
+                    </Grid>
                 </StackPanel>
             </Border>
         </StackPanel>

@@ -26,6 +26,8 @@ public sealed class ProfileBundle
 /// </summary>
 public static class ProfileTransferService
 {
+    public const int MaxImportFileBytes = 5 * 1024 * 1024;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -38,7 +40,9 @@ public static class ProfileTransferService
         Settings settings,
         IFastFlagManager fastFlagManager,
         IJoinTargetStore joinTargetStore,
-        string appVersion = "1.0.0")
+        string appVersion = "1.0.0",
+        bool includeCustomIntegrations = true,
+        bool includePrivateLinks = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         ArgumentNullException.ThrowIfNull(settings);
@@ -46,6 +50,11 @@ public static class ProfileTransferService
         ArgumentNullException.ThrowIfNull(joinTargetStore);
 
         var clonedSettings = CloneSettings(settings);
+        if (!includeCustomIntegrations)
+        {
+            clonedSettings.CustomIntegrations.Clear();
+        }
+
         var flagsCopy = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         foreach (var kvp in fastFlagManager.Flags)
         {
@@ -56,6 +65,9 @@ public static class ProfileTransferService
         }
 
         var targetsCopy = joinTargetStore.LoadAll()
+            .Where(t => includePrivateLinks ||
+                        (!t.TargetInput.Contains("privateServerLinkCode", StringComparison.OrdinalIgnoreCase) &&
+                         !t.TargetInput.Contains("/share", StringComparison.OrdinalIgnoreCase)))
             .Select(t => new SavedJoinTarget
             {
                 Id = t.Id,
@@ -63,6 +75,7 @@ public static class ProfileTransferService
                 TargetInput = t.TargetInput,
                 JobId = t.JobId,
                 PlaceId = t.PlaceId,
+                UserId = t.UserId,
                 GameName = t.GameName,
                 ThumbnailUrl = t.ThumbnailUrl,
                 UpdatedAt = t.UpdatedAt
@@ -89,9 +102,15 @@ public static class ProfileTransferService
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
 
-        if (!File.Exists(filePath))
+        var info = new FileInfo(filePath);
+        if (!info.Exists)
         {
             throw new FileNotFoundException("Profile file not found.", filePath);
+        }
+
+        if (info.Length > MaxImportFileBytes)
+        {
+            throw new InvalidDataException($"Profile file exceeds maximum allowed size ({MaxImportFileBytes / (1024 * 1024)} MB).");
         }
 
         string json = File.ReadAllText(filePath, Encoding.UTF8);
@@ -120,6 +139,8 @@ public static class ProfileTransferService
             throw new InvalidDataException($"Unsupported profile schema version: {bundle.SchemaVersion}.");
         }
 
+        bundle.Settings.RobloxDomain = SanitizeRobloxDomain(bundle.Settings.RobloxDomain);
+
         var normalizedFlags = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         if (bundle.FastFlags != null)
         {
@@ -135,7 +156,7 @@ public static class ProfileTransferService
         }
 
         bundle.FastFlags = normalizedFlags;
-        bundle.SavedTargets ??= [];
+        bundle.SavedTargets = (bundle.SavedTargets ?? []).Where(t => t != null).ToList();
         return bundle;
     }
 
@@ -144,14 +165,15 @@ public static class ProfileTransferService
         Settings targetSettings,
         IFastFlagManager fastFlagManager,
         IJoinTargetStore joinTargetStore,
-        bool replaceSavedTargets = false)
+        bool replaceSavedTargets = false,
+        bool allowCustomIntegrations = false)
     {
         ArgumentNullException.ThrowIfNull(bundle);
         ArgumentNullException.ThrowIfNull(targetSettings);
         ArgumentNullException.ThrowIfNull(fastFlagManager);
         ArgumentNullException.ThrowIfNull(joinTargetStore);
 
-        CopySettingsProperties(bundle.Settings, targetSettings);
+        CopySettingsProperties(bundle.Settings, targetSettings, copyCustomIntegrations: allowCustomIntegrations);
 
         foreach (string existingKey in fastFlagManager.Flags.Keys.ToList())
         {
@@ -189,13 +211,25 @@ public static class ProfileTransferService
         }
     }
 
+    private static string SanitizeRobloxDomain(string? domain)
+    {
+        if (string.IsNullOrWhiteSpace(domain)) return "roblox.com";
+        string trimmed = domain.Trim().TrimEnd('/');
+        if (trimmed.Equals("roblox.com", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.EndsWith(".roblox.com", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+        return "roblox.com";
+    }
+
     private static Settings CloneSettings(Settings source)
     {
         string json = JsonSerializer.Serialize(source, JsonOptions);
         return JsonSerializer.Deserialize<Settings>(json, JsonOptions) ?? new Settings();
     }
 
-    public static void CopySettingsProperties(Settings source, Settings destination)
+    public static void CopySettingsProperties(Settings source, Settings destination, bool copyCustomIntegrations = true)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(destination);
@@ -205,6 +239,11 @@ public static class ProfileTransferService
 
             if (prop.PropertyType == typeof(ObservableCollection<CustomIntegration>))
             {
+                if (!copyCustomIntegrations)
+                {
+                    continue;
+                }
+
                 var srcList = prop.GetValue(source) as IEnumerable<CustomIntegration>;
                 var dstList = prop.GetValue(destination) as ObservableCollection<CustomIntegration>;
                 if (dstList != null)
@@ -212,7 +251,7 @@ public static class ProfileTransferService
                     dstList.Clear();
                     if (srcList != null)
                     {
-                        foreach (var item in srcList)
+                        foreach (var item in srcList.Where(i => i != null))
                         {
                             dstList.Add(new CustomIntegration
                             {
@@ -232,7 +271,13 @@ public static class ProfileTransferService
             if (prop.PropertyType == typeof(List<string>) && prop.CanWrite)
             {
                 var srcDirs = prop.GetValue(source) as IEnumerable<string>;
-                prop.SetValue(destination, srcDirs != null ? new List<string>(srcDirs) : []);
+                prop.SetValue(destination, srcDirs != null ? srcDirs.Where(s => s != null).ToList() : []);
+                continue;
+            }
+
+            if (prop.Name == nameof(Settings.RobloxDomain) && prop.CanWrite)
+            {
+                prop.SetValue(destination, SanitizeRobloxDomain(prop.GetValue(source) as string));
                 continue;
             }
 

@@ -73,9 +73,10 @@ internal static class DiscordIpcProtocol
 
     public static string FormatPresenceText(string? text, bool padSingleChar = false)
     {
-        if (string.IsNullOrEmpty(text)) return string.Empty;
+        string sanitized = SanitizeControlChars(text);
+        if (string.IsNullOrEmpty(sanitized)) return string.Empty;
 
-        string result = text.Length > 128 ? text[..128] : text;
+        string result = sanitized.Length > 128 ? sanitized[..128] : sanitized;
         if (Encoding.UTF8.GetByteCount(result) > 128)
         {
             result = TruncateUtf8(result, 128);
@@ -98,9 +99,9 @@ internal static class DiscordIpcProtocol
             ? new { start = activity.StartTimestamps.Value }
             : null;
 
-        string? largeImage = string.IsNullOrWhiteSpace(activity.LargeImageKey) ? null : TruncateUtf8(activity.LargeImageKey, 512);
+        string? largeImage = SanitizeKey(activity.LargeImageKey, 512);
         string? largeText = string.IsNullOrWhiteSpace(activity.LargeImageText) ? null : FormatPresenceText(activity.LargeImageText, padSingleChar: true);
-        string? smallImage = string.IsNullOrWhiteSpace(activity.SmallImageKey) ? null : TruncateUtf8(activity.SmallImageKey, 512);
+        string? smallImage = SanitizeKey(activity.SmallImageKey, 512);
         string? smallText = string.IsNullOrWhiteSpace(activity.SmallImageText) ? null : FormatPresenceText(activity.SmallImageText, padSingleChar: true);
 
         bool hasAssets = largeImage != null || largeText != null || smallImage != null || smallText != null;
@@ -116,30 +117,25 @@ internal static class DiscordIpcProtocol
             : null;
 
         List<object>? buttons = null;
-        if (!options.HideButtons && !string.IsNullOrWhiteSpace(activity.DeepLinkUrl))
+        if (!options.HideButtons)
         {
-            string safeDeepLink = TruncateUtf8(activity.DeepLinkUrl, 2048);
-            if (!string.IsNullOrEmpty(safeDeepLink))
+            if (TrySanitizeButtonUrl(activity.DeepLinkUrl, allowRobloxScheme: true, out string safeDeepLink))
             {
-                buttons = new List<object>
-                {
-                    new { label = "Join server", url = safeDeepLink }
-                };
+                buttons ??= new List<object>();
+                buttons.Add(new { label = "Join server", url = safeDeepLink });
+            }
 
-                if (!string.IsNullOrWhiteSpace(options.GamePageUrl))
-                {
-                    string safeGamePageUrl = TruncateUtf8(options.GamePageUrl, 2048);
-                    if (!string.IsNullOrEmpty(safeGamePageUrl))
-                    {
-                        buttons.Add(new { label = "See game page", url = safeGamePageUrl });
-                    }
-                }
+            if (TrySanitizeButtonUrl(options.GamePageUrl, allowRobloxScheme: false, out string safeGamePageUrl))
+            {
+                buttons ??= new List<object>();
+                buttons.Add(new { label = "See game page", url = safeGamePageUrl });
             }
         }
 
         // Discord enforces mutual exclusion between buttons and secrets
-        object? secrets = (buttons == null || buttons.Count == 0) && !string.IsNullOrWhiteSpace(activity.JoinSecret)
-            ? new { join = TruncateUtf8(activity.JoinSecret, 512) }
+        string? safeJoinSecret = SanitizeKey(activity.JoinSecret, 512);
+        object? secrets = (buttons == null || buttons.Count == 0) && safeJoinSecret != null
+            ? new { join = safeJoinSecret }
             : null;
 
         string SerializeEnvelope(object? currentAssets, List<object>? currentButtons, object? currentSecrets)
@@ -254,5 +250,66 @@ internal static class DiscordIpcProtocol
             byteCount += runeBytes;
         }
         return sb.ToString();
+    }
+
+    private static string SanitizeControlChars(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return string.Empty;
+
+        bool hasControl = false;
+        foreach (char c in text)
+        {
+            if (char.IsControl(c))
+            {
+                hasControl = true;
+                break;
+            }
+        }
+        if (!hasControl) return text;
+
+        var sb = new StringBuilder(text.Length);
+        foreach (char c in text)
+        {
+            if (!char.IsControl(c))
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    private static string? SanitizeKey(string? key, int maxBytes)
+    {
+        string clean = SanitizeControlChars(key).Trim();
+        return string.IsNullOrEmpty(clean) ? null : TruncateUtf8(clean, maxBytes);
+    }
+
+    private static bool TrySanitizeButtonUrl(string? rawUrl, bool allowRobloxScheme, out string safeUrl)
+    {
+        safeUrl = string.Empty;
+        if (string.IsNullOrWhiteSpace(rawUrl)) return false;
+
+        string trimmed = rawUrl.Trim();
+        foreach (char c in trimmed)
+        {
+            if (char.IsControl(c)) return false;
+        }
+
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out Uri? uri))
+        {
+            return false;
+        }
+
+        bool validScheme = allowRobloxScheme
+            ? string.Equals(uri.Scheme, "roblox", StringComparison.OrdinalIgnoreCase)
+            : (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)) &&
+              !string.IsNullOrWhiteSpace(uri.Host);
+
+        if (!validScheme) return false;
+        if (Encoding.UTF8.GetByteCount(trimmed) > 512) return false;
+
+        safeUrl = trimmed;
+        return true;
     }
 }

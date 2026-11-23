@@ -10,8 +10,12 @@
       Title="{DynamicResource Str_Mods_PageTitle}">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
         <StackPanel>
-            <DockPanel Margin="0,0,0,16">
-                <StackPanel>
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,12,0">
                     <TextBlock Text="{DynamicResource Str_Mods_Header}" FontSize="24" FontWeight="SemiBold"/>
                     <TextBlock Opacity="0.75">
                         <TextBlock.Text>
@@ -22,57 +26,73 @@
                         </TextBlock.Text>
                     </TextBlock>
                 </StackPanel>
-                <ui:Button Content="{DynamicResource Str_Mods_OpenFolder}" Click="OpenModsFolder_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-            </DockPanel>
+                <ui:Button Grid.Column="1" Content="{DynamicResource Str_Mods_OpenFolder}" Click="OpenModsFolder_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
 
             <!-- Custom Font -->
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <DockPanel>
-                    <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Text="{DynamicResource Str_Mods_CustomFontHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding Mods.CurrentFontStatus}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{Binding Mods.CurrentFontStatus}" Opacity="0.75" FontSize="12.5" TextWrapping="Wrap"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                         <ui:Button Content="{DynamicResource Str_Mods_SelectFont}" Click="ChooseFont_Click" Margin="0,0,8,0"/>
                         <ui:Button Content="{DynamicResource Str_Common_Reset}" Click="ResetFont_Click"/>
                     </StackPanel>
-                </DockPanel>
+                </Grid>
             </Border>
 
             <!-- Cursor Preset -->
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <DockPanel>
-                    <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Text="{DynamicResource Str_Mods_CursorPresetHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{DynamicResource Str_Mods_CursorPresetDesc}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{DynamicResource Str_Mods_CursorPresetDesc}" Opacity="0.75" FontSize="12.5" TextWrapping="Wrap"/>
                     </StackPanel>
-                    <ComboBox x:Name="CursorCombo" Width="180" SelectedItem="{Binding Mods.SelectedCursorPreset}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}" HorizontalAlignment="Right"/>
-                </DockPanel>
+                    <ComboBox x:Name="CursorCombo" Grid.Column="1" Width="180" SelectedItem="{Binding Mods.SelectedCursorPreset}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                </Grid>
             </Border>
 
             <!-- Death Sound -->
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,12" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <DockPanel>
-                    <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Text="{DynamicResource Str_Mods_DeathSoundHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding Mods.CustomDeathSoundStatusText}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{Binding Mods.CustomDeathSoundStatusText}" Opacity="0.75" FontSize="12.5" TextWrapping="Wrap"/>
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                         <ui:Button Content="{DynamicResource Str_Mods_SelectOgg}" Click="ChooseSound_Click" Margin="0,0,8,0"/>
                         <ui:Button Content="{DynamicResource Str_Common_Reset}" Click="ResetSound_Click"/>
                     </StackPanel>
-                </DockPanel>
+                </Grid>
             </Border>
 
             <!-- Avatar Background -->
             <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <DockPanel>
-                    <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Margin="0,0,12,0">
                         <TextBlock Text="{DynamicResource Str_Mods_AvatarBgHeader}" FontSize="15" FontWeight="SemiBold"/>
-                        <TextBlock Text="{DynamicResource Str_Mods_AvatarBgDesc}" Opacity="0.75" FontSize="12.5"/>
+                        <TextBlock Text="{DynamicResource Str_Mods_AvatarBgDesc}" Opacity="0.75" FontSize="12.5" TextWrapping="Wrap"/>
                     </StackPanel>
-                    <ui:ToggleSwitch IsChecked="{Binding Mods.OldAvatarBackgroundEnabled}" HorizontalAlignment="Right"/>
-                </DockPanel>
+                    <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Mods_AvatarBgHeader}" IsChecked="{Binding Mods.OldAvatarBackgroundEnabled}" VerticalAlignment="Center"/>
+                </Grid>
             </Border>
         </StackPanel>
     </ScrollViewer>

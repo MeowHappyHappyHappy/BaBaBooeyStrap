@@ -164,7 +164,7 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
         return removed;
     }
 
-    public bool ImportJson(string json)
+    public bool ImportJson(string json, bool replaceExisting = true)
     {
         if (string.IsNullOrWhiteSpace(json)) return false;
 
@@ -191,10 +191,34 @@ public sealed class FastFlagEditorViewModel : ViewModelBase
                 parsed.Add(new FastFlag { Name = key, Value = val });
             }
 
-            _flags.Clear();
-            foreach (var flag in parsed)
+            if (replaceExisting)
             {
-                _flags.Add(flag);
+                _flags.Clear();
+                foreach (var flag in parsed)
+                {
+                    _flags.Add(flag);
+                }
+            }
+            else
+            {
+                var existingByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                for (int i = 0; i < _flags.Count; i++)
+                {
+                    existingByName[_flags[i].Name] = i;
+                }
+
+                foreach (var flag in parsed)
+                {
+                    if (existingByName.TryGetValue(flag.Name, out int existingIndex))
+                    {
+                        _flags[existingIndex] = flag;
+                    }
+                    else
+                    {
+                        existingByName[flag.Name] = _flags.Count;
+                        _flags.Add(flag);
+                    }
+                }
             }
 
             NotifyCollectionDerivedProperties();

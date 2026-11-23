@@ -56,7 +56,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
     private readonly ConcurrentDictionary<int, IWindowManipulation> _activeWindowManips = new();
     private readonly object _watcherLock = new();
     private readonly SemaphoreSlim _prepareLock = new(1, 1);
-    private bool _disposed;
+    private readonly CancellationTokenSource _shutdownCts = new();
+    private volatile bool _disposed;
 
     public event EventHandler<ActiveServerSessionInfo>? ServerLocationResolved;
     public event EventHandler? ActiveServersChanged;
@@ -123,16 +124,38 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
     public async Task PrepareForBatchLaunchAsync(CancellationToken ct = default)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         ct.ThrowIfCancellationRequested();
-        await _prepareLock.WaitAsync(ct).ConfigureAwait(false);
+
+        CancellationTokenSource linkedCts;
         try
         {
-            await PrepareDeploymentAndModsCoreAsync(new LaunchSettings(), isStudio: false, progress: null, statusCallback: null, ct)
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdownCts.Token);
+        }
+        catch (ObjectDisposedException)
+        {
+            throw new ObjectDisposedException(nameof(BootstrapperOrchestrator));
+        }
+
+        using var _ = linkedCts;
+        bool lockAcquired = false;
+        try
+        {
+            await _prepareLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+            lockAcquired = true;
+            await PrepareDeploymentAndModsCoreAsync(new LaunchSettings(), isStudio: false, progress: null, statusCallback: null, linkedCts.Token)
                 .ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (_disposed)
+        {
+            throw new ObjectDisposedException(nameof(BootstrapperOrchestrator));
         }
         finally
         {
-            _prepareLock.Release();
+            if (lockAcquired)
+            {
+                try { _prepareLock.Release(); } catch (ObjectDisposedException) { }
+            }
         }
     }
 
@@ -154,15 +177,17 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         string? accountUsername,
         CancellationToken ct = default,
         Func<LaunchSettings, CancellationToken, Task<(LaunchSettings? PreparedSettings, LaunchResult? Failure)>>? preSpawnSettingsBuilder = null,
-        RobloxAccount? launchedAccount = null)
+        RobloxAccount? launchedAccount = null,
+        bool disableMultiInstanceForLaunch = false)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ct.ThrowIfCancellationRequested();
 
         var appSettings = _settingsManager.Prop;
+        bool effectiveMultiInstance = appSettings.MultiInstanceEnabled && !disableMultiInstanceForLaunch;
 
         // 1. Multi-Instance launch gate
-        if (appSettings.MultiInstanceEnabled)
+        if (effectiveMultiInstance)
         {
             statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusVerifyingMutex"));
             var gateResult = _launchGate.VerifyLaunchReadiness(true);
@@ -183,19 +208,43 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         bool isStudio = settings.RobloxLaunchMode is LaunchMode.Studio or LaunchMode.StudioAuth;
         if (!skipDeploymentCheck)
         {
-            string? resolvedGuid;
-            string? pipelineFailureReason = null;
-            await _prepareLock.WaitAsync(ct).ConfigureAwait(false);
+            ObjectDisposedException.ThrowIf(_disposed, this);
+
+            CancellationTokenSource linkedCts;
             try
             {
-                var pipelineResult = await PrepareDeploymentAndModsCoreAsync(settings, isStudio, progress, statusCallback, ct)
-                    .ConfigureAwait(false);
-                resolvedGuid = pipelineResult.ResolvedVersionGuid;
-                pipelineFailureReason = pipelineResult.FailureReason;
+                linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _shutdownCts.Token);
             }
-            finally
+            catch (ObjectDisposedException)
             {
-                _prepareLock.Release();
+                throw new ObjectDisposedException(nameof(BootstrapperOrchestrator));
+            }
+
+            string? resolvedGuid;
+            string? pipelineFailureReason = null;
+            bool lockAcquired = false;
+            using (linkedCts)
+            {
+                try
+                {
+                    await _prepareLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                    lockAcquired = true;
+                    var pipelineResult = await PrepareDeploymentAndModsCoreAsync(settings, isStudio, progress, statusCallback, linkedCts.Token)
+                        .ConfigureAwait(false);
+                    resolvedGuid = pipelineResult.ResolvedVersionGuid;
+                    pipelineFailureReason = pipelineResult.FailureReason;
+                }
+                catch (ObjectDisposedException) when (_disposed)
+                {
+                    throw new ObjectDisposedException(nameof(BootstrapperOrchestrator));
+                }
+                finally
+                {
+                    if (lockAcquired)
+                    {
+                        try { _prepareLock.Release(); } catch (ObjectDisposedException) { }
+                    }
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(pipelineFailureReason))
@@ -218,7 +267,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
 
         // 5. Launch delay throttling (multi-instance safety)
-        if (appSettings.MultiInstanceEnabled && _processSupervisor.GetRunningRobloxPids().Count > 0)
+        if (effectiveMultiInstance && _processSupervisor.GetRunningRobloxPids().Count > 0)
         {
             statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusWaitingThrottle"));
             await _processSupervisor.ThrottleLaunchAsync(
@@ -246,123 +295,143 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 .ConfigureAwait(false);
         }
 
-        // 5c. Build deferred auth ticket / matchmaking server right before process spawn so ticket never expires during long updates
-        if (preSpawnSettingsBuilder != null)
+        bool boundPreLaunchedToPid = false;
+        LaunchResult result;
+        try
         {
-            var (preparedSettings, failureResult) = await preSpawnSettingsBuilder(settings, ct).ConfigureAwait(false);
-            if (failureResult != null)
+            // 5c. Build deferred auth ticket / matchmaking server right before process spawn so ticket never expires during long updates
+            if (preSpawnSettingsBuilder != null)
             {
-                return failureResult;
-            }
-            if (preparedSettings != null)
-            {
-                settings = preparedSettings;
-            }
-        }
-        else if (!isStudio && appSettings.EnableBetterMatchmaking && PlaceLauncherUriBuilder.IsValidLaunchUri(settings.RobloxLaunchArgs))
-        {
-            try
-            {
-                var uriBuilder = PlaceLauncherUriBuilder.Parse(settings.RobloxLaunchArgs);
-                if (uriBuilder.PlaceId > 0 &&
-                    string.IsNullOrWhiteSpace(uriBuilder.JobId) &&
-                    string.IsNullOrWhiteSpace(uriBuilder.AccessCode) &&
-                    string.IsNullOrWhiteSpace(uriBuilder.LinkCode) &&
-                    !uriBuilder.UserId.HasValue)
+                var (preparedSettings, failureResult) = await preSpawnSettingsBuilder(settings, ct).ConfigureAwait(false);
+                if (failureResult != null)
                 {
-                    string? serverId = await _roValraService
-                        .GetBetterMatchmakingServerIdAsync(
-                            uriBuilder.PlaceId,
-                            appSettings.EnableBetterMatchmakingRandomization,
-                            requiredSlots: 1,
-                            excludedServerIds: null,
-                            ct)
-                        .ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(serverId))
-                    {
-                        uriBuilder.JobId = serverId;
-                        settings.RobloxLaunchArgs = uriBuilder.BuildProtocolUri();
-                    }
+                    return failureResult;
+                }
+                if (preparedSettings != null)
+                {
+                    settings = preparedSettings;
                 }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            else if (!isStudio && appSettings.EnableBetterMatchmaking && PlaceLauncherUriBuilder.IsValidLaunchUri(settings.RobloxLaunchArgs))
             {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn("BootstrapperOrchestrator", $"Better matchmaking lookup failed, continuing with default matchmaking: {ex.Message}");
-            }
-        }
-
-        // 6. Launch Roblox executable via Core RobloxLauncher
-        statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusStartingRoblox"));
-        var coreLauncher = new RobloxLauncher(_paths, _authService, _robloxStateManager, _logger);
-        var result = await coreLauncher.LaunchPlayerAsync(settings, ct).ConfigureAwait(false);
-
-        if (result.Success && result.ProcessId.HasValue)
-        {
-            int pid = result.ProcessId.Value;
-            _processSupervisor.RegisterProcess(pid);
-            _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
-
-            bool willManageTitleExternally = appSettings.EnableActivityTracking &&
-                                            !isStudio &&
-                                            appSettings.EnableWindowManipulation;
-            if (willManageTitleExternally)
-            {
-                _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
-            }
-
-            if (launchedAccount != null)
-            {
-                _runningInstanceTracker?.RegisterLaunchedAccount(pid, launchedAccount);
-            }
-            else
-            {
-                _runningInstanceTracker?.RefreshNow();
-            }
-
-            try
-            {
-                string handlerExe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
-                if (!string.IsNullOrWhiteSpace(handlerExe) && File.Exists(handlerExe))
+                try
                 {
-                    if (!WindowsRegistry.ArePlayerProtocolsRegistered(handlerExe))
+                    var uriBuilder = PlaceLauncherUriBuilder.Parse(settings.RobloxLaunchArgs);
+                    if (uriBuilder.PlaceId > 0 &&
+                        string.IsNullOrWhiteSpace(uriBuilder.JobId) &&
+                        string.IsNullOrWhiteSpace(uriBuilder.AccessCode) &&
+                        string.IsNullOrWhiteSpace(uriBuilder.LinkCode) &&
+                        !uriBuilder.UserId.HasValue)
                     {
-                        WindowsRegistry.RegisterPlayer(handlerExe);
-                    }
-                    WindowsRegistry.RemoveRobloxStartupEntry();
-                }
-            }
-            catch { }
-
-            if (!isStudio && appSettings.CustomIntegrations.Count > 0)
-            {
-                var integrationSnapshot = appSettings.CustomIntegrations.ToList();
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _customIntegrationRunner
-                            .LaunchIntegrationsAsync(integrationSnapshot, preLaunchOnly: false, trackedRobloxPid: pid, ct)
+                        string? serverId = await _roValraService
+                            .GetBetterMatchmakingServerIdAsync(
+                                uriBuilder.PlaceId,
+                                appSettings.EnableBetterMatchmakingRandomization,
+                                requiredSlots: 1,
+                                excludedServerIds: null,
+                                ct)
                             .ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(serverId))
+                        {
+                            uriBuilder.JobId = serverId;
+                            settings.RobloxLaunchArgs = uriBuilder.BuildProtocolUri();
+                        }
                     }
-                    catch { }
-                });
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("BootstrapperOrchestrator", $"Better matchmaking lookup failed, continuing with default matchmaking: {ex.Message}");
+                }
             }
 
-            if (appSettings.EnableActivityTracking && !isStudio)
+            // 6. Launch Roblox executable via Core RobloxLauncher
+            statusCallback?.Invoke(LocalizationService.Instance.GetString("Str_Bootstrapper_StatusStartingRoblox"));
+            var coreLauncher = new RobloxLauncher(_paths, _authService, _robloxStateManager, _logger);
+            result = await coreLauncher.LaunchPlayerAsync(settings, ct).ConfigureAwait(false);
+
+            if (result.Success && result.ProcessId.HasValue)
             {
-                StartWatcherForPid(pid, appSettings, accountUsername, preExistingLogs);
+                int pid = result.ProcessId.Value;
+                _processSupervisor.RegisterProcess(pid);
+                _customIntegrationRunner.BindPreLaunchedToPid(preLaunchedAutoClosePids, pid);
+                boundPreLaunchedToPid = true;
+
+                bool willManageTitleExternally = appSettings.EnableActivityTracking &&
+                                                !isStudio &&
+                                                appSettings.EnableWindowManipulation;
+                if (willManageTitleExternally)
+                {
+                    _runningInstanceTracker?.MarkTitleManagedExternally(pid, true);
+                }
+
+                if (launchedAccount != null)
+                {
+                    _runningInstanceTracker?.RegisterLaunchedAccount(pid, launchedAccount);
+                }
+                else
+                {
+                    _runningInstanceTracker?.RefreshNow();
+                }
+
+                try
+                {
+                    string handlerExe = File.Exists(_paths.Application) ? _paths.Application : _paths.Process;
+                    if (!string.IsNullOrWhiteSpace(handlerExe) && File.Exists(handlerExe))
+                    {
+                        if (!WindowsRegistry.ArePlayerProtocolsRegistered(handlerExe))
+                        {
+                            WindowsRegistry.RegisterPlayer(handlerExe);
+                        }
+                        WindowsRegistry.RemoveRobloxStartupEntry();
+                    }
+                }
+                catch { }
+
+                if (!isStudio && appSettings.CustomIntegrations.Count > 0)
+                {
+                    var integrationSnapshot = appSettings.CustomIntegrations.ToList();
+                    CancellationToken shutdownToken;
+                    try { shutdownToken = _shutdownCts.Token; } catch (ObjectDisposedException) { shutdownToken = CancellationToken.None; }
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, shutdownToken);
+                            await _customIntegrationRunner
+                                .LaunchIntegrationsAsync(integrationSnapshot, preLaunchOnly: false, trackedRobloxPid: pid, linked.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch { }
+                    });
+                }
+
+                if (appSettings.EnableActivityTracking && !isStudio)
+                {
+                    StartWatcherForPid(pid, appSettings, accountUsername, preExistingLogs);
+                }
+                else if (!isStudio && appSettings.CustomIntegrations.Any(i => i.AutoClose))
+                {
+                    MonitorProcessExitForCustomIntegrations(pid);
+                }
             }
-            else if (!isStudio && appSettings.CustomIntegrations.Any(i => i.AutoClose))
+
+            return result;
+        }
+        finally
+        {
+            if (!boundPreLaunchedToPid && preLaunchedAutoClosePids.Count > 0)
             {
-                MonitorProcessExitForCustomIntegrations(pid);
+                try
+                {
+                    _customIntegrationRunner.CloseIntegrationPids(preLaunchedAutoClosePids);
+                }
+                catch { }
             }
         }
-
-        return result;
     }
 
     private async Task<BootstrapPipelineContext> PrepareDeploymentAndModsCoreAsync(
@@ -461,7 +530,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         Action<string>? statusCallback,
         bool skipDeploymentCheck,
         bool skipBetterMatchmaking,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool disableMultiInstanceForLaunch = false)
     {
         ArgumentNullException.ThrowIfNull(account);
         ArgumentNullException.ThrowIfNull(target);
@@ -473,7 +543,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
 
         var appSettings = _settingsManager.Prop;
-        if (appSettings.MultiInstanceEnabled)
+        bool effectiveMultiInstance = appSettings.MultiInstanceEnabled && !disableMultiInstanceForLaunch;
+        if (effectiveMultiInstance)
         {
             var gateResult = _launchGate.VerifyLaunchReadiness(true);
             if (!gateResult.CanLaunch)
@@ -606,7 +677,8 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 preparedSettings.RobloxLaunchMode = LaunchMode.Player;
                 return (preparedSettings, null);
             },
-            launchedAccount: account).ConfigureAwait(false);
+            launchedAccount: account,
+            disableMultiInstanceForLaunch: disableMultiInstanceForLaunch).ConfigureAwait(false);
 
         if (result.Success)
         {
@@ -622,6 +694,11 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         string? accountUsername = null,
         IReadOnlySet<string>? preExistingLogs = null)
     {
+        ActivityWatcher? activityWatcher = null;
+        IDiscordRpcService? discordRpc = null;
+        IWindowManipulation? windowManip = null;
+        WatcherSession? session = null;
+
         try
         {
             var data = new WatcherData
@@ -630,7 +707,6 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 LogFile = _paths.RobloxLogs
             };
 
-            ActivityWatcher? activityWatcher = null;
             activityWatcher = new ActivityWatcher(_logger, new ActivityWatcherOptions
             {
                 LockToFirstSelectedLogFile = true,
@@ -656,7 +732,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             });
             _activeSessionWatchers[pid] = activityWatcher;
 
-            IDiscordRpcService? discordRpc = appSettings.UseDiscordRichPresence
+            discordRpc = appSettings.UseDiscordRichPresence
                 ? new DiscordRpcService(new DiscordRpcOptions
                 {
                     HideButtons = appSettings.HideRPCButtons,
@@ -689,7 +765,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 effectiveTitleTemplate = appSettings.MultiInstanceWindowTitleTemplate;
             }
 
-            IWindowManipulation? windowManip = appSettings.EnableWindowManipulation
+            windowManip = appSettings.EnableWindowManipulation
                 ? new WindowManipulationService(
                     new Win32WindowInterop(),
                     new WindowManipulationOptions
@@ -715,46 +791,76 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
             activityWatcher.GameJoined += async (_, joinArgs) =>
             {
-                string? effectiveUsername = accountUsername;
-                if (_runningInstanceTracker != null &&
-                    long.TryParse(activityWatcher.CurrentActivity?.UserId, out long parsedUserId) &&
-                    parsedUserId > 0)
+                try
                 {
-                    if (_runningInstanceTracker.TryAssociateUserId(pid, parsedUserId) &&
-                        _activeWindowManips.TryGetValue(pid, out var associatedManip))
+                    string? effectiveUsername = accountUsername;
+                    if (_runningInstanceTracker != null &&
+                        long.TryParse(activityWatcher.CurrentActivity?.UserId, out long parsedUserId) &&
+                        parsedUserId > 0)
                     {
-                        associatedManip.UpdateTitlePlaceholders(_runningInstanceTracker.GetPlaceholdersForPid(pid));
+                        if (_runningInstanceTracker.TryAssociateUserId(pid, parsedUserId) &&
+                            _activeWindowManips.TryGetValue(pid, out var associatedManip))
+                        {
+                            associatedManip.UpdateTitlePlaceholders(_runningInstanceTracker.GetPlaceholdersForPid(pid));
+                        }
+                        if (string.IsNullOrWhiteSpace(effectiveUsername))
+                        {
+                            effectiveUsername = _runningInstanceTracker.GetRunningInstances()
+                                .FirstOrDefault(i => i.ProcessId == pid)?.Username;
+                        }
                     }
-                    if (string.IsNullOrWhiteSpace(effectiveUsername))
-                    {
-                        effectiveUsername = _runningInstanceTracker.GetRunningInstances()
-                            .FirstOrDefault(i => i.ProcessId == pid)?.Username;
-                    }
-                }
 
-                await HandleGameJoinedAsync(pid, effectiveUsername, joinArgs, appSettings, discordRpc).ConfigureAwait(false);
+                    await HandleGameJoinedAsync(pid, effectiveUsername, joinArgs, appSettings, discordRpc).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug("BootstrapperOrchestrator", $"GameJoined handler error for PID {pid}: {ex.Message}");
+                }
             };
 
             activityWatcher.GameLeft += async (_, _) =>
             {
-                await HandleGameLeftAsync(pid, discordRpc).ConfigureAwait(false);
+                try
+                {
+                    await HandleGameLeftAsync(pid, discordRpc).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug("BootstrapperOrchestrator", $"GameLeft handler error for PID {pid}: {ex.Message}");
+                }
             };
 
             windowManip?.StartHook();
 
-            var session = new WatcherSession(data, activityWatcher, new ProcessLifecycleMonitor(), discordRpc, windowManip, _logger);
+            session = new WatcherSession(data, activityWatcher, new ProcessLifecycleMonitor(), discordRpc, windowManip, _logger, ownsIntegrations: true);
             lock (_watcherLock)
             {
                 _activeWatchers.Add(session);
+            }
+
+            CancellationToken shutdownToken;
+            try
+            {
+                shutdownToken = _shutdownCts.Token;
+            }
+            catch (ObjectDisposedException)
+            {
+                shutdownToken = new CancellationToken(canceled: true);
             }
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await session.RunAsync().ConfigureAwait(false);
+                    await session.RunAsync(shutdownToken).ConfigureAwait(false);
                 }
-                catch { }
+                catch (OperationCanceledException)
+                {
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug("BootstrapperOrchestrator", $"WatcherSession failed for PID {pid}: {ex.Message}");
+                }
                 finally
                 {
                     _processSupervisor.UnregisterProcess(pid);
@@ -777,7 +883,25 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         }
         catch (Exception ex)
         {
+            _activeWindowManips.TryRemove(pid, out _);
+            _activeSessionWatchers.TryRemove(pid, out _);
             _runningInstanceTracker?.MarkTitleManagedExternally(pid, false);
+
+            if (session != null)
+            {
+                lock (_watcherLock)
+                {
+                    _activeWatchers.Remove(session);
+                }
+                try { session.Dispose(); } catch { }
+            }
+            else
+            {
+                try { (windowManip as IDisposable)?.Dispose(); } catch { }
+                try { (discordRpc as IDisposable)?.Dispose(); } catch { }
+                try { activityWatcher?.Dispose(); } catch { }
+            }
+
             _logger.Warn("BootstrapperOrchestrator", $"Failed to start WatcherSession for PID {pid}: {ex.Message}");
         }
     }
@@ -822,6 +946,10 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
                 {
                     ServerLocationResolved?.Invoke(this, finalSession);
                 }
+            }
+            else
+            {
+                return;
             }
 
             string serverCode = BaBaBooeyStrap.Integrations.Window.RunningInstanceTracker.NormalizeServerCode(resolvedLocation?.Country);
@@ -907,12 +1035,22 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
 
     private void MonitorProcessExitForCustomIntegrations(int pid)
     {
+        CancellationToken shutdownToken;
+        try
+        {
+            shutdownToken = _shutdownCts.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             try
             {
                 using var proc = Process.GetProcessById(pid);
-                await proc.WaitForExitAsync().ConfigureAwait(false);
+                await proc.WaitForExitAsync(shutdownToken).ConfigureAwait(false);
             }
             catch { }
             finally
@@ -927,6 +1065,7 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        try { _shutdownCts.Cancel(); } catch { }
         try { _customIntegrationRunner.Dispose(); } catch { }
 
         lock (_watcherLock)
@@ -937,9 +1076,22 @@ public sealed class BootstrapperOrchestrator : IRobloxLauncher, IDisposable
             }
             _activeWatchers.Clear();
         }
+
+        foreach (var manip in _activeWindowManips.Values.ToList())
+        {
+            try { (manip as IDisposable)?.Dispose(); } catch { }
+        }
+        _activeWindowManips.Clear();
+
+        foreach (var sessionWatcher in _activeSessionWatchers.Values.ToList())
+        {
+            try { sessionWatcher.Dispose(); } catch { }
+        }
         _activeSessionWatchers.Clear();
         _activeServers.Clear();
-        _prepareLock.Dispose();
+
+        try { _prepareLock.Dispose(); } catch { }
+        try { _shutdownCts.Dispose(); } catch { }
         if (_ownsHttpClient)
         {
             _httpClient.Dispose();

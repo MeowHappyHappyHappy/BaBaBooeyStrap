@@ -10,6 +10,7 @@ namespace BaBaBooeyStrap.App.Views.Dialogs;
 
 public partial class TraySubMenuWindow : Window
 {
+    private readonly Window? _parentWindow;
     private readonly Func<nint, bool> _isChainWindow;
     private readonly Action _dismissAll;
     private readonly TrayMenuBranchController _branch;
@@ -17,10 +18,12 @@ public partial class TraySubMenuWindow : Window
     private bool _suppressDeactivateDismiss;
 
     internal TraySubMenuWindow(
+        Window? parentWindow,
         Func<User32.RECT> getWorkArea,
         Func<nint, bool> isChainWindow,
         Action dismissAll)
     {
+        _parentWindow = parentWindow;
         _isChainWindow = isChainWindow ?? throw new ArgumentNullException(nameof(isChainWindow));
         _dismissAll = dismissAll ?? throw new ArgumentNullException(nameof(dismissAll));
 
@@ -124,13 +127,24 @@ public partial class TraySubMenuWindow : Window
         base.OnClosing(e);
     }
 
+    internal void FocusFromKeyboard()
+    {
+        _branch.SelectFirst();
+        Activate();
+        Focus();
+    }
+
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape)
+        _branch.HandleKeyDown(e, isSubMenu: true, () =>
         {
-            e.Handled = true;
-            _dismissAll();
-        }
+            HideBranch();
+            if (_parentWindow is { IsVisible: true })
+            {
+                _parentWindow.Activate();
+                _parentWindow.Focus();
+            }
+        });
     }
 
     private void Window_Deactivated(object? sender, EventArgs e)

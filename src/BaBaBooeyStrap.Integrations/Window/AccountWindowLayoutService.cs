@@ -93,30 +93,39 @@ public sealed class AccountWindowLayoutService
         ArgumentNullException.ThrowIfNull(saved);
         ArgumentNullException.ThrowIfNull(primaryMonitor);
 
-        int savedWidth = Math.Max(MinWindowWidth, saved.Width);
-        int savedHeight = Math.Max(MinWindowHeight, saved.Height);
-        var savedRect = new User32.RECT
-        {
-            Left = saved.Left,
-            Top = saved.Top,
-            Right = saved.Left + savedWidth,
-            Bottom = saved.Top + savedHeight
-        };
+        long savedWidthLong = Math.Clamp((long)saved.Width, MinWindowWidth, 32768L);
+        long savedHeightLong = Math.Clamp((long)saved.Height, MinWindowHeight, 32768L);
+        long savedRightLong = (long)saved.Left + savedWidthLong;
+        long savedBottomLong = (long)saved.Top + savedHeightLong;
 
-        bool targetMonitorExists = string.IsNullOrWhiteSpace(saved.MonitorDeviceName) ||
-            monitors.Any(m => string.Equals(m.DeviceName, saved.MonitorDeviceName, StringComparison.OrdinalIgnoreCase));
+        bool canFitInInt32 = savedRightLong <= int.MaxValue && savedBottomLong <= int.MaxValue &&
+                             saved.Left >= int.MinValue && saved.Top >= int.MinValue;
 
-        if (targetMonitorExists && IsVisibleOnAnyMonitor(savedRect, monitors))
+        if (canFitInInt32)
         {
-            return savedRect;
+            var savedRect = new User32.RECT
+            {
+                Left = saved.Left,
+                Top = saved.Top,
+                Right = (int)savedRightLong,
+                Bottom = (int)savedBottomLong
+            };
+
+            bool targetMonitorExists = string.IsNullOrWhiteSpace(saved.MonitorDeviceName) ||
+                monitors.Any(m => string.Equals(m.DeviceName, saved.MonitorDeviceName, StringComparison.OrdinalIgnoreCase));
+
+            if (targetMonitorExists && IsVisibleOnAnyMonitor(savedRect, monitors))
+            {
+                return savedRect;
+            }
         }
 
         var work = primaryMonitor.WorkArea;
         int workWidth = Math.Max(MinWindowWidth, work.Width);
         int workHeight = Math.Max(MinWindowHeight, work.Height);
 
-        int clampedWidth = Math.Clamp(savedWidth, MinWindowWidth, workWidth);
-        int clampedHeight = Math.Clamp(savedHeight, MinWindowHeight, workHeight);
+        int clampedWidth = Math.Clamp((int)savedWidthLong, MinWindowWidth, workWidth);
+        int clampedHeight = Math.Clamp((int)savedHeightLong, MinWindowHeight, workHeight);
 
         int left = work.Left + (workWidth - clampedWidth) / 2;
         int top = work.Top + (workHeight - clampedHeight) / 2;
@@ -182,13 +191,14 @@ public sealed class AccountWindowLayoutService
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(saveState);
 
-        bool shouldSave = false;
+        bool canRestore = settings.RestoreAccountWindowBounds && !settings.FakeBorderlessFullscreen;
+        var currentHwnds = new HashSet<nint>();
+        var workItems = new List<(nint Hwnd, string AccountKey, AccountWindowBounds? SavedToRestore)>();
 
         lock (_lock)
         {
             state.AccountWindowBounds ??= new Dictionary<string, AccountWindowBounds>(StringComparer.OrdinalIgnoreCase);
 
-            var currentHwnds = new HashSet<nint>();
             foreach (var inst in instances)
             {
                 if (inst.WindowHandle == nint.Zero)
@@ -204,30 +214,57 @@ public sealed class AccountWindowLayoutService
                 }
 
                 var restoreKey = (inst.WindowHandle, accountKey);
-                if (_restoredWindowKeys.Add(restoreKey))
+                AccountWindowBounds? savedToRestore = null;
+                if (canRestore &&
+                    !_restoredWindowKeys.Contains(restoreKey) &&
+                    state.AccountWindowBounds.TryGetValue(accountKey, out var saved))
                 {
-                    if (settings.RestoreAccountWindowBounds &&
-                        !settings.FakeBorderlessFullscreen &&
-                        state.AccountWindowBounds.TryGetValue(accountKey, out var saved))
+                    savedToRestore = saved;
+                }
+
+                workItems.Add((inst.WindowHandle, accountKey, savedToRestore));
+            }
+        }
+
+        // Perform all Win32 restoration and bounds capture outside _lock
+        var restoredSuccessKeys = new List<(nint Hwnd, string AccountKey)>();
+        var capturedResults = new List<(string AccountKey, AccountWindowBounds Bounds)>();
+
+        foreach (var (hwnd, accountKey, savedToRestore) in workItems)
+        {
+            if (savedToRestore != null)
+            {
+                try
+                {
+                    if (TryRestoreWindow(hwnd, savedToRestore, settings))
                     {
-                        try
-                        {
-                            TryRestoreWindow(inst.WindowHandle, saved, settings);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Debug("AccountWindowLayoutService", $"Failed restoring bounds for {accountKey}: {ex.Message}");
-                        }
-                        continue;
+                        restoredSuccessKeys.Add((hwnd, accountKey));
                     }
                 }
-
-                var captured = CaptureBounds(inst.WindowHandle);
-                if (captured == null)
+                catch (Exception ex)
                 {
-                    continue;
+                    _logger.Debug("AccountWindowLayoutService", $"Failed restoring bounds for {accountKey}: {ex.Message}");
                 }
+                continue;
+            }
 
+            var captured = CaptureBounds(hwnd);
+            if (captured != null)
+            {
+                capturedResults.Add((accountKey, captured));
+            }
+        }
+
+        bool shouldSave = false;
+        lock (_lock)
+        {
+            foreach (var key in restoredSuccessKeys)
+            {
+                _restoredWindowKeys.Add(key);
+            }
+
+            foreach (var (accountKey, captured) in capturedResults)
+            {
                 if (!state.AccountWindowBounds.TryGetValue(accountKey, out var existing) ||
                     !BoundsEquivalent(existing, captured))
                 {
@@ -292,14 +329,17 @@ public sealed class AccountWindowLayoutService
 
     private static bool IsVisibleOnAnyMonitor(User32.RECT rect, IReadOnlyList<MonitorInfo> monitors)
     {
+        long rectW = Math.Max(0L, (long)rect.Right - rect.Left);
+        long rectH = Math.Max(0L, (long)rect.Bottom - rect.Top);
+
         foreach (var mon in monitors)
         {
             var work = mon.WorkArea;
-            int overlapW = Math.Min(rect.Right, work.Right) - Math.Max(rect.Left, work.Left);
-            int overlapH = Math.Min(rect.Bottom, work.Bottom) - Math.Max(rect.Top, work.Top);
+            long overlapW = Math.Min((long)rect.Right, work.Right) - Math.Max((long)rect.Left, work.Left);
+            long overlapH = Math.Min((long)rect.Bottom, work.Bottom) - Math.Max((long)rect.Top, work.Top);
 
-            if (overlapW >= Math.Min(MinVisibleOverlapWidth, rect.Width) &&
-                overlapH >= Math.Min(MinVisibleOverlapHeight, rect.Height))
+            if (overlapW >= Math.Min(MinVisibleOverlapWidth, rectW) &&
+                overlapH >= Math.Min(MinVisibleOverlapHeight, rectH))
             {
                 return true;
             }

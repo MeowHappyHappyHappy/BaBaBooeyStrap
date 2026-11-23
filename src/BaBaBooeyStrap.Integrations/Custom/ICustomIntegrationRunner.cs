@@ -12,5 +12,6 @@ public interface ICustomIntegrationRunner : IDisposable
 
     void BindPreLaunchedToPid(IReadOnlyList<int> integrationPids, int robloxPid);
     int CloseIntegrationsForPid(int robloxPid);
+    int CloseIntegrationPids(IEnumerable<int> integrationPids) => 0;
     int CloseAllAutoCloseIntegrations();
 }

@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Controls;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using Microsoft.Win32;
@@ -53,27 +54,60 @@ public partial class FastFlagEditorWindow : FluentWindow
 
     private void DeleteSelected_Click(object sender, RoutedEventArgs e)
     {
-        var selected = FlagsDataGrid.SelectedItems.Cast<FastFlag>().ToList();
-        if (selected.Count == 0)
+        try
         {
-            ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgSelectToDelete"), InfoBarSeverity.Informational);
-            return;
-        }
+            var selected = FlagsDataGrid.SelectedItems.Cast<FastFlag>().ToList();
+            if (selected.Count == 0)
+            {
+                ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgSelectToDelete"), InfoBarSeverity.Informational);
+                return;
+            }
 
-        int deleted = 0;
-        foreach (var flag in selected)
-        {
-            if (ViewModel.DeleteFlag(flag.Name)) deleted++;
+            int deleted = 0;
+            foreach (var flag in selected)
+            {
+                if (ViewModel.DeleteFlag(flag.Name)) deleted++;
+            }
+            ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgDeletedFormat", deleted), InfoBarSeverity.Success);
         }
-        ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgDeletedFormat", deleted), InfoBarSeverity.Success);
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FastFlagEditorWindow.DeleteSelected", ex);
+            ShowBanner(ex.Message, InfoBarSeverity.Error);
+        }
     }
 
     private void ImportJson_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new JsonImportDialog { Owner = this };
-        if (dialog.ShowDialog() == true)
+        try
         {
-            if (ViewModel.ImportJson(dialog.JsonText))
+            var dialog = new JsonImportDialog { Owner = this };
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            bool replaceExisting = true;
+            if (ViewModel.TotalFlagCount > 0)
+            {
+                var choice = FluentDialogService.ShowThreeChoice(
+                    LocalizationService.Instance.GetString("Str_FastFlagEditor_ImportMergeTitle"),
+                    LocalizationService.Instance.Format("Str_FastFlagEditor_ImportMergeMessageFormat", ViewModel.TotalFlagCount),
+                    primaryText: LocalizationService.Instance.GetString("Str_FastFlagEditor_ImportMerge"),
+                    secondaryText: LocalizationService.Instance.GetString("Str_FastFlagEditor_ImportReplace"),
+                    cancelText: LocalizationService.Instance.GetString("Str_Common_Cancel"),
+                    severity: FluentDialogSeverity.Question,
+                    owner: this);
+
+                if (choice == FluentDialogResult.Cancel)
+                {
+                    return;
+                }
+
+                replaceExisting = choice == FluentDialogResult.Secondary;
+            }
+
+            if (ViewModel.ImportJson(dialog.JsonText, replaceExisting))
             {
                 ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgImportedFormat", ViewModel.TotalFlagCount), InfoBarSeverity.Success);
             }
@@ -81,6 +115,11 @@ public partial class FastFlagEditorWindow : FluentWindow
             {
                 ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgInvalidJson"), InfoBarSeverity.Error);
             }
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FastFlagEditorWindow.ImportJson", ex);
+            ShowBanner(ex.Message, InfoBarSeverity.Error);
         }
     }
 
@@ -104,7 +143,7 @@ public partial class FastFlagEditorWindow : FluentWindow
             FileName = "ClientAppSettings.json"
         };
 
-        if (sfd.ShowDialog() == true)
+        if (sfd.ShowDialog(this) == true)
         {
             try
             {
@@ -116,6 +155,7 @@ public partial class FastFlagEditorWindow : FluentWindow
             }
             catch (Exception ex)
             {
+                Logger.ExceptionStatic("FastFlagEditorWindow.ExportJson", ex);
                 ShowBanner(LocalizationService.Instance.Format("Str_FastFlagEditor_MsgExportFileFailedFormat", ex.Message), InfoBarSeverity.Error);
             }
         }
@@ -131,43 +171,67 @@ public partial class FastFlagEditorWindow : FluentWindow
 
     private void ClearAll_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel.TotalFlagCount > 0)
+        try
         {
-            bool confirmed = FluentDialogService.ShowConfirm(
-                LocalizationService.Instance.GetString("Str_Dialog_ConfirmClearFlagsTitle"),
-                LocalizationService.Instance.Format("Str_Dialog_ConfirmClearFlagsMessageFormat", ViewModel.TotalFlagCount),
-                confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_Clear"),
-                isDestructive: true,
-                owner: this);
+            if (ViewModel.TotalFlagCount > 0)
+            {
+                bool confirmed = FluentDialogService.ShowConfirm(
+                    LocalizationService.Instance.GetString("Str_Dialog_ConfirmClearFlagsTitle"),
+                    LocalizationService.Instance.Format("Str_Dialog_ConfirmClearFlagsMessageFormat", ViewModel.TotalFlagCount),
+                    confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_Clear"),
+                    isDestructive: true,
+                    owner: this);
 
-            if (!confirmed) return;
+                if (!confirmed) return;
+            }
+
+            ViewModel.ClearAll();
+            ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgCleared"), InfoBarSeverity.Warning);
         }
-
-        ViewModel.ClearAll();
-        ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgCleared"), InfoBarSeverity.Warning);
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FastFlagEditorWindow.ClearAll", ex);
+            ShowBanner(ex.Message, InfoBarSeverity.Error);
+        }
     }
 
     private void ResetDefaults_Click(object sender, RoutedEventArgs e)
     {
-        bool confirmed = FluentDialogService.ShowConfirm(
-            LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsTitle"),
-            LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsMessage"),
-            confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_ResetDefaults"),
-            isDestructive: true,
-            owner: this);
+        try
+        {
+            bool confirmed = FluentDialogService.ShowConfirm(
+                LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsTitle"),
+                LocalizationService.Instance.GetString("Str_Dialog_ConfirmResetFlagsMessage"),
+                confirmText: LocalizationService.Instance.GetString("Str_FastFlagEditor_ResetDefaults"),
+                isDestructive: true,
+                owner: this);
 
-        if (!confirmed) return;
+            if (!confirmed) return;
 
-        ViewModel.ResetToDefaults();
-        ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgResetDefaults"), InfoBarSeverity.Informational);
+            ViewModel.ResetToDefaults();
+            ShowBanner(LocalizationService.Instance.GetString("Str_FastFlagEditor_MsgResetDefaults"), InfoBarSeverity.Informational);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FastFlagEditorWindow.ResetDefaults", ex);
+            ShowBanner(ex.Message, InfoBarSeverity.Error);
+        }
     }
 
     private void SaveAndClose_Click(object sender, RoutedEventArgs e)
     {
-        CommitPendingGridEdits();
-        ViewModel.SaveToManager();
-        DialogResult = true;
-        Close();
+        try
+        {
+            CommitPendingGridEdits();
+            ViewModel.SaveToManager();
+            DialogResult = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FastFlagEditorWindow.SaveAndClose", ex);
+            ShowBanner(ex.Message, InfoBarSeverity.Error);
+        }
     }
 
     private void CommitPendingGridEdits()

@@ -43,6 +43,7 @@ public sealed class NotifyIconWrapper : IDisposable
     private Dispatcher? _uiDispatcher;
 
     private WinForms.NotifyIcon? _notifyIcon;
+    private Container? _components;
     private TrayContextMenuWindow? _trayMenuWindow;
     private Drawing.Icon? _ownedIcon;
     private BootstrapperIcon _iconKind = BootstrapperIcon.IconBloxstrap;
@@ -53,6 +54,7 @@ public sealed class NotifyIconWrapper : IDisposable
     private int _quickLaunchCacheRefreshing;
     private bool _quickLaunchCacheWarmed;
     private HwndSource? _hwndSource;
+    private bool _ownsHwndSource;
     private uint _taskbarCreatedMessageId;
     private bool _disposed;
 
@@ -136,6 +138,7 @@ public sealed class NotifyIconWrapper : IDisposable
 
         CreateOrRecreateWinFormsIcon(iconKind, customIconPath);
         EnsureTaskbarCreatedHook();
+        EnsureMessageOnlyHwndSource();
         RefreshServerLocationStatus();
         RefreshRunningInstancesMenu();
         TriggerAsyncQuickLaunchCacheRefresh();
@@ -635,8 +638,9 @@ public sealed class NotifyIconWrapper : IDisposable
         _iconKind = iconKind;
         _customIconPath = customIconPath;
         _ownedIcon = IconResolver.ResolveDrawingIcon(iconKind, customIconPath);
+        _components = new Container();
 
-        _notifyIcon = new WinForms.NotifyIcon(new Container())
+        _notifyIcon = new WinForms.NotifyIcon(_components)
         {
             Icon = _ownedIcon,
             Text = "BaBaBooeyStrap",
@@ -999,12 +1003,47 @@ public sealed class NotifyIconWrapper : IDisposable
         }
     }
 
+    private void EnsureMessageOnlyHwndSource()
+    {
+        if (_headlessMode || _disposed || _hwndSource != null) return;
+
+        try
+        {
+            var parameters = new HwndSourceParameters("BaBaBooeyStrap_TrayMsgWindow")
+            {
+                Width = 0,
+                Height = 0,
+                WindowStyle = 0,
+                ParentWindow = new nint(-3) // HWND_MESSAGE
+            };
+            var source = new HwndSource(parameters);
+            EnsureTaskbarCreatedHook();
+            source.AddHook(WndProc);
+            _hwndSource = source;
+            _ownsHwndSource = true;
+        }
+        catch
+        {
+            // Non-fatal in threads/environments without message-only HWND support
+        }
+    }
+
     private void AttachHwndSource(nint hwnd)
     {
-        if (_hwndSource != null) return;
+        if (_hwndSource != null && !_ownsHwndSource) return;
         EnsureTaskbarCreatedHook();
+
+        if (_hwndSource != null && _ownsHwndSource)
+        {
+            try { _hwndSource.RemoveHook(WndProc); } catch { }
+            try { _hwndSource.Dispose(); } catch { }
+            _hwndSource = null;
+            _ownsHwndSource = false;
+        }
+
         _hwndSource = HwndSource.FromHwnd(hwnd);
         _hwndSource?.AddHook(WndProc);
+        _ownsHwndSource = false;
     }
 
     private nint WndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
@@ -1030,6 +1069,12 @@ public sealed class NotifyIconWrapper : IDisposable
             _notifyIcon = null;
         }
 
+        if (_components != null)
+        {
+            try { _components.Dispose(); } catch { }
+            _components = null;
+        }
+
         if (_ownedIcon != null)
         {
             try { _ownedIcon.Dispose(); } catch { }
@@ -1048,7 +1093,12 @@ public sealed class NotifyIconWrapper : IDisposable
         if (_hwndSource != null)
         {
             try { _hwndSource.RemoveHook(WndProc); } catch { }
+            if (_ownsHwndSource)
+            {
+                try { _hwndSource.Dispose(); } catch { }
+            }
             _hwndSource = null;
+            _ownsHwndSource = false;
         }
 
         if (_trayMenuWindow != null)

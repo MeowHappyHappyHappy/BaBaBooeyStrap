@@ -21,4 +21,18 @@ public abstract class ViewModelBase : INotifyPropertyChanged
         OnPropertyChanged(propertyName);
         return true;
     }
+
+    protected bool SetModelProperty<T>(
+        T currentValue,
+        T newValue,
+        Action<T> assign,
+        [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(currentValue, newValue))
+            return false;
+
+        assign(newValue);
+        OnPropertyChanged(propertyName);
+        return true;
+    }
 }

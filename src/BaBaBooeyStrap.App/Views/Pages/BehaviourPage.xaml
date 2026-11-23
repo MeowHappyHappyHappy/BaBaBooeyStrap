@@ -13,10 +13,14 @@
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="{DynamicResource Str_Behaviour_LauncherHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                    <DockPanel Margin="0,4">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_CheckUpdates}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.CheckForUpdates}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_CheckUpdates}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_CheckUpdates}" IsChecked="{Binding LaunchSettings.CheckForUpdates}"/>
+                    </Grid>
                     <Grid Margin="0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -39,10 +43,14 @@
                         </StackPanel>
                         <ui:ToggleSwitch Grid.Column="1" IsChecked="{Binding LaunchSettings.RunOnStartup}" VerticalAlignment="Center"/>
                     </Grid>
-                    <DockPanel Margin="0,4">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_BackgroundUpdates}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_BackgroundUpdates}" IsChecked="{Binding LaunchSettings.BackgroundUpdatesEnabled}"/>
+                    </Grid>
                     <Grid Margin="0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -93,18 +101,30 @@
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
                     <TextBlock Text="{DynamicResource Str_Behaviour_IntegrationsHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
-                    <DockPanel Margin="0,4">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_ActivityTracking}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.EnableActivityTracking}" HorizontalAlignment="Right"/>
-                    </DockPanel>
-                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_DiscordRpc}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}" HorizontalAlignment="Right"/>
-                    </DockPanel>
-                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_HideRpcButtons}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.HideRPCButtons}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_ActivityTracking}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_ActivityTracking}" IsChecked="{Binding WindowIntegrations.EnableActivityTracking}"/>
+                    </Grid>
+                    <Grid Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_DiscordRpc}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_DiscordRpc}" IsChecked="{Binding WindowIntegrations.UseDiscordRichPresence}"/>
+                    </Grid>
+                    <Grid Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_HideRpcButtons}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_HideRpcButtons}" IsChecked="{Binding WindowIntegrations.HideRPCButtons}"/>
+                    </Grid>
                     <Grid Margin="0,6" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
@@ -116,14 +136,22 @@
                                   SelectedItem="{Binding WindowIntegrations.RichPresenceStatusDisplayType}"
                                   ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
-                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_ShowAccountOnRpc}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowAccountOnRichPresence}" HorizontalAlignment="Right"/>
-                    </DockPanel>
-                    <DockPanel Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_ShowServerDetails}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.ShowServerDetails}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4" IsEnabled="{Binding WindowIntegrations.IsDiscordRpcSubOptionsEnabled}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_ShowAccountOnRpc}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_ShowAccountOnRpc}" IsChecked="{Binding WindowIntegrations.ShowAccountOnRichPresence}"/>
+                    </Grid>
+                    <Grid Margin="0,4" IsEnabled="{Binding WindowIntegrations.EnableActivityTracking}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_ShowServerDetails}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Behaviour_ShowServerDetails}" IsChecked="{Binding WindowIntegrations.ShowServerDetails}"/>
+                    </Grid>
                     <Grid Margin="0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -173,10 +201,14 @@
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <DockPanel Margin="0,0,0,10">
-                        <TextBlock Text="{DynamicResource Str_Behaviour_CleanerHeader}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <ui:Button Content="{DynamicResource Str_Behaviour_CleanNow}" Appearance="Primary" Click="CleanNow_Click" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Behaviour_CleanerHeader}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:Button Grid.Column="1" Content="{DynamicResource Str_Behaviour_CleanNow}" Appearance="Primary" IsEnabled="{Binding WindowIntegrations.IsNotCleaning}" Click="CleanNow_Click" HorizontalAlignment="Right"/>
+                    </Grid>
                     <Grid Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
@@ -199,13 +231,17 @@
             <!-- Custom Integrations -->
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,14" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <DockPanel Margin="0,0,0,10">
-                        <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
                             <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsHeader}" FontSize="15" FontWeight="SemiBold"/>
                             <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsDesc}" FontSize="12" Opacity="0.68" TextWrapping="Wrap" Margin="0,2,0,0"/>
                         </StackPanel>
-                        <ui:Button Content="{DynamicResource Str_Behaviour_AddIntegration}" Appearance="Primary" Click="AddIntegration_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                    </DockPanel>
+                        <ui:Button Grid.Column="1" Content="{DynamicResource Str_Behaviour_AddIntegration}" Appearance="Primary" Click="AddIntegration_Click" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                    </Grid>
 
                     <TextBlock Text="{DynamicResource Str_Behaviour_CustomIntegrationsEmpty}"
                                FontSize="12.5"

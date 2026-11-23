@@ -137,11 +137,7 @@ public partial class TrayContextMenuWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape)
-        {
-            e.Handled = true;
-            DismissAll();
-        }
+        _branch.HandleKeyDown(e, isSubMenu: false);
     }
 
     private void Window_Deactivated(object? sender, EventArgs e)

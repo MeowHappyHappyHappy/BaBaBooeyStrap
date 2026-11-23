@@ -1,4 +1,6 @@
+using System.Security;
 using System.Security.Cryptography;
+using System.Xml.Linq;
 using BaBaBooeyStrap.Bootstrapper.Deployment;
 
 namespace BaBaBooeyStrap.Bootstrapper.Mods;
@@ -102,11 +104,22 @@ public class ModOverlayEngine : IModOverlayEngine
             return new ModApplyResult(true, 0, 0, Array.Empty<string>(), null);
         }
 
-        Directory.CreateDirectory(versionFolder);
+        string fullModificationsDir = string.IsNullOrWhiteSpace(modificationsFolder)
+            ? string.Empty
+            : Path.GetFullPath(modificationsFolder);
+        string fullVersionDir = Path.GetFullPath(versionFolder);
+
+        if (HasReparsePointInPath(fullVersionDir) ||
+            (!string.IsNullOrEmpty(fullModificationsDir) && HasReparsePointInPath(fullModificationsDir)))
+        {
+            return new ModApplyResult(false, 0, 0, Array.Empty<string>(), "Refused mod overlay on reparse point / symlink path.");
+        }
+
+        Directory.CreateDirectory(fullVersionDir);
         var currentManifestedFiles = new List<string>();
         int appliedCount = 0;
         int restoredCount = 0;
-        string versionFolderKey = GetVersionBackupKey(versionFolder);
+        string versionFolderKey = GetVersionBackupKey(fullVersionDir);
         var previousSet = hasPreviousManifest
             ? new HashSet<string>(previousManifest!, StringComparer.OrdinalIgnoreCase)
             : null;
@@ -115,14 +128,25 @@ public class ModOverlayEngine : IModOverlayEngine
         {
             if (hasModificationsDir)
             {
-                var modDir = new DirectoryInfo(modificationsFolder);
-                var files = modDir.GetFiles("*", SearchOption.AllDirectories);
+                var modDir = new DirectoryInfo(fullModificationsDir);
+                var enumOptions = new EnumerationOptions
+                {
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.ReparsePoint
+                };
+                var files = modDir.GetFiles("*", enumOptions);
 
                 foreach (var file in files)
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    string relativePath = Path.GetRelativePath(modificationsFolder, file.FullName);
+                    if (file.Attributes.HasFlag(FileAttributes.ReparsePoint) ||
+                        HasReparsePointAncestor(fullModificationsDir, file.FullName))
+                    {
+                        continue;
+                    }
+
+                    string relativePath = Path.GetRelativePath(fullModificationsDir, file.FullName);
                     string normalizedRel = relativePath.Replace('\\', '/');
 
                     // 0. Exclude internal mod backup cache and (optionally) ClientSettings owned by FastFlagManager
@@ -145,9 +169,8 @@ public class ModOverlayEngine : IModOverlayEngine
                         continue;
                     }
 
-                    // 2. Exclude reserved device names
-                    string baseName = Path.GetFileNameWithoutExtension(file.Name).ToUpperInvariant();
-                    if (ReservedDeviceNames.Contains(baseName))
+                    // 2. Exclude reserved device names (Windows treats everything before the first dot as the device stem)
+                    if (IsReservedDeviceFileName(file.Name))
                     {
                         continue;
                     }
@@ -158,24 +181,35 @@ public class ModOverlayEngine : IModOverlayEngine
                         continue;
                     }
 
-                    string destinationPath = Path.Combine(versionFolder, relativePath);
+                    if (!TryResolveContainedPath(fullVersionDir, relativePath, out string destinationPath) ||
+                        HasReparsePointAncestor(fullVersionDir, destinationPath))
+                    {
+                        continue;
+                    }
+
                     string? destDir = Path.GetDirectoryName(destinationPath);
                     if (!string.IsNullOrEmpty(destDir))
                     {
                         Directory.CreateDirectory(destDir);
                     }
 
-                    // 4. Assert ReadOnly attribute removed before copying
+                    // 4. Assert ReadOnly attribute removed before copying (and refuse reparse point targets)
                     if (File.Exists(destinationPath))
                     {
                         var attr = File.GetAttributes(destinationPath);
+                        if (attr.HasFlag(FileAttributes.ReparsePoint))
+                        {
+                            continue;
+                        }
                         if (attr.HasFlag(FileAttributes.ReadOnly))
                         {
                             File.SetAttributes(destinationPath, attr & ~FileAttributes.ReadOnly);
                         }
 
-                        // 5. MD5 check to skip identical redundant writes
-                        if (ComputeFileMd5(file.FullName) == ComputeFileMd5(destinationPath))
+                        // 5. MD5 check to skip identical redundant writes (null never matches null)
+                        string? srcHash = ComputeFileMd5(file.FullName);
+                        string? dstHash = ComputeFileMd5(destinationPath);
+                        if (srcHash != null && srcHash == dstHash)
                         {
                             currentManifestedFiles.Add(normalizedRel);
                             continue;
@@ -185,7 +219,7 @@ public class ModOverlayEngine : IModOverlayEngine
                         if ((previousSet == null || !previousSet.Contains(normalizedRel)) &&
                             !normalizedRel.Equals("AppSettings.xml", StringComparison.OrdinalIgnoreCase))
                         {
-                            TryBackupOriginalFile(modificationsFolder, versionFolderKey, relativePath, destinationPath);
+                            TryBackupOriginalFile(fullModificationsDir, versionFolderKey, relativePath, destinationPath);
                         }
                     }
 
@@ -195,8 +229,8 @@ public class ModOverlayEngine : IModOverlayEngine
                 }
             }
 
-            // 6. Generate default AppSettings.xml if absent in version directory
-            EnsureAppSettingsXml(versionFolder, robloxDomain);
+            // 6. Generate default AppSettings.xml in version directory
+            EnsureAppSettingsXml(fullVersionDir, robloxDomain);
 
             // 7. Mod Manifest Reconciliation: detect deleted mods
             if (hasPreviousManifest)
@@ -213,10 +247,14 @@ public class ModOverlayEngine : IModOverlayEngine
                     }
 
                     string relNative = removed.Replace('/', Path.DirectorySeparatorChar);
-                    string targetFile = Path.Combine(versionFolder, relNative);
+                    if (!TryResolveContainedPath(fullVersionDir, relNative, out string targetFile) ||
+                        HasReparsePointAncestor(fullVersionDir, targetFile))
+                    {
+                        continue;
+                    }
 
-                    if (!string.IsNullOrWhiteSpace(modificationsFolder) &&
-                        TryRestoreFromBackup(modificationsFolder, versionFolderKey, relNative, targetFile))
+                    if (!string.IsNullOrEmpty(fullModificationsDir) &&
+                        TryRestoreFromBackup(fullModificationsDir, versionFolderKey, relNative, targetFile))
                     {
                         restoredCount++;
                         continue;
@@ -230,7 +268,7 @@ public class ModOverlayEngine : IModOverlayEngine
                         {
                             restoredCount++;
                         }
-                        else if (outcome == PackageFileRestoreOutcome.NotInPackage)
+                        else if (outcome == PackageFileRestoreOutcome.NotInPackage && !IsProtectedCoreRootFile(removed))
                         {
                             if (DeleteTargetFileIfExists(targetFile))
                             {
@@ -243,7 +281,7 @@ public class ModOverlayEngine : IModOverlayEngine
                         await packageFileRestorer(packageName, packageRelativeFile).ConfigureAwait(false);
                         restoredCount++;
                     }
-                    else
+                    else if (!IsProtectedCoreRootFile(removed))
                     {
                         if (DeleteTargetFileIfExists(targetFile))
                         {
@@ -254,6 +292,10 @@ public class ModOverlayEngine : IModOverlayEngine
             }
 
             return new ModApplyResult(true, appliedCount, restoredCount, currentManifestedFiles, null);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -276,8 +318,12 @@ public class ModOverlayEngine : IModOverlayEngine
     {
         try
         {
-            string backupPath = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey, relativePath);
-            if (File.Exists(backupPath)) return;
+            string backupRoot = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey);
+            if (!TryResolveContainedPath(backupRoot, relativePath, out string backupPath) ||
+                File.Exists(backupPath))
+            {
+                return;
+            }
 
             string? backupDir = Path.GetDirectoryName(backupPath);
             if (!string.IsNullOrEmpty(backupDir))
@@ -301,8 +347,17 @@ public class ModOverlayEngine : IModOverlayEngine
     {
         try
         {
-            string backupPath = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey, relativeNativePath);
-            if (!File.Exists(backupPath)) return false;
+            string backupRoot = Path.Combine(modificationsFolder, BackupsFolderName, versionFolderKey);
+            if (!TryResolveContainedPath(backupRoot, relativeNativePath, out string backupPath) ||
+                !File.Exists(backupPath))
+            {
+                return false;
+            }
+
+            if (File.GetAttributes(backupPath).HasFlag(FileAttributes.ReparsePoint))
+            {
+                return false;
+            }
 
             string? targetDir = Path.GetDirectoryName(targetFile);
             if (!string.IsNullOrEmpty(targetDir))
@@ -313,6 +368,10 @@ public class ModOverlayEngine : IModOverlayEngine
             if (File.Exists(targetFile))
             {
                 var attr = File.GetAttributes(targetFile);
+                if (attr.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return false;
+                }
                 if (attr.HasFlag(FileAttributes.ReadOnly))
                 {
                     File.SetAttributes(targetFile, attr & ~FileAttributes.ReadOnly);
@@ -336,6 +395,10 @@ public class ModOverlayEngine : IModOverlayEngine
         try
         {
             var attr = File.GetAttributes(targetFile);
+            if (attr.HasFlag(FileAttributes.ReparsePoint))
+            {
+                return false;
+            }
             if (attr.HasFlag(FileAttributes.ReadOnly))
             {
                 File.SetAttributes(targetFile, attr & ~FileAttributes.ReadOnly);
@@ -354,6 +417,7 @@ public class ModOverlayEngine : IModOverlayEngine
         IEnumerable<string> manifestedFiles,
         CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         CleanModifications(versionFolder, manifestedFiles);
         return Task.CompletedTask;
     }
@@ -361,35 +425,60 @@ public class ModOverlayEngine : IModOverlayEngine
     public static List<string> ApplyModifications(string modificationsFolder, string versionFolder)
     {
         var manifested = new List<string>();
-        if (!Directory.Exists(modificationsFolder)) return manifested;
+        if (string.IsNullOrWhiteSpace(modificationsFolder) || !Directory.Exists(modificationsFolder)) return manifested;
 
-        Directory.CreateDirectory(versionFolder);
-        var modDir = new DirectoryInfo(modificationsFolder);
-        var files = modDir.GetFiles("*", SearchOption.AllDirectories);
+        string fullMods = Path.GetFullPath(modificationsFolder);
+        string fullVersion = Path.GetFullPath(versionFolder);
+        if (HasReparsePointInPath(fullMods) || HasReparsePointInPath(fullVersion)) return manifested;
+
+        Directory.CreateDirectory(fullVersion);
+        var modDir = new DirectoryInfo(fullMods);
+        var enumOptions = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+        var files = modDir.GetFiles("*", enumOptions);
 
         foreach (var file in files)
         {
+            if (file.Attributes.HasFlag(FileAttributes.ReparsePoint) ||
+                HasReparsePointAncestor(fullMods, file.FullName))
+            {
+                continue;
+            }
+
+            string relativePath = Path.GetRelativePath(fullMods, file.FullName);
+            string normalizedRel = relativePath.Replace('\\', '/');
+
+            if (normalizedRel.StartsWith(BackupsFolderName + "/", StringComparison.OrdinalIgnoreCase) ||
+                normalizedRel.Equals(BackupsFolderName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             if (file.Name.Equals("README.txt", StringComparison.OrdinalIgnoreCase) ||
                 file.Extension.Equals(".lock", StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
 
-            string baseName = Path.GetFileNameWithoutExtension(file.Name).ToUpperInvariant();
-            if (ReservedDeviceNames.Contains(baseName))
+            if (IsReservedDeviceFileName(file.Name))
             {
                 continue;
             }
-
-            string relativePath = Path.GetRelativePath(modificationsFolder, file.FullName);
-            string normalizedRel = relativePath.Replace('\\', '/');
 
             if (IsDangerousAvatarMesh(normalizedRel))
             {
                 continue;
             }
 
-            string destinationPath = Path.Combine(versionFolder, relativePath);
+            if (!TryResolveContainedPath(fullVersion, relativePath, out string destinationPath) ||
+                HasReparsePointAncestor(fullVersion, destinationPath))
+            {
+                continue;
+            }
+
             string? destDir = Path.GetDirectoryName(destinationPath);
             if (!string.IsNullOrEmpty(destDir))
             {
@@ -399,6 +488,10 @@ public class ModOverlayEngine : IModOverlayEngine
             if (File.Exists(destinationPath))
             {
                 var attr = File.GetAttributes(destinationPath);
+                if (attr.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    continue;
+                }
                 if (attr.HasFlag(FileAttributes.ReadOnly))
                 {
                     File.SetAttributes(destinationPath, attr & ~FileAttributes.ReadOnly);
@@ -414,24 +507,22 @@ public class ModOverlayEngine : IModOverlayEngine
 
     public static void CleanModifications(string versionFolder, IEnumerable<string> manifestedFiles)
     {
-        if (!Directory.Exists(versionFolder)) return;
+        if (string.IsNullOrWhiteSpace(versionFolder) || !Directory.Exists(versionFolder)) return;
+
+        string fullVersion = Path.GetFullPath(versionFolder);
+        if (HasReparsePointInPath(fullVersion)) return;
 
         foreach (var relPath in manifestedFiles)
         {
-            string targetPath = Path.Combine(versionFolder, relPath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(targetPath))
+            if (string.IsNullOrWhiteSpace(relPath)) continue;
+            string relNative = relPath.Replace('/', Path.DirectorySeparatorChar);
+            if (!TryResolveContainedPath(fullVersion, relNative, out string targetPath) ||
+                HasReparsePointAncestor(fullVersion, targetPath))
             {
-                try
-                {
-                    var attr = File.GetAttributes(targetPath);
-                    if (attr.HasFlag(FileAttributes.ReadOnly))
-                    {
-                        File.SetAttributes(targetPath, attr & ~FileAttributes.ReadOnly);
-                    }
-                    File.Delete(targetPath);
-                }
-                catch { }
+                continue;
             }
+
+            DeleteTargetFileIfExists(targetPath);
         }
     }
 
@@ -457,24 +548,44 @@ public class ModOverlayEngine : IModOverlayEngine
             domain = domain["http://".Length..];
         domain = domain.TrimEnd('/');
 
-        if (string.IsNullOrWhiteSpace(domain) || domain.Equals("roblox.com", StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(domain) ||
+            domain.Equals("roblox.com", StringComparison.OrdinalIgnoreCase) ||
+            Uri.CheckHostName(domain) == UriHostNameType.Unknown ||
+            domain.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '<' or '>' or '&' or '"' or '\'' or '/' or '\\'))
         {
             domain = "www.roblox.com";
         }
 
         string appSettingsPath = Path.Combine(versionFolder, "AppSettings.xml");
-        string xml = $"""
-        <?xml version="1.0" encoding="UTF-8"?>
-        <Settings>
-            <ContentFolder>content</ContentFolder>
-            <BaseUrl>http://{domain}</BaseUrl>
-        </Settings>
-        """;
+        var doc = new XDocument(
+            new XDeclaration("1.0", "UTF-8", null),
+            new XElement("Settings",
+                new XElement("ContentFolder", "content"),
+                new XElement("BaseUrl", $"http://{domain}")));
 
-        File.WriteAllText(appSettingsPath, xml, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        if (File.Exists(appSettingsPath))
+        {
+            var attrs = File.GetAttributes(appSettingsPath);
+            if (attrs.HasFlag(FileAttributes.ReadOnly))
+            {
+                File.SetAttributes(appSettingsPath, attrs & ~FileAttributes.ReadOnly);
+            }
+        }
+
+        string tempPath = $"{appSettingsPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            doc.Save(tempPath);
+            File.Move(tempPath, appSettingsPath, overwrite: true);
+        }
+        catch
+        {
+            try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            throw;
+        }
     }
 
-    private static string ComputeFileMd5(string filePath)
+    private static string? ComputeFileMd5(string filePath)
     {
         try
         {
@@ -484,8 +595,88 @@ public class ModOverlayEngine : IModOverlayEngine
         }
         catch
         {
-            return string.Empty;
+            return null;
         }
+    }
+
+    private static bool IsReservedDeviceFileName(string fileName)
+    {
+        int dotIdx = fileName.IndexOf('.');
+        string stem = (dotIdx >= 0 ? fileName[..dotIdx] : fileName).ToUpperInvariant();
+        return ReservedDeviceNames.Contains(stem);
+    }
+
+    private static bool IsProtectedCoreRootFile(string normalizedRelativePath)
+    {
+        if (normalizedRelativePath.Contains('/', StringComparison.Ordinal)) return false;
+        return normalizedRelativePath.Equals("RobloxPlayerBeta.exe", StringComparison.OrdinalIgnoreCase) ||
+               normalizedRelativePath.Equals("RobloxStudioBeta.exe", StringComparison.OrdinalIgnoreCase) ||
+               normalizedRelativePath.Equals("WebView2Loader.dll", StringComparison.OrdinalIgnoreCase) ||
+               normalizedRelativePath.Equals("AppSettings.xml", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool TryResolveContainedPath(string baseDir, string relativePath, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(baseDir) || string.IsNullOrWhiteSpace(relativePath)) return false;
+        if (Path.IsPathRooted(relativePath) || relativePath.Contains(':') || relativePath.Contains("..", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string fullBase = Path.GetFullPath(baseDir);
+        string basePrefix = fullBase.EndsWith(Path.DirectorySeparatorChar)
+            ? fullBase
+            : fullBase + Path.DirectorySeparatorChar;
+        string candidate = Path.GetFullPath(Path.Combine(fullBase, relativePath));
+        if (!candidate.StartsWith(basePrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        fullPath = candidate;
+        return true;
+    }
+
+    private static bool HasReparsePointInPath(string fullPath)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(fullPath);
+            while (dir != null)
+            {
+                if (dir.Exists && dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return true;
+                }
+                dir = dir.Parent;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static bool HasReparsePointAncestor(string baseDir, string targetFullPath)
+    {
+        try
+        {
+            string trimmedBase = Path.GetFullPath(baseDir).TrimEnd(Path.DirectorySeparatorChar);
+            string? current = Path.GetDirectoryName(Path.GetFullPath(targetFullPath));
+            while (!string.IsNullOrEmpty(current) && current.Length >= trimmedBase.Length)
+            {
+                if (Directory.Exists(current) && new DirectoryInfo(current).Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return true;
+                }
+                if (string.Equals(current, trimmedBase, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+                current = Path.GetDirectoryName(current);
+            }
+        }
+        catch { }
+        return false;
     }
 
     public static bool TryMapToPackage(string relativePath, out string? packageName, out string? relativeSubpath)

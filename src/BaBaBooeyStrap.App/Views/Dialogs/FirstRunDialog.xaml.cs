@@ -10,6 +10,8 @@ namespace BaBaBooeyStrap.App.Views.Dialogs;
 public partial class FirstRunDialog : FluentWindow
 {
     private readonly Settings _settings;
+    private readonly AppLanguage _initialLanguage;
+    private readonly Theme _initialTheme;
     private readonly bool _isInitializing;
 
     public bool CreateDesktopShortcut { get; private set; } = true;
@@ -20,6 +22,8 @@ public partial class FirstRunDialog : FluentWindow
     public FirstRunDialog(Settings settings)
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+        _initialLanguage = _settings.Language;
+        _initialTheme = _settings.Theme;
         _isInitializing = true;
 
         InitializeComponent();
@@ -33,7 +37,22 @@ public partial class FirstRunDialog : FluentWindow
         MultiInstanceTrayCheck.IsChecked = _settings.MultiInstanceEnabled && _settings.MinimizeToTray;
         RunOnStartupCheck.IsChecked = _settings.RunOnStartup;
 
+        Closed += OnClosed;
         _isInitializing = false;
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        ThemeService.UnwatchWindow(this);
+        if (DialogResult != true)
+        {
+            _settings.Language = _initialLanguage;
+            _settings.Theme = _initialTheme;
+            LocalizationService.Instance.ApplyLanguage(_initialLanguage);
+            ThemeService.ApplyTheme(
+                _initialTheme,
+                _settings.UseAcrylicBackground ? WindowBackdropType.Acrylic : WindowBackdropType.Mica);
+        }
     }
 
     private void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)

@@ -97,8 +97,8 @@ public sealed class App_WindowSwitcherTests : IDisposable
         var monitorProvider = new MultiMonitorStub([mon1, mon2]);
         nint h1 = 0x8001;
         nint h2 = 0x8002;
-        interop.Register(h1, "Roblox");
-        interop.Register(h2, "Roblox");
+        interop.Register(h1, "Roblox", 101);
+        interop.Register(h2, "Roblox", 102);
         interop.SetForegroundWindow(h1);
 
         var observed = new List<ObservedRobloxWindow>
@@ -371,19 +371,25 @@ public sealed class App_WindowSwitcherTests : IDisposable
     private sealed class CoordinatorMockInterop : IWin32WindowInterop
     {
         private readonly Dictionary<nint, string> _titles = new();
+        private readonly Dictionary<nint, uint> _pids = new();
         private readonly Dictionary<nint, User32.RECT> _bounds = new();
         private nint _fg;
 
-        public void Register(nint hWnd, string title)
+        public void Register(nint hWnd, string title, uint processId = 0)
         {
             _titles[hWnd] = title;
+            _pids[hWnd] = processId;
             _bounds[hWnd] = new User32.RECT { Left = 0, Top = 0, Right = 800, Bottom = 600 };
         }
 
         public User32.RECT GetBounds(nint hWnd) => _bounds[hWnd];
         public bool IsWindow(nint hWnd) => _titles.ContainsKey(hWnd);
         public bool IsWindowVisible(nint hWnd) => _titles.ContainsKey(hWnd);
-        public uint GetWindowThreadProcessId(nint hWnd, out uint processId) { processId = 0; return (uint)(hWnd.ToInt64() & 0xFFFF); }
+        public uint GetWindowThreadProcessId(nint hWnd, out uint processId)
+        {
+            processId = _pids.TryGetValue(hWnd, out uint pid) ? pid : 0;
+            return (uint)(hWnd.ToInt64() & 0xFFFF);
+        }
         public string GetClassName(nint hWnd) => "WINDOWSCLIENT";
         public string GetWindowText(nint hWnd) => _titles.TryGetValue(hWnd, out string? t) ? t : string.Empty;
         public bool SetWindowText(nint hWnd, string text) { _titles[hWnd] = text; return true; }

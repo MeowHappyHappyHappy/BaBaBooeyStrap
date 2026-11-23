@@ -37,36 +37,20 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
 
     public virtual void Load(bool alertFailure = true)
     {
-        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+        using var fileLock = CrossProcessFileLock.Acquire(FileLocation);
 
         if (!File.Exists(FileLocation))
         {
             Prop = new T();
             OriginalProp = Clone(Prop);
             Loaded = true;
-            Save();
+            SaveUnlocked();
             return;
         }
 
         try
         {
-            string text;
-            int retries = 10;
-            while (true)
-            {
-                try
-                {
-                    using var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    using var reader = new StreamReader(stream, Encoding.UTF8);
-                    text = reader.ReadToEnd();
-                    break;
-                }
-                catch (IOException) when (retries > 0)
-                {
-                    retries--;
-                    Thread.Sleep(15);
-                }
-            }
+            string text = ReadAllTextWithRetry(FileLocation);
 
             if (string.IsNullOrWhiteSpace(text))
             {
@@ -75,7 +59,7 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
 
             T? val = JsonSerializer.Deserialize<T>(text, DefaultJsonOptions);
             Prop = val ?? throw new InvalidDataException("Deserialization returned null.");
-            OriginalProp = Clone(Prop);
+            OriginalProp = JsonSerializer.Deserialize<T>(text, DefaultJsonOptions) ?? new T();
             Loaded = true;
             LastFileHash = ComputeHash(text);
         }
@@ -89,41 +73,63 @@ public class JsonManager<T> : IJsonManager<T> where T : class, new()
             }
             catch { }
 
-            OnLoadError?.Invoke(this, new JsonLoadErrorEventArgs(FileLocation, ex, backupPath));
+            if (alertFailure)
+            {
+                OnLoadError?.Invoke(this, new JsonLoadErrorEventArgs(FileLocation, ex, backupPath));
+            }
 
             // Fall back to new defaults
             Prop = new T();
             OriginalProp = Clone(Prop);
             Loaded = true;
-            Save();
+            SaveUnlocked();
         }
     }
 
     public virtual void Save()
     {
-        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+        using var fileLock = CrossProcessFileLock.Acquire(FileLocation);
+        SaveUnlocked();
+    }
 
+    private void SaveUnlocked()
+    {
         string text = JsonSerializer.Serialize(Prop, DefaultJsonOptions);
         CrossProcessFileLock.AtomicWrite(FileLocation, tempPath => File.WriteAllText(tempPath, text, Encoding.UTF8));
 
-        OriginalProp = Clone(Prop);
+        OriginalProp = JsonSerializer.Deserialize<T>(text, DefaultJsonOptions) ?? new T();
         LastFileHash = ComputeHash(text);
     }
 
     public bool HasFileOnDiskChanged()
     {
-        using var _ = CrossProcessFileLock.Acquire(FileLocation);
+        using var fileLock = CrossProcessFileLock.Acquire(FileLocation);
         if (!File.Exists(FileLocation)) return LastFileHash != null;
 
-        using var stream = new FileStream(FileLocation, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        string content = reader.ReadToEnd();
+        string content = ReadAllTextWithRetry(FileLocation);
         return LastFileHash != ComputeHash(content);
+    }
+
+    private static string ReadAllTextWithRetry(string path)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return reader.ReadToEnd();
+            }
+            catch (IOException) when (attempt < 10)
+            {
+                Thread.Sleep(Math.Min(150, 10 << Math.Min(attempt, 4)));
+            }
+        }
     }
 
     private static string ComputeHash(string content)
     {
-        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(content));
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(content));
         return Convert.ToHexString(hash);
     }
 

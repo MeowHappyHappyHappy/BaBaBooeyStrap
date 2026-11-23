@@ -1,11 +1,22 @@
 using System.Diagnostics;
+using System.Net.Http;
+using System.Text;
 using BaBaBooeyStrap.Bootstrapper.Deployment.Abstractions;
 
 namespace BaBaBooeyStrap.Bootstrapper.Deployment;
 
 public class CdnMirrorSelector : ICdnMirrorSelector
 {
-    private static readonly HttpClient FallbackHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+    private const int MaxProbeResponseBytes = 64 * 1024;
+    private static readonly HttpClient FallbackHttpClient = new(
+        new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10)
+        },
+        disposeHandler: true)
+    {
+        Timeout = TimeSpan.FromSeconds(10)
+    };
     private static readonly TimeSpan MirrorCacheTtl = TimeSpan.FromMinutes(10);
 
     private readonly HttpClient? _httpClient;
@@ -79,20 +90,52 @@ public class CdnMirrorSelector : ICdnMirrorSelector
 
         static async Task<string?> ProbeMirrorAsync(HttpClient httpClient, string mirror, CancellationToken token)
         {
+            if (!TryValidateHttpsUrl(mirror, out _))
+            {
+                return null;
+            }
+
             try
             {
                 string endpoint = $"{mirror.TrimEnd('/')}/versionStudio";
                 using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
-                using var resp = await httpClient.SendAsync(req, HttpCompletionOption.ResponseContentRead, token).ConfigureAwait(false);
+                using var resp = await httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
 
-                if (resp.IsSuccessStatusCode)
+                if (!resp.IsSuccessStatusCode)
                 {
-                    string content = (await resp.Content.ReadAsStringAsync(token).ConfigureAwait(false)).Trim();
-                    if (content == CdnMirrorSelectorDefaults.VersionStudioHash ||
-                        content.StartsWith("version-", StringComparison.OrdinalIgnoreCase))
+                    return null;
+                }
+
+                string? mediaType = resp.Content.Headers.ContentType?.MediaType;
+                if (string.Equals(mediaType, "text/html", StringComparison.OrdinalIgnoreCase) ||
+                    resp.Content.Headers.ContentLength > MaxProbeResponseBytes)
+                {
+                    return null;
+                }
+
+                using Stream stream = await resp.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+                byte[] buffer = new byte[MaxProbeResponseBytes + 1];
+                int totalRead = 0;
+                while (totalRead < buffer.Length)
+                {
+                    int read = await stream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead), token).ConfigureAwait(false);
+                    if (read == 0)
                     {
-                        return mirror;
+                        break;
                     }
+                    totalRead += read;
+                }
+
+                if (totalRead > MaxProbeResponseBytes)
+                {
+                    return null;
+                }
+
+                string content = Encoding.UTF8.GetString(buffer, 0, totalRead).Trim();
+                if (content == CdnMirrorSelectorDefaults.VersionStudioHash ||
+                    content.StartsWith("version-", StringComparison.OrdinalIgnoreCase))
+                {
+                    return mirror;
                 }
             }
             catch
@@ -116,7 +159,7 @@ public class CdnMirrorSelector : ICdnMirrorSelector
             throw new ArgumentException("No mirrors provided.", nameof(mirrorUrls));
         }
 
-        HttpClient httpClient = client ?? new HttpClient();
+        HttpClient httpClient = client ?? FallbackHttpClient;
         TimeSpan pingTimeout = timeout ?? TimeSpan.FromSeconds(3);
 
         string? fastestUrl = null;
@@ -126,13 +169,19 @@ public class CdnMirrorSelector : ICdnMirrorSelector
         foreach (string mirror in mirrors)
         {
             ct.ThrowIfCancellationRequested();
+            if (!TryValidateHttpsUrl(mirror, out Uri? mirrorUri) || mirrorUri == null)
+            {
+                lastException = new ArgumentException($"Mirror URL must be an absolute HTTPS URI: '{mirror}'.");
+                continue;
+            }
+
             try
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(pingTimeout);
 
                 var sw = Stopwatch.StartNew();
-                using var resp = await httpClient.GetAsync(mirror, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                using var resp = await httpClient.GetAsync(mirrorUri, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
                 sw.Stop();
 
                 if (resp.IsSuccessStatusCode)
@@ -165,5 +214,28 @@ public class CdnMirrorSelector : ICdnMirrorSelector
         }
 
         return fastestUrl;
+    }
+
+    private static bool TryValidateHttpsUrl(string? url, out Uri? uri)
+    {
+        uri = null;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out Uri? parsed))
+        {
+            return false;
+        }
+
+        if (!string.Equals(parsed.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(parsed.Host))
+        {
+            return false;
+        }
+
+        uri = parsed;
+        return true;
     }
 }

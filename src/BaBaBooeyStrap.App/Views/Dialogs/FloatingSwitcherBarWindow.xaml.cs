@@ -5,6 +5,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core.Interop;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Storage;
@@ -19,12 +20,19 @@ public partial class FloatingSwitcherBarWindow : Window
 {
     private sealed class PillItem
     {
-        private static readonly Brush FocusedBg = new SolidColorBrush(Color.FromArgb(0xCC, 0x25, 0x63, 0xEB));
-        private static readonly Brush FocusedBorder = new SolidColorBrush(Color.FromRgb(0x60, 0xA5, 0xFA));
-        private static readonly Brush MinimizedBg = new SolidColorBrush(Color.FromArgb(0x16, 0xFF, 0xFF, 0xFF));
-        private static readonly Brush NormalBg = new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
-        private static readonly Brush NormalBorder = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
-        private static readonly Brush DimForeground = new SolidColorBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush FocusedBg = FreezeBrush(Color.FromArgb(0xCC, 0x25, 0x63, 0xEB));
+        private static readonly Brush FocusedBorder = FreezeBrush(Color.FromRgb(0x60, 0xA5, 0xFA));
+        private static readonly Brush MinimizedBg = FreezeBrush(Color.FromArgb(0x16, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush NormalBg = FreezeBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush NormalBorder = FreezeBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+        private static readonly Brush DimForeground = FreezeBrush(Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF));
+
+        private static Brush FreezeBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
+        }
 
         public required RunningRobloxInstance Instance { get; init; }
         public int ProcessId => Instance.ProcessId;
@@ -136,7 +144,7 @@ public partial class FloatingSwitcherBarWindow : Window
         _stateManager.Prop.FloatingBarLeft = null;
         _stateManager.Prop.FloatingBarTop = null;
         _stateManager.Prop.FloatingBarCollapsed = false;
-        _stateManager.Save();
+        SaveStateSafely("ResetPosition");
 
         _isCollapsed = false;
         ApplyCollapsedState();
@@ -256,41 +264,71 @@ public partial class FloatingSwitcherBarWindow : Window
         }
     }
 
+    private void DragHandle_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (!_isDragging) return;
+        _isDragging = false;
+        ClampToCurrentMonitor(savePosition: true);
+    }
+
     private void DragHandle_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         if (!_isDragging) return;
         _isDragging = false;
         DragHandle.ReleaseMouseCapture();
         e.Handled = true;
-
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd != nint.Zero && User32.GetWindowRect(hwnd, out var rect))
-        {
-            var monitor = _monitorProvider.GetMonitorFromWindow(hwnd);
-            var work = monitor.WorkArea;
-            int barW = Math.Max(40, rect.Width);
-            int barH = Math.Max(32, rect.Height);
-            int clampedX = Math.Clamp(rect.Left, work.Left, Math.Max(work.Left, work.Right - barW));
-            int clampedY = Math.Clamp(rect.Top, work.Top, Math.Max(work.Top, work.Bottom - barH));
-
-            if (clampedX != rect.Left || clampedY != rect.Top)
-            {
-                User32.SetWindowPos(hwnd, User32.HWND_TOPMOST, clampedX, clampedY, 0, 0, User32.SWP_NOSIZE | User32.SWP_NOACTIVATE);
-            }
-
-            _stateManager.Prop.FloatingBarMonitorDevice = monitor.DeviceName;
-            _stateManager.Prop.FloatingBarLeft = clampedX - work.Left;
-            _stateManager.Prop.FloatingBarTop = clampedY - work.Top;
-            _stateManager.Save();
-        }
+        ClampToCurrentMonitor(savePosition: true);
     }
 
     private void CollapseButton_Click(object sender, RoutedEventArgs e)
     {
         _isCollapsed = !_isCollapsed;
         _stateManager.Prop.FloatingBarCollapsed = _isCollapsed;
-        _stateManager.Save();
+        SaveStateSafely("ToggleCollapse");
         ApplyCollapsedState();
+        Dispatcher.BeginInvoke(() => ClampToCurrentMonitor(savePosition: false));
+    }
+
+    private void ClampToCurrentMonitor(bool savePosition)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero || !User32.GetWindowRect(hwnd, out var rect))
+        {
+            return;
+        }
+
+        UpdateLayout();
+        var monitor = _monitorProvider.GetMonitorFromWindow(hwnd);
+        var work = monitor.WorkArea;
+        int barW = Math.Max(40, rect.Width);
+        int barH = Math.Max(32, rect.Height);
+        int clampedX = Math.Clamp(rect.Left, work.Left, Math.Max(work.Left, work.Right - barW));
+        int clampedY = Math.Clamp(rect.Top, work.Top, Math.Max(work.Top, work.Bottom - barH));
+
+        if (clampedX != rect.Left || clampedY != rect.Top)
+        {
+            User32.SetWindowPos(hwnd, User32.HWND_TOPMOST, clampedX, clampedY, 0, 0, User32.SWP_NOSIZE | User32.SWP_NOACTIVATE);
+        }
+
+        if (savePosition)
+        {
+            _stateManager.Prop.FloatingBarMonitorDevice = monitor.DeviceName;
+            _stateManager.Prop.FloatingBarLeft = clampedX - work.Left;
+            _stateManager.Prop.FloatingBarTop = clampedY - work.Top;
+            SaveStateSafely("DragEnd");
+        }
+    }
+
+    private void SaveStateSafely(string operation)
+    {
+        try
+        {
+            _stateManager.Save();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic($"FloatingSwitcherBarWindow.{operation}", ex);
+        }
     }
 
     private void AccountPill_Click(object sender, RoutedEventArgs e)

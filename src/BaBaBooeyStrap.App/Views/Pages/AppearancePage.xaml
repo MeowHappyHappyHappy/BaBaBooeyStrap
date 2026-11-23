@@ -37,10 +37,14 @@
                         <TextBlock Text="{DynamicResource Str_Appearance_Language}" VerticalAlignment="Center"/>
                         <ComboBox Grid.Column="1" ItemsSource="{Binding WindowIntegrations.AvailableLanguages}" SelectedItem="{Binding WindowIntegrations.CurrentLanguage}" ItemTemplate="{DynamicResource LocalizedEnumItemTemplate}"/>
                     </Grid>
-                    <DockPanel Margin="0,6,0,8">
-                        <TextBlock Text="{DynamicResource Str_Appearance_UseAcrylic}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding WindowIntegrations.UseAcrylicBackground}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,6,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Appearance_UseAcrylic}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Appearance_UseAcrylic}" IsChecked="{Binding WindowIntegrations.UseAcrylicBackground}"/>
+                    </Grid>
                     <Grid IsEnabled="{Binding WindowIntegrations.UseAcrylicBackground}">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220"/>
@@ -102,7 +106,7 @@
                     </Grid>
                     <TextBlock Text="{Binding WindowIntegrations.CustomIconWarningText}"
                                Visibility="{Binding WindowIntegrations.HasCustomIconWarning, Converter={StaticResource BoolToVisibilityConverter}}"
-                               Foreground="#FFF59E0B"
+                               Foreground="{DynamicResource AppWarningForegroundBrush}"
                                FontSize="12"
                                TextWrapping="Wrap"
                                Margin="220,0,0,8"/>
@@ -120,9 +124,17 @@
                     <!-- Preview Swatch -->
                     <Border CornerRadius="6" Padding="12" Margin="0,6,0,0"
                             Background="{Binding WindowIntegrations.PreviewTheme.Background, Converter={StaticResource HexToBrush}}">
-                        <DockPanel>
-                            <TextBlock Foreground="{Binding WindowIntegrations.PreviewTheme.Foreground, Converter={StaticResource HexToBrush}}"
-                                       FontWeight="SemiBold" VerticalAlignment="Center">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0"
+                                       Foreground="{Binding WindowIntegrations.PreviewTheme.Foreground, Converter={StaticResource HexToBrush}}"
+                                       FontWeight="SemiBold"
+                                       TextWrapping="Wrap"
+                                       Margin="0,0,12,0"
+                                       VerticalAlignment="Center">
                                 <TextBlock.Text>
                                     <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Appearance_XmlPreviewFormat">
                                         <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
@@ -130,8 +142,8 @@
                                     </MultiBinding>
                                 </TextBlock.Text>
                             </TextBlock>
-                            <ui:Button Content="{DynamicResource Str_Appearance_PreviewDialog}" Click="PreviewDialog_Click" HorizontalAlignment="Right"/>
-                        </DockPanel>
+                            <ui:Button Grid.Column="1" Content="{DynamicResource Str_Appearance_PreviewDialog}" Click="PreviewDialog_Click" HorizontalAlignment="Right"/>
+                        </Grid>
                     </Border>
                 </StackPanel>
             </Border>
@@ -176,7 +188,7 @@
                     </Grid>
                     <TextBlock Text="{Binding WindowIntegrations.CustomRobloxIconWarningText}"
                                Visibility="{Binding WindowIntegrations.HasCustomRobloxIconWarning, Converter={StaticResource BoolToVisibilityConverter}}"
-                               Foreground="#FFF59E0B"
+                               Foreground="{DynamicResource AppWarningForegroundBrush}"
                                FontSize="12"
                                TextWrapping="Wrap"
                                Margin="220,0,0,0"/>

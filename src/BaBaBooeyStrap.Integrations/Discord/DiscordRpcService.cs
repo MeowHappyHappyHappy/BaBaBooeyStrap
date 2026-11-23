@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Security.Principal;
 using BaBaBooeyStrap.Core.Logging;
 
 namespace BaBaBooeyStrap.Integrations.Discord;
@@ -11,6 +12,8 @@ public sealed class DiscordRpcService : IDiscordRpcService
     public const uint OpcodeClose = DiscordIpcProtocol.OpcodeClose;
     public const uint OpcodePing = DiscordIpcProtocol.OpcodePing;
     public const uint OpcodePong = DiscordIpcProtocol.OpcodePong;
+
+    private const int MaxObservedReconnectDelays = 100;
 
     private readonly DiscordRpcOptions _options;
     private readonly ILogger _logger;
@@ -30,7 +33,9 @@ public sealed class DiscordRpcService : IDiscordRpcService
     private DateTime _lastPresenceUpdateUtc = DateTime.MinValue;
     private bool _isConnected;
     private bool _explicitDisconnect;
-    private bool _disposed;
+    private int _disposed;
+
+    private bool IsDisposed => Volatile.Read(ref _disposed) != 0;
 
     public event EventHandler<bool>? ConnectionStateChanged;
 
@@ -40,7 +45,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
         {
             lock (_stateLock)
             {
-                return _isConnected && _pipe is { IsConnected: true } && !_disposed;
+                return _isConnected && _pipe is { IsConnected: true } && !IsDisposed;
             }
         }
     }
@@ -64,7 +69,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
     public async Task<bool> ConnectAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         try
         {
@@ -77,7 +82,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
         try
         {
-            if (_disposed || IsConnected) return IsConnected;
+            if (IsDisposed || IsConnected) return IsConnected;
 
             lock (_stateLock)
             {
@@ -91,12 +96,17 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
             foreach (string pipeName in candidatePipes)
             {
-                if (ct.IsCancellationRequested || _disposed) break;
+                if (ct.IsCancellationRequested || IsDisposed) break;
 
                 NamedPipeClientStream? candidate = null;
                 try
                 {
-                    candidate = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                    candidate = new NamedPipeClientStream(
+                        ".",
+                        pipeName,
+                        PipeDirection.InOut,
+                        PipeOptions.Asynchronous,
+                        TokenImpersonationLevel.Anonymous);
                     using var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     connectCts.CancelAfter(timeoutPerPipe);
 
@@ -108,9 +118,12 @@ public sealed class DiscordRpcService : IDiscordRpcService
                     var (respOpcode, respJson) = await DiscordIpcProtocol.ReadFrameAsync(candidate, connectCts.Token).ConfigureAwait(false);
                     if (respOpcode == OpcodeFrame && DiscordIpcProtocol.IsReadyDispatch(respJson))
                     {
-                        ActivatePipe(candidate);
-                        candidate = null;
-                        return true;
+                        if (ActivatePipe(candidate))
+                        {
+                            candidate = null;
+                            return true;
+                        }
+                        return false;
                     }
                 }
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -151,7 +164,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
     public async Task UpdatePresenceAsync(DiscordActivity activity, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(activity);
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         CancellationTokenSource? ctsToCancel = null;
         CancellationTokenSource? deferredCts = null;
@@ -228,7 +241,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
             DiscordActivity? toSend = null;
             lock (_stateLock)
             {
-                if (_disposed || !ReferenceEquals(_deferredFlushCts, flushCts) || flushCts.IsCancellationRequested)
+                if (IsDisposed || !ReferenceEquals(_deferredFlushCts, flushCts) || flushCts.IsCancellationRequested)
                 {
                     return;
                 }
@@ -273,7 +286,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
     public async Task ClearPresenceAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
 
         CancellationTokenSource? ctsToCancel;
         lock (_stateLock)
@@ -294,7 +307,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
     public async Task SendPingAsync(CancellationToken ct = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
         await SendFrameSafeAsync(OpcodePing, "{}", ct).ConfigureAwait(false);
     }
 
@@ -352,7 +365,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
         if (wasConnected)
         {
-            ConnectionStateChanged?.Invoke(this, false);
+            RaiseConnectionStateChanged(false);
         }
     }
 
@@ -390,22 +403,34 @@ public sealed class DiscordRpcService : IDiscordRpcService
         return list.ToArray();
     }
 
-    private void ActivatePipe(NamedPipeClientStream pipe)
+    private bool ActivatePipe(NamedPipeClientStream pipe)
     {
-        CancellationTokenSource sessionCts;
+        NamedPipeClientStream? oldPipe;
+        CancellationTokenSource? oldSessionCts;
+
         lock (_stateLock)
         {
-            _pipe?.Dispose();
+            if (IsDisposed || _explicitDisconnect)
+            {
+                return false;
+            }
+
+            oldPipe = _pipe;
+            oldSessionCts = _sessionCts;
             _pipe = pipe;
             _isConnected = true;
-            try { _sessionCts?.Cancel(); } catch (ObjectDisposedException) { }
-            try { _sessionCts?.Dispose(); } catch (ObjectDisposedException) { }
-            _sessionCts = new CancellationTokenSource();
-            sessionCts = _sessionCts;
+
+            var sessionCts = new CancellationTokenSource();
+            _sessionCts = sessionCts;
             _readerTask = Task.Run(() => RunReaderLoopAsync(pipe, sessionCts.Token), sessionCts.Token);
         }
 
-        ConnectionStateChanged?.Invoke(this, true);
+        try { oldSessionCts?.Cancel(); } catch { }
+        try { oldPipe?.Dispose(); } catch { }
+        try { oldSessionCts?.Dispose(); } catch { }
+
+        RaiseConnectionStateChanged(true);
+        return true;
     }
 
     private async Task SendFrameSafeAsync(uint opcode, string json, CancellationToken ct)
@@ -511,7 +536,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
             sessionCts = _sessionCts;
             _sessionCts = null;
 
-            shouldReconnect = _options.AutoReconnect && !_explicitDisconnect && !_disposed &&
+            shouldReconnect = _options.AutoReconnect && !_explicitDisconnect && !IsDisposed &&
                               (_reconnectTask == null || _reconnectTask.IsCompleted);
             if (shouldReconnect)
             {
@@ -529,7 +554,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
         if (wasConnected)
         {
-            ConnectionStateChanged?.Invoke(this, false);
+            RaiseConnectionStateChanged(false);
         }
     }
 
@@ -538,10 +563,14 @@ public sealed class DiscordRpcService : IDiscordRpcService
         TimeSpan delay = _options.InitialReconnectDelay;
         if (delay <= TimeSpan.Zero) delay = TimeSpan.FromMilliseconds(50);
 
-        while (!ct.IsCancellationRequested && !_explicitDisconnect && !_disposed)
+        while (!ct.IsCancellationRequested && !_explicitDisconnect && !IsDisposed)
         {
             lock (_stateLock)
             {
+                if (_reconnectDelaysObserved.Count >= MaxObservedReconnectDelays)
+                {
+                    _reconnectDelaysObserved.RemoveAt(0);
+                }
                 _reconnectDelaysObserved.Add(delay);
             }
 
@@ -554,7 +583,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
                 break;
             }
 
-            if (ct.IsCancellationRequested || _explicitDisconnect || _disposed) break;
+            if (ct.IsCancellationRequested || _explicitDisconnect || IsDisposed) break;
 
             bool reconnected;
             try
@@ -591,7 +620,7 @@ public sealed class DiscordRpcService : IDiscordRpcService
 
                 lock (_stateLock)
                 {
-                    if (_isConnected && !_disposed)
+                    if (_isConnected && !IsDisposed)
                     {
                         _reconnectTask = null;
                         break;
@@ -604,10 +633,27 @@ public sealed class DiscordRpcService : IDiscordRpcService
         }
     }
 
+    private void RaiseConnectionStateChanged(bool connected)
+    {
+        var handlers = ConnectionStateChanged;
+        if (handlers == null) return;
+
+        foreach (EventHandler<bool> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, connected);
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug("DiscordRpcService", $"ConnectionStateChanged handler failed: {ex.Message}");
+            }
+        }
+    }
+
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         Disconnect();
 
         try { _readerTask?.Wait(250); } catch { }

@@ -78,19 +78,25 @@ public sealed class Win32MonitorProvider : IMonitorProvider
         return GetPrimaryMonitor();
     }
 
-    public MonitorInfo GetMonitorFromWindow(nint hWnd)
+    public MonitorInfo GetMonitorFromWindow(nint hWnd) =>
+        GetMonitorFromWindow(hWnd, GetMonitors());
+
+    public MonitorInfo GetMonitorFromWindow(nint hWnd, IReadOnlyList<MonitorInfo> cachedMonitors)
     {
+        ArgumentNullException.ThrowIfNull(cachedMonitors);
+        var monitors = cachedMonitors.Count > 0 ? cachedMonitors : GetMonitors();
+
         if (hWnd != nint.Zero)
         {
             nint hMonitor = User32.MonitorFromWindow(hWnd, User32.MONITOR_DEFAULTTONEAREST);
-            var matched = MatchMonitorHandle(hMonitor);
+            var matched = MatchMonitorHandle(hMonitor, monitors);
             if (matched != null)
             {
                 return matched;
             }
         }
 
-        return GetPrimaryMonitor();
+        return monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors[0];
     }
 
     public MonitorInfo? FindMonitorByDeviceName(string? deviceName)
@@ -104,7 +110,7 @@ public sealed class Win32MonitorProvider : IMonitorProvider
             string.Equals(m.DeviceName, deviceName.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
-    private MonitorInfo? MatchMonitorHandle(nint hMonitor)
+    private MonitorInfo? MatchMonitorHandle(nint hMonitor, IReadOnlyList<MonitorInfo>? monitors = null)
     {
         if (hMonitor == nint.Zero)
         {
@@ -122,7 +128,7 @@ public sealed class Win32MonitorProvider : IMonitorProvider
             return null;
         }
 
-        var monitors = GetMonitors();
+        monitors ??= GetMonitors();
         if (!string.IsNullOrWhiteSpace(mi.szDevice))
         {
             var byDevice = monitors.FirstOrDefault(m =>

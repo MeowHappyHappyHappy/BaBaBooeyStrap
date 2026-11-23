@@ -35,6 +35,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
     private readonly ILogger _logger;
 
     private readonly object _stateLock = new();
+    private readonly object _refreshLock = new();
     private readonly Dictionary<int, AccountRegistration> _registrations = new();
     private readonly Dictionary<int, int> _pidSlots = new();
     private readonly Dictionary<int, string> _pidServerCodes = new();
@@ -56,7 +57,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
     private User32.WinEventDelegate? _winEventDelegate;
     private GCHandle _delegateHandle;
     private bool _running;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     public event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesChanged;
     public event EventHandler<IReadOnlyList<RunningRobloxInstance>>? InstancesRefreshed;
@@ -96,6 +97,10 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
     public void Start()
     {
+        CancellationToken stopToken;
+        Thread hookThread;
+        TaskCompletionSource<uint> readyTcs;
+
         lock (_stateLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -104,11 +109,28 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
             _refreshSignal = new SemaphoreSlim(0, 1);
             _pollCts = new CancellationTokenSource();
-            var token = _pollCts.Token;
+            stopToken = _pollCts.Token;
             var signal = _refreshSignal;
-            _pollTask = Task.Run(() => PollLoopAsync(signal, token), token);
+            _pollTask = Task.Run(() => PollLoopAsync(signal, stopToken), stopToken);
 
-            StartWinEventHookThread();
+            readyTcs = new TaskCompletionSource<uint>(TaskCreationOptions.RunContinuationsAsynchronously);
+            User32.WinEventDelegate localDelegate = HandleWinEvent;
+            GCHandle localHandle = GCHandle.Alloc(localDelegate, GCHandleType.Normal);
+            _winEventDelegate = localDelegate;
+            _delegateHandle = localHandle;
+
+            hookThread = CreateWinEventHookThread(readyTcs, localDelegate, localHandle, stopToken);
+            _hookThread = hookThread;
+        }
+
+        // Start hook thread and await queue creation outside _stateLock so WinEvent callbacks cannot deadlock Start().
+        hookThread.Start();
+        try
+        {
+            readyTcs.Task.Wait(TimeSpan.FromSeconds(2), stopToken);
+        }
+        catch
+        {
         }
 
         RefreshNow();
@@ -310,176 +332,183 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
     {
         if (_disposed) return;
 
-        IReadOnlyList<ObservedRobloxWindow> observed;
-        try
+        lock (_refreshLock)
         {
-            observed = _windowProbe != null ? _windowProbe() : ProbeRobloxWindows();
-        }
-        catch (Exception ex)
-        {
-            _logger.Debug("RunningInstanceTracker", $"Window probe failed: {ex.Message}");
-            return;
-        }
+            if (_disposed) return;
 
-        Settings settings = _getSettings();
-        IReadOnlyList<RunningRobloxInstance>? changedSnapshot = null;
-        IReadOnlyList<RunningRobloxInstance> currentSnapshot;
-        RunningRobloxInstance? focusedChange = null;
-        bool focusChanged = false;
-        var titleUpdates = new List<(nint HWnd, string TargetTitle)>();
-
-        lock (_stateLock)
-        {
-            var observedPids = new HashSet<int>();
-            var observedHwnds = new HashSet<nint>();
-            var validObserved = new List<ObservedRobloxWindow>(observed.Count);
-            var now = DateTimeOffset.UtcNow;
-
-            foreach (var win in observed)
+            IReadOnlyList<ObservedRobloxWindow> observed;
+            try
             {
-                if (win.ProcessId <= 0 || win.WindowHandle == nint.Zero)
-                {
-                    continue;
-                }
-
-                if (!observedPids.Add(win.ProcessId))
-                {
-                    continue;
-                }
-
-                observedHwnds.Add(win.WindowHandle);
-                validObserved.Add(win);
+                observed = _windowProbe != null ? _windowProbe() : ProbeRobloxWindows();
+            }
+            catch (Exception ex)
+            {
+                _logger.Debug("RunningInstanceTracker", $"Window probe failed: {ex.Message}");
+                return;
             }
 
-            // Immediately release slots for any PID that no longer has an observed visible window
-            foreach (int staleSlotPid in _pidSlots.Keys.Where(p => !observedPids.Contains(p)).ToList())
+            Settings settings = _getSettings();
+            IReadOnlyList<RunningRobloxInstance>? changedSnapshot = null;
+            IReadOnlyList<RunningRobloxInstance> currentSnapshot;
+            RunningRobloxInstance? focusedChange = null;
+            bool focusChanged = false;
+            var titleUpdates = new List<(nint HWnd, string TargetTitle)>();
+
+            lock (_stateLock)
             {
-                _pidSlots.Remove(staleSlotPid);
-            }
+                if (_disposed) return;
 
-            foreach (var win in validObserved)
-            {
-                _firstSeenUtc.TryAdd(win.ProcessId, now);
-                EnsureSlotAssignedLocked(win.ProcessId);
-            }
+                var observedPids = new HashSet<int>();
+                var observedHwnds = new HashSet<nint>();
+                var validObserved = new List<ObservedRobloxWindow>(observed.Count);
+                var now = DateTimeOffset.UtcNow;
 
-            CompactSlotsLocked();
-
-            var newInstances = new List<RunningRobloxInstance>(validObserved.Count);
-            foreach (var win in validObserved)
-            {
-                int slot = _pidSlots[win.ProcessId];
-                var startedAt = _firstSeenUtc[win.ProcessId];
-                _registrations.TryGetValue(win.ProcessId, out var reg);
-                var monitor = win.Monitor ?? _monitorProvider.GetPrimaryMonitor();
-
-                var instance = new RunningRobloxInstance(
-                    ProcessId: win.ProcessId,
-                    WindowHandle: win.WindowHandle,
-                    SlotIndex: slot,
-                    AccountId: reg?.AccountId,
-                    UserId: reg?.UserId,
-                    Username: reg?.Username,
-                    DisplayName: reg?.DisplayName,
-                    Notes: reg?.Notes,
-                    IsExternal: reg?.IsExternal ?? true,
-                    IsMinimized: win.IsMinimized,
-                    IsFocused: win.IsFocused,
-                    MonitorDeviceName: monitor.DeviceName,
-                    MonitorIndex: monitor.Index,
-                    StartedAtUtc: startedAt);
-
-                newInstances.Add(instance);
-
-                if (!_externallyManagedTitlePids.Contains(win.ProcessId))
+                foreach (var win in observed)
                 {
-                    string? nextTitle = ComputeDesiredWindowTitleLocked(win.WindowHandle, win.WindowTitle, win.ProcessId, slot, reg, settings);
-                    if (nextTitle != null)
+                    if (win.ProcessId <= 0 || win.WindowHandle == nint.Zero)
                     {
-                        titleUpdates.Add((win.WindowHandle, nextTitle));
+                        continue;
+                    }
+
+                    if (!observedPids.Add(win.ProcessId))
+                    {
+                        continue;
+                    }
+
+                    observedHwnds.Add(win.WindowHandle);
+                    validObserved.Add(win);
+                }
+
+                // Immediately release slots for any PID that no longer has an observed visible window
+                foreach (int staleSlotPid in _pidSlots.Keys.Where(p => !observedPids.Contains(p)).ToList())
+                {
+                    _pidSlots.Remove(staleSlotPid);
+                }
+
+                foreach (var win in validObserved)
+                {
+                    _firstSeenUtc.TryAdd(win.ProcessId, now);
+                    EnsureSlotAssignedLocked(win.ProcessId);
+                }
+
+                CompactSlotsLocked();
+
+                var newInstances = new List<RunningRobloxInstance>(validObserved.Count);
+                foreach (var win in validObserved)
+                {
+                    int slot = _pidSlots[win.ProcessId];
+                    var startedAt = _firstSeenUtc[win.ProcessId];
+                    _registrations.TryGetValue(win.ProcessId, out var reg);
+                    var monitor = win.Monitor ?? _monitorProvider.GetPrimaryMonitor();
+
+                    var instance = new RunningRobloxInstance(
+                        ProcessId: win.ProcessId,
+                        WindowHandle: win.WindowHandle,
+                        SlotIndex: slot,
+                        AccountId: reg?.AccountId,
+                        UserId: reg?.UserId,
+                        Username: reg?.Username,
+                        DisplayName: reg?.DisplayName,
+                        Notes: reg?.Notes,
+                        IsExternal: reg?.IsExternal ?? true,
+                        IsMinimized: win.IsMinimized,
+                        IsFocused: win.IsFocused,
+                        MonitorDeviceName: monitor.DeviceName,
+                        MonitorIndex: monitor.Index,
+                        StartedAtUtc: startedAt);
+
+                    newInstances.Add(instance);
+
+                    if (!_externallyManagedTitlePids.Contains(win.ProcessId))
+                    {
+                        string? nextTitle = ComputeDesiredWindowTitleLocked(win.WindowHandle, win.WindowTitle, win.ProcessId, slot, reg, settings);
+                        if (nextTitle != null)
+                        {
+                            titleUpdates.Add((win.WindowHandle, nextTitle));
+                        }
                     }
                 }
-            }
 
-            // Cleanup exited PIDs metadata (preserving recent pre-registrations within grace window)
-            var trackedPids = _registrations.Keys
-                .Concat(_firstSeenUtc.Keys)
-                .Concat(_pidServerCodes.Keys)
-                .Concat(_externallyManagedTitlePids)
-                .Distinct()
-                .ToList();
+                // Cleanup exited PIDs metadata (preserving recent pre-registrations within grace window)
+                var trackedPids = _registrations.Keys
+                    .Concat(_firstSeenUtc.Keys)
+                    .Concat(_pidServerCodes.Keys)
+                    .Concat(_externallyManagedTitlePids)
+                    .Distinct()
+                    .ToList();
 
-            foreach (int pid in trackedPids)
-            {
-                if (observedPids.Contains(pid))
+                foreach (int pid in trackedPids)
                 {
-                    continue;
+                    if (observedPids.Contains(pid))
+                    {
+                        continue;
+                    }
+
+                    if (_registrations.TryGetValue(pid, out var reg) &&
+                        (now - reg.RegisteredAtUtc) < PendingRegistrationGrace)
+                    {
+                        continue;
+                    }
+
+                    _pidServerCodes.Remove(pid);
+                    _registrations.Remove(pid);
+                    _firstSeenUtc.Remove(pid);
+                    _externallyManagedTitlePids.Remove(pid);
                 }
 
-                if (_registrations.TryGetValue(pid, out var reg) &&
-                    (now - reg.RegisteredAtUtc) < PendingRegistrationGrace)
+                foreach (nint staleHwnd in _originalTitles.Keys.Where(h => !observedHwnds.Contains(h)).ToList())
                 {
-                    continue;
+                    _originalTitles.Remove(staleHwnd);
+                    _lastAppliedTitles.Remove(staleHwnd);
                 }
 
-                _pidServerCodes.Remove(pid);
-                _registrations.Remove(pid);
-                _firstSeenUtc.Remove(pid);
-                _externallyManagedTitlePids.Remove(pid);
-            }
+                newInstances.Sort((a, b) => a.SlotIndex.CompareTo(b.SlotIndex));
+                var newFocused = newInstances.FirstOrDefault(i => i.IsFocused);
 
-            foreach (nint staleHwnd in _originalTitles.Keys.Where(h => !observedHwnds.Contains(h)).ToList())
-            {
-                _originalTitles.Remove(staleHwnd);
-                _lastAppliedTitles.Remove(staleHwnd);
-            }
-
-            newInstances.Sort((a, b) => a.SlotIndex.CompareTo(b.SlotIndex));
-            var newFocused = newInstances.FirstOrDefault(i => i.IsFocused);
-
-            if (!InstancesEqual(_currentInstances, newInstances))
-            {
-                _currentInstances = newInstances;
-                changedSnapshot = newInstances.ToList().AsReadOnly();
-            }
-
-            currentSnapshot = changedSnapshot ?? _currentInstances.ToList().AsReadOnly();
-
-            if (_currentFocused?.ProcessId != newFocused?.ProcessId ||
-                _currentFocused?.WindowHandle != newFocused?.WindowHandle)
-            {
-                _currentFocused = newFocused;
-                focusedChange = newFocused;
-                focusChanged = true;
-            }
-        }
-
-        // Apply Win32 SetWindowText outside state lock
-        foreach (var (hwnd, targetTitle) in titleUpdates)
-        {
-            if (_interop.SetWindowText(hwnd, targetTitle))
-            {
-                lock (_stateLock)
+                if (!InstancesEqual(_currentInstances, newInstances))
                 {
-                    _lastAppliedTitles[hwnd] = targetTitle;
+                    _currentInstances = newInstances;
+                    changedSnapshot = newInstances.ToList().AsReadOnly();
+                }
+
+                currentSnapshot = changedSnapshot ?? _currentInstances.ToList().AsReadOnly();
+
+                if (_currentFocused?.ProcessId != newFocused?.ProcessId ||
+                    _currentFocused?.WindowHandle != newFocused?.WindowHandle)
+                {
+                    _currentFocused = newFocused;
+                    focusedChange = newFocused;
+                    focusChanged = true;
                 }
             }
-            else
+
+            // Apply Win32 SetWindowText outside state lock
+            foreach (var (hwnd, targetTitle) in titleUpdates)
             {
-                _logger.Debug("RunningInstanceTracker", $"Failed to set window title for HWND 0x{hwnd:X}.");
+                if (_interop.SetWindowText(hwnd, targetTitle))
+                {
+                    lock (_stateLock)
+                    {
+                        _lastAppliedTitles[hwnd] = targetTitle;
+                    }
+                }
+                else
+                {
+                    _logger.Debug("RunningInstanceTracker", $"Failed to set window title for HWND 0x{hwnd:X}.");
+                }
             }
-        }
 
-        if (changedSnapshot != null)
-        {
-            InstancesChanged?.Invoke(this, changedSnapshot);
-        }
+            if (changedSnapshot != null)
+            {
+                RaiseSafe(InstancesChanged, changedSnapshot);
+            }
 
-        InstancesRefreshed?.Invoke(this, currentSnapshot);
+            RaiseSafe(InstancesRefreshed, currentSnapshot);
 
-        if (focusChanged)
-        {
-            FocusedInstanceChanged?.Invoke(this, focusedChange);
+            if (focusChanged)
+            {
+                RaiseSafe(FocusedInstanceChanged, focusedChange);
+            }
         }
     }
 
@@ -639,6 +668,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         nint fgHwnd = _interop.GetForegroundWindow();
         var results = new List<ObservedRobloxWindow>();
         var seenPids = new HashSet<int>();
+        IReadOnlyList<MonitorInfo>? cachedMonitors = null;
 
         _interop.EnumWindows((hwnd, _) =>
         {
@@ -668,7 +698,8 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             string title = _interop.GetWindowText(hwnd);
             bool minimized = _interop.IsIconic(hwnd);
             bool focused = hwnd == fgHwnd;
-            var monitor = _monitorProvider.GetMonitorFromWindow(hwnd);
+            cachedMonitors ??= _monitorProvider.GetMonitors();
+            var monitor = _monitorProvider.GetMonitorFromWindow(hwnd, cachedMonitors);
             results.Add(new ObservedRobloxWindow((int)rawPid, hwnd, title, minimized, focused, monitor));
             return true;
         });
@@ -696,6 +727,12 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             isRoblox = false;
         }
 
+        if (!isRoblox)
+        {
+            _robloxPidCache.TryRemove(pid, out _);
+            return false;
+        }
+
         if (_robloxPidCache.Count >= 512)
         {
             foreach (var key in _robloxPidCache.Keys.Take(256))
@@ -704,8 +741,8 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             }
         }
 
-        _robloxPidCache[pid] = new PidCacheEntry(isRoblox, now.Add(PidCacheTtl));
-        return isRoblox;
+        _robloxPidCache[pid] = new PidCacheEntry(true, now.Add(PidCacheTtl));
+        return true;
     }
 
     private async Task PollLoopAsync(SemaphoreSlim signal, CancellationToken ct)
@@ -726,7 +763,35 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             }
 
             if (ct.IsCancellationRequested) break;
-            RefreshNow();
+
+            try
+            {
+                RefreshNow();
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("RunningInstanceTracker", $"Poll iteration failed: {ex.Message}");
+            }
+        }
+    }
+
+    private void RaiseSafe<T>(EventHandler<T>? handler, T args)
+    {
+        if (handler == null) return;
+        foreach (EventHandler<T> subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("RunningInstanceTracker", $"Tracker subscriber threw an exception: {ex.Message}");
+            }
         }
     }
 
@@ -743,15 +808,12 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
         catch { }
     }
 
-    private void StartWinEventHookThread()
+    private Thread CreateWinEventHookThread(
+        TaskCompletionSource<uint> readyTcs,
+        User32.WinEventDelegate localDelegate,
+        GCHandle localHandle,
+        CancellationToken stopToken)
     {
-        using var ready = new ManualResetEventSlim(false);
-        User32.WinEventDelegate localDelegate = HandleWinEvent;
-        GCHandle localHandle = GCHandle.Alloc(localDelegate, GCHandleType.Normal);
-        _winEventDelegate = localDelegate;
-        _delegateHandle = localHandle;
-
-        uint initThreadId = 0;
         var thread = new Thread(() =>
         {
             nint fgHook = nint.Zero;
@@ -760,7 +822,34 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
             try
             {
+                if (stopToken.IsCancellationRequested)
+                {
+                    readyTcs.TrySetResult(0);
+                    return;
+                }
+
                 uint currentTid = _interop.GetCurrentThreadId();
+
+                // Initialize the message queue before publishing thread ID or installing hooks.
+                _interop.PeekMessage(out _, nint.Zero, 0, 0, User32.PM_NOREMOVE);
+
+                bool shouldRun;
+                lock (_stateLock)
+                {
+                    shouldRun = _running && !_disposed && !stopToken.IsCancellationRequested &&
+                                ReferenceEquals(_winEventDelegate, localDelegate);
+                    if (shouldRun)
+                    {
+                        _hookThreadId = currentTid;
+                    }
+                }
+
+                readyTcs.TrySetResult(shouldRun ? currentTid : 0);
+                if (!shouldRun)
+                {
+                    return;
+                }
+
                 const uint flags = User32.WINEVENT_OUTOFCONTEXT | User32.WINEVENT_SKIPOWNPROCESS;
 
                 fgHook = _interop.SetWinEventHook(
@@ -787,11 +876,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                     0,
                     flags);
 
-                _interop.PeekMessage(out _, nint.Zero, 0, 0, User32.PM_NOREMOVE);
-                Volatile.Write(ref initThreadId, currentTid);
-                try { ready.Set(); } catch { }
-
-                while (_interop.GetMessage(out var msg, nint.Zero, 0, 0) > 0)
+                while (!stopToken.IsCancellationRequested && _interop.GetMessage(out var msg, nint.Zero, 0, 0) > 0)
                 {
                     _interop.TranslateMessage(ref msg);
                     _interop.DispatchMessage(ref msg);
@@ -800,7 +885,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             catch (Exception ex)
             {
                 _logger.Debug("RunningInstanceTracker", $"WinEvent hook loop error: {ex.Message}");
-                try { ready.Set(); } catch { }
+                readyTcs.TrySetResult(0);
             }
             finally
             {
@@ -813,6 +898,11 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
                 {
                     if (ReferenceEquals(_winEventDelegate, localDelegate)) _winEventDelegate = null;
                     if (_delegateHandle == localHandle) _delegateHandle = default;
+                    if (_hookThreadId != 0 && ReferenceEquals(_hookThread, Thread.CurrentThread))
+                    {
+                        _hookThread = null;
+                        _hookThreadId = 0;
+                    }
                 }
             }
         })
@@ -821,10 +911,7 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
             Name = "BaBaBooeyStrap.InstanceTrackerHook"
         };
 
-        _hookThread = thread;
-        thread.Start();
-        ready.Wait(TimeSpan.FromSeconds(2));
-        _hookThreadId = Volatile.Read(ref initThreadId);
+        return thread;
     }
 
     private void HandleWinEvent(
@@ -866,8 +953,12 @@ public sealed class RunningInstanceTracker : IRunningInstanceTracker
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        lock (_stateLock)
+        {
+            if (_disposed) return;
+            _disposed = true;
+        }
+
         Stop();
         GC.SuppressFinalize(this);
     }

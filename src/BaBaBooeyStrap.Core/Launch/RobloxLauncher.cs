@@ -8,14 +8,16 @@ using Microsoft.Win32;
 
 namespace BaBaBooeyStrap.Core.Launch;
 
-public class RobloxLauncher : IRobloxLauncher
+public class RobloxLauncher : IRobloxLauncher, IDisposable
 {
     private readonly IPaths _paths;
     private readonly IRobloxAuthService _authService;
+    private readonly bool _ownsAuthService;
     private readonly IJsonManager<RobloxState> _robloxStateManager;
     private readonly ILogger _logger;
     private readonly Func<ProcessStartInfo, Process?> _processStarter;
     private readonly Func<LaunchSettings, CancellationToken, Task>? _preLaunchHook;
+    private bool _disposed;
 
     public RobloxLauncher(
         IPaths? paths = null,
@@ -26,6 +28,7 @@ public class RobloxLauncher : IRobloxLauncher
         Func<LaunchSettings, CancellationToken, Task>? preLaunchHook = null)
     {
         _paths = paths ?? Paths.Current;
+        _ownsAuthService = authService == null;
         _authService = authService ?? new RobloxAuthService();
         _robloxStateManager = robloxStateManager ?? new JsonManager<RobloxState>(_paths.RobloxStateFile);
         _logger = logger ?? Logger.Current;
@@ -44,51 +47,77 @@ public class RobloxLauncher : IRobloxLauncher
         }
 
         string normalizedArgs = NormalizeLaunchArgs(settings.RobloxLaunchArgs);
+        string safeLaunchUri = RedactLaunchUri(normalizedArgs);
         LaunchTarget parsedTarget = ParseTargetFromUri(normalizedArgs);
 
         if (settings.NoLaunchFlag.Active)
         {
             _logger.Info("RobloxLauncher", "NoLaunch flag active; skipping process spawn.");
-            return new LaunchResult(true, normalizedArgs, parsedTarget, DateTimeOffset.UtcNow, null, null);
+            return new LaunchResult(true, safeLaunchUri, parsedTarget, DateTimeOffset.UtcNow, null, null);
         }
 
         bool isStudio = settings.RobloxLaunchMode is LaunchMode.Studio or LaunchMode.StudioAuth;
-        string? exePath = ResolveExecutablePath(isStudio, settings.VersionFlag.Data);
+        string? exePath;
+        try
+        {
+            exePath = ResolveExecutablePath(isStudio, settings.VersionFlag.Data);
+        }
+        catch (ArgumentException ex)
+        {
+            return new LaunchResult(
+                false,
+                safeLaunchUri,
+                parsedTarget,
+                DateTimeOffset.UtcNow,
+                null,
+                ex.Message);
+        }
 
         if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
         {
             string missingTarget = isStudio ? "RobloxStudioBeta.exe" : "RobloxPlayerBeta.exe";
             return new LaunchResult(
                 false,
-                normalizedArgs,
+                safeLaunchUri,
                 parsedTarget,
                 DateTimeOffset.UtcNow,
                 null,
                 $"{missingTarget} could not be located in installed versions.");
         }
 
-        string arguments = BuildProcessArguments(normalizedArgs, settings);
         var startInfo = new ProcessStartInfo
         {
             FileName = exePath,
-            Arguments = arguments,
             WorkingDirectory = Path.GetDirectoryName(exePath) ?? _paths.Base,
             UseShellExecute = false
         };
+        if (!TryPopulateProcessArguments(startInfo, normalizedArgs, settings, out string? argError))
+        {
+            return new LaunchResult(
+                false,
+                safeLaunchUri,
+                parsedTarget,
+                DateTimeOffset.UtcNow,
+                null,
+                argError ?? "Invalid launch arguments.");
+        }
 
         try
         {
             using var proc = _processStarter(startInfo);
             int? pid = proc?.Id;
             _logger.Info("RobloxLauncher", $"Launched {Path.GetFileName(exePath)} (PID={pid?.ToString() ?? "unknown"}).");
-            return new LaunchResult(true, normalizedArgs, parsedTarget, DateTimeOffset.UtcNow, pid, null);
+            return new LaunchResult(true, safeLaunchUri, parsedTarget, DateTimeOffset.UtcNow, pid, null);
         }
         catch (Exception ex)
         {
             _logger.Exception("RobloxLauncher", ex);
-            return new LaunchResult(false, normalizedArgs, parsedTarget, DateTimeOffset.UtcNow, null, ex.Message);
+            return new LaunchResult(false, safeLaunchUri, parsedTarget, DateTimeOffset.UtcNow, null, ex.Message);
         }
     }
+
+    internal static string RedactLaunchUri(string uri) =>
+        string.IsNullOrEmpty(uri) ? string.Empty : Logger.RedactSensitiveText(uri);
 
     public sealed record ResolvedLaunchTargetDetails(
         bool Success,
@@ -351,20 +380,77 @@ public class RobloxLauncher : IRobloxLauncher
         return WindowsRegistry.ArePlayerProtocolsRegistered(expectedHandlerPath);
     }
 
-    private static string BuildProcessArguments(string normalizedArgs, LaunchSettings settings)
+    private static bool TryPopulateProcessArguments(
+        ProcessStartInfo startInfo,
+        string normalizedArgs,
+        LaunchSettings settings,
+        out string? error)
     {
+        error = null;
+
         if (string.IsNullOrWhiteSpace(normalizedArgs))
         {
-            return settings.RobloxLaunchMode == LaunchMode.Studio ? string.Empty : "--app";
+            if (settings.RobloxLaunchMode != LaunchMode.Studio)
+            {
+                startInfo.ArgumentList.Add("--app");
+            }
+            return true;
         }
 
         if (normalizedArgs.StartsWith("roblox-player:", StringComparison.OrdinalIgnoreCase) ||
             normalizedArgs.StartsWith("roblox-studio:", StringComparison.OrdinalIgnoreCase) ||
             normalizedArgs.StartsWith("roblox-studio-auth:", StringComparison.OrdinalIgnoreCase))
         {
-            return $"\"{normalizedArgs}\"";
+            if (normalizedArgs.Any(ch => char.IsWhiteSpace(ch) || char.IsControl(ch) || ch == '"') ||
+                normalizedArgs.Length > PlaceLauncherUriBuilder.MaxLaunchUriLength)
+            {
+                error = "Launch protocol URI contains unsafe or invalid characters.";
+                return false;
+            }
+
+            startInfo.ArgumentList.Add(normalizedArgs);
+            return true;
         }
 
-        return normalizedArgs;
+        if (settings.RobloxLaunchMode == LaunchMode.Studio &&
+            !string.IsNullOrWhiteSpace(settings.StudioFlag.Data) &&
+            !settings.StudioFlag.Data.StartsWith("roblox-studio", StringComparison.OrdinalIgnoreCase))
+        {
+            string localPlace = LaunchSettings.SanitizeStudioLocalPath(settings.StudioFlag.Data);
+            if (string.IsNullOrWhiteSpace(localPlace))
+            {
+                error = "Studio local place file path contains invalid characters.";
+                return false;
+            }
+
+            startInfo.ArgumentList.Add("-task");
+            startInfo.ArgumentList.Add("EditFile");
+            startInfo.ArgumentList.Add("-localPlaceFile");
+            startInfo.ArgumentList.Add(localPlace);
+            return true;
+        }
+
+        foreach (string token in normalizedArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (token.Any(ch => char.IsControl(ch) || ch == '"'))
+            {
+                error = "Launch arguments contain unsafe characters.";
+                return false;
+            }
+            startInfo.ArgumentList.Add(token);
+        }
+
+        return true;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (_ownsAuthService)
+        {
+            _authService.Dispose();
+        }
+        GC.SuppressFinalize(this);
     }
 }

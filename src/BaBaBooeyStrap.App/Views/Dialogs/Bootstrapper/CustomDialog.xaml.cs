@@ -19,21 +19,28 @@ public partial class CustomDialog : Window, IBootstrapperDialog
         InitializeComponent();
 
         ViewModel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
-        Closing += (_, _) =>
-        {
-            if (!_closingProgrammatically && ViewModel.CancelEnabled)
-                ViewModel.RequestCancel();
-        };
+        Loaded += (_, _) => ClampWindowDimensions();
+        Closing += (_, e) => BootstrapperDialogHelper.HandleClosing(_closingProgrammatically, ViewModel, e);
+    }
+
+    private void ClampWindowDimensions()
+    {
+        double w = double.IsFinite(Width) ? Width : 500;
+        double h = double.IsFinite(Height) ? Height : 320;
+        Width = Math.Clamp(w, 320, 900);
+        Height = Math.Clamp(h, 180, 600);
     }
 
     public void SetProgress(double value, double max, bool indeterminate) =>
         ViewModel.UpdateProgress(value, max, indeterminate);
 
-    public void ShowBootstrapper() => Show();
+    public void ShowBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, Show);
 
-    public void CloseBootstrapper()
-    {
-        _closingProgrammatically = true;
-        Close();
-    }
+    public void CloseBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, () =>
+        {
+            _closingProgrammatically = true;
+            Close();
+        });
 }

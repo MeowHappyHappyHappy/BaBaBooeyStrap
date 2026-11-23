@@ -1,15 +1,20 @@
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Services;
+using BaBaBooeyStrap.Core.Interop;
+using Microsoft.Win32;
 
 namespace BaBaBooeyStrap.App.Views.Dialogs;
 
 public partial class ServerJoinToastWindow : Window
 {
-    private static ServerJoinToastWindow? _currentToast;
+    private const int MaxVisibleToasts = 4;
+    private const double ToastGapDip = 8;
+    private static readonly List<ServerJoinToastWindow> ActiveToasts = new();
 
     private readonly Action? _onClick;
     private readonly DispatcherTimer _closeTimer;
@@ -17,6 +22,7 @@ public partial class ServerJoinToastWindow : Window
     private bool _isClosing;
     private bool _isHovered;
     private bool _hasCopied;
+    private bool _displaySubscribed;
 
     public ServerJoinToastWindow(
         string title,
@@ -70,11 +76,30 @@ public partial class ServerJoinToastWindow : Window
         {
             _closeTimer.Stop();
             _copiedCloseTimer.Stop();
-            if (ReferenceEquals(_currentToast, this))
+            if (_displaySubscribed)
             {
-                _currentToast = null;
+                _displaySubscribed = false;
+                SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+            }
+
+            if (ActiveToasts.Remove(this))
+            {
+                RepositionActiveToasts();
             }
         };
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        nint hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd != nint.Zero)
+        {
+            long exStyle = User32.GetWindowLongPtr(hwnd, User32.GWL_EXSTYLE).ToInt64();
+            exStyle |= User32.WS_EX_NOACTIVATE | User32.WS_EX_TOOLWINDOW;
+            User32.SetWindowLongPtr(hwnd, User32.GWL_EXSTYLE, unchecked((nint)exStyle));
+        }
     }
 
     public static void ShowToast(
@@ -86,22 +111,34 @@ public partial class ServerJoinToastWindow : Window
         int durationMs = 5000,
         Action? onClick = null)
     {
-        try
+        while (ActiveToasts.Count >= MaxVisibleToasts)
         {
-            _currentToast?.CloseImmediate();
+            var oldest = ActiveToasts[0];
+            ActiveToasts.RemoveAt(0);
+            try
+            {
+                oldest.CloseImmediate();
+            }
+            catch
+            {
+            }
         }
-        catch { }
 
         var toast = new ServerJoinToastWindow(title, locationText, endpointText, isoCode, flagImage, durationMs, onClick);
-        _currentToast = toast;
+        ActiveToasts.Add(toast);
         toast.Show();
+        RepositionActiveToasts();
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        var workArea = SystemParameters.WorkArea;
-        Left = workArea.Right - ActualWidth - 4;
-        Top = workArea.Bottom - ActualHeight - 4;
+        if (!_displaySubscribed)
+        {
+            _displaySubscribed = true;
+            SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        }
+
+        RepositionActiveToasts();
 
         Opacity = 0;
         var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180));
@@ -110,6 +147,43 @@ public partial class ServerJoinToastWindow : Window
         if (!_isHovered)
         {
             _closeTimer.Start();
+        }
+    }
+
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(RepositionActiveToasts);
+    }
+
+    private static void RepositionActiveToasts()
+    {
+        if (ActiveToasts.Count == 0)
+        {
+            return;
+        }
+
+        var workArea = SystemParameters.WorkArea;
+        double bottom = workArea.Bottom - 8;
+
+        for (int i = ActiveToasts.Count - 1; i >= 0; i--)
+        {
+            var toast = ActiveToasts[i];
+            if (!toast.IsVisible)
+            {
+                continue;
+            }
+
+            double width = toast.ActualWidth > 0 ? toast.ActualWidth : (toast.Width > 0 ? toast.Width : 340);
+            double height = toast.ActualHeight > 0 ? toast.ActualHeight : 84;
+
+            toast.Left = Math.Max(workArea.Left + 8, workArea.Right - width - 8);
+            toast.Top = Math.Max(workArea.Top + 8, bottom - height);
+            bottom = toast.Top - ToastGapDip;
         }
     }
 

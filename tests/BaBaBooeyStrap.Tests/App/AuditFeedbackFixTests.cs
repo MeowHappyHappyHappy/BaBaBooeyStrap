@@ -902,7 +902,7 @@ public sealed class AuditFeedbackFixTests : IDisposable
         int regionCalls = 0;
 
         var handler = new MockHttpMessageHandler();
-        handler.SetupRoute("ipinfo.io/198.51.100.10/json", () =>
+        handler.SetupRoute("ipinfo.io/128.116.119.10/json", () =>
         {
             Interlocked.Increment(ref ipInfoCalls);
             return new HttpResponseMessage(HttpStatusCode.InternalServerError);
@@ -940,17 +940,23 @@ public sealed class AuditFeedbackFixTests : IDisposable
         var rovalra = new RoValraService(http, logger: Logger.Current, clientLatitude: 37.77, clientLongitude: -122.41);
 
         // Two failed lookups only trigger 1 HTTP call (negative cached)
-        (await rovalra.ResolveServerLocationAsync("198.51.100.10")).Should().BeNull();
-        (await rovalra.ResolveServerLocationAsync("198.51.100.10")).Should().BeNull();
+        (await rovalra.ResolveServerLocationAsync("128.116.119.10")).Should().BeNull();
+        (await rovalra.ResolveServerLocationAsync("128.116.119.10")).Should().BeNull();
         ipInfoCalls.Should().Be(1);
 
-        // Two matchmaking runs reuse cached self-IP + datacenters/list, and cap regions to 6 per call
+        // With explicit client coordinates, ipinfo.io/json is skipped while datacenters/list is cached and regions capped at 6 per call
         (await rovalra.GetBetterMatchmakingServerIdAsync(1818)).Should().BeNull();
         regionCalls.Should().Be(6);
         (await rovalra.GetBetterMatchmakingServerIdAsync(1818)).Should().BeNull();
-        selfIpCalls.Should().Be(1);
+        selfIpCalls.Should().Be(0);
         dataCenterCalls.Should().Be(1);
         regionCalls.Should().Be(12);
+
+        // Without client coordinates, ipinfo.io/json is queried once and cached
+        using var rovalraNoCoords = new RoValraService(http, logger: Logger.Current);
+        (await rovalraNoCoords.GetBetterMatchmakingServerIdAsync(1818)).Should().BeNull();
+        (await rovalraNoCoords.GetBetterMatchmakingServerIdAsync(1818)).Should().BeNull();
+        selfIpCalls.Should().Be(1);
     }
 
     [Fact]

@@ -4,19 +4,30 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net.Http;
 using System.Windows.Media.Imaging;
+using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Integrations.Matchmaking;
 
 namespace BaBaBooeyStrap.App.Services;
 
 public static class FlagImageService
 {
+    private const int MaxFlagPngBytes = 64 * 1024;
+    private static readonly byte[] PngSignature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+
     private static readonly ConcurrentDictionary<string, byte[]> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly ConcurrentDictionary<string, Task<byte[]?>> InFlightFetches = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(3) };
+    private static readonly HttpClient HttpClient = new(
+        new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10)
+        },
+        disposeHandler: true)
+    {
+        Timeout = TimeSpan.FromSeconds(5)
+    };
 
     private static string CacheDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "BaBaBooeyStrap",
+        Paths.Current.Base,
         "Cache",
         "Flags");
 
@@ -43,11 +54,15 @@ public static class FlagImageService
         {
             if (File.Exists(diskPath))
             {
-                byte[] bytes = File.ReadAllBytes(diskPath);
-                if (bytes.Length > 0)
+                var info = new FileInfo(diskPath);
+                if (info.Length is > 8 and <= MaxFlagPngBytes)
                 {
-                    MemoryCache[iso] = bytes;
-                    return bytes;
+                    byte[] bytes = File.ReadAllBytes(diskPath);
+                    if (IsValidPngBytes(bytes))
+                    {
+                        MemoryCache[iso] = bytes;
+                        return bytes;
+                    }
                 }
             }
         }
@@ -56,30 +71,50 @@ public static class FlagImageService
         return null;
     }
 
-    public static Task<byte[]?> GetFlagPngBytesAsync(string? country, CancellationToken ct = default)
+    public static async Task<byte[]?> GetFlagPngBytesAsync(string? country, CancellationToken ct = default)
     {
         string iso = ResolveIsoCode(country);
         if (string.IsNullOrEmpty(iso))
-            return Task.FromResult<byte[]?>(null);
+            return null;
 
         byte[]? cached = TryGetCachedFlagPngBytes(iso);
         if (cached != null)
-            return Task.FromResult<byte[]?>(cached);
+            return cached;
 
-        return InFlightFetches.GetOrAdd(iso, _ => FetchAndCacheAsync(iso, ct));
+        var sharedTask = InFlightFetches.GetOrAdd(iso, static key => FetchAndCacheAsync(key));
+        return ct.CanBeCanceled
+            ? await sharedTask.WaitAsync(ct).ConfigureAwait(false)
+            : await sharedTask.ConfigureAwait(false);
     }
 
-    private static async Task<byte[]?> FetchAndCacheAsync(string iso, CancellationToken ct)
+    private static async Task<byte[]?> FetchAndCacheAsync(string iso)
     {
         try
         {
             string url = $"https://flagcdn.com/w40/{iso.ToLowerInvariant()}.png";
-            using var resp = await HttpClient.GetAsync(url, ct).ConfigureAwait(false);
+            using var resp = await HttpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, CancellationToken.None).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
                 return null;
 
-            byte[] bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-            if (bytes.Length == 0)
+            if (resp.Content.Headers.ContentLength > MaxFlagPngBytes)
+                return null;
+
+            using var stream = await resp.Content.ReadAsStreamAsync(CancellationToken.None).ConfigureAwait(false);
+            using var ms = new MemoryStream();
+            byte[] buffer = new byte[4096];
+            int totalRead = 0;
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer, CancellationToken.None).ConfigureAwait(false);
+                if (read == 0) break;
+                totalRead += read;
+                if (totalRead > MaxFlagPngBytes)
+                    return null;
+                ms.Write(buffer, 0, read);
+            }
+
+            byte[] bytes = ms.ToArray();
+            if (!IsValidPngBytes(bytes))
                 return null;
 
             MemoryCache[iso] = bytes;
@@ -88,7 +123,7 @@ public static class FlagImageService
             {
                 Directory.CreateDirectory(CacheDirectory);
                 string diskPath = Path.Combine(CacheDirectory, $"{iso.ToLowerInvariant()}.png");
-                await File.WriteAllBytesAsync(diskPath, bytes, ct).ConfigureAwait(false);
+                await File.WriteAllBytesAsync(diskPath, bytes, CancellationToken.None).ConfigureAwait(false);
             }
             catch { }
 
@@ -103,6 +138,10 @@ public static class FlagImageService
             InFlightFetches.TryRemove(iso, out _);
         }
     }
+
+    private static bool IsValidPngBytes(byte[]? bytes) =>
+        bytes is { Length: > 8 and <= MaxFlagPngBytes } &&
+        bytes.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature);
 
     public static Bitmap CreateMenuFlagBitmap(string? country, byte[]? pngBytes = null)
     {
@@ -140,7 +179,7 @@ public static class FlagImageService
 
         using var font = new Font("Segoe UI", 6.5f, FontStyle.Bold, GraphicsUnit.Point);
         using var textBrush = new SolidBrush(Color.White);
-        var sf = new StringFormat
+        using var sf = new StringFormat
         {
             Alignment = StringAlignment.Center,
             LineAlignment = StringAlignment.Center

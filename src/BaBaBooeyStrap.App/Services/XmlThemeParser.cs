@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
 using BaBaBooeyStrap.App.Models;
 
@@ -8,6 +9,7 @@ namespace BaBaBooeyStrap.App.Services;
 
 public static partial class XmlThemeParser
 {
+    public const int MaxThemeXmlBytes = 256 * 1024;
     public const string DefaultBackground = "#FF202020";
     public const string DefaultForeground = "#FFFFFFFF";
     public const string DefaultAccent = "#FF0078D4";
@@ -20,12 +22,20 @@ public static partial class XmlThemeParser
 
     public static ThemeDefinition Parse(string? xml)
     {
-        if (string.IsNullOrWhiteSpace(xml))
+        if (string.IsNullOrWhiteSpace(xml) || xml.Length > MaxThemeXmlBytes)
             return GetDefaultFluent();
 
         try
         {
-            var doc = XDocument.Parse(xml, LoadOptions.None);
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = MaxThemeXmlBytes
+            };
+            using var sr = new StringReader(xml);
+            using var reader = XmlReader.Create(sr, settings);
+            var doc = XDocument.Load(reader, LoadOptions.None);
             var root = doc.Root;
             if (root == null)
                 return GetDefaultFluent();
@@ -41,7 +51,7 @@ public static partial class XmlThemeParser
                 double height = ParseDouble((string?)root.Attribute("Height"), 320, 120, 1200);
                 bool allowTransparency = ParseBool((string?)root.Attribute("AllowTransparency"), false);
 
-                return new ThemeDefinition(bg, fg, name, accent, width, height, allowTransparency, xml, IsCustomLayout: false);
+                return new ThemeDefinition(bg, fg, name, accent, width, height, allowTransparency, IsCustomLayout: false);
             }
 
             if (root.Name.LocalName.Equals("BloxstrapCustomBootstrapper", StringComparison.OrdinalIgnoreCase))
@@ -55,7 +65,7 @@ public static partial class XmlThemeParser
                 double height = ParseDouble((string?)root.Attribute("Height"), 320, 120, 1200);
                 bool allowTransparency = ParseBool((string?)root.Attribute("AllowTransparency"), false);
 
-                return new ThemeDefinition(bg, fg, name, accent, width, height, allowTransparency, xml, IsCustomLayout: true);
+                return new ThemeDefinition(bg, fg, name, accent, width, height, allowTransparency, IsCustomLayout: true);
             }
 
             return GetDefaultFluent();
@@ -73,6 +83,10 @@ public static partial class XmlThemeParser
 
         try
         {
+            var info = new FileInfo(filePath);
+            if (info.Length > MaxThemeXmlBytes)
+                return GetDefaultFluent();
+
             string xml = File.ReadAllText(filePath);
             return Parse(xml);
         }
@@ -114,12 +128,45 @@ public static partial class XmlThemeParser
         if (string.IsNullOrWhiteSpace(customThemesDir) || string.IsNullOrWhiteSpace(themeName))
             return null;
 
-        string safeName = Path.GetFileName(themeName.Trim());
-        string direct = Path.Combine(customThemesDir, safeName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) ? safeName : $"{safeName}.xml");
-        if (File.Exists(direct)) return direct;
+        string trimmed = themeName.Trim();
+        if (trimmed.Contains("..", StringComparison.Ordinal) ||
+            trimmed.Contains(Path.DirectorySeparatorChar) ||
+            trimmed.Contains(Path.AltDirectorySeparatorChar) ||
+            Path.IsPathRooted(trimmed) ||
+            trimmed.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return null;
+        }
 
-        string folderTheme = Path.Combine(customThemesDir, safeName, "Theme.xml");
-        if (File.Exists(folderTheme)) return folderTheme;
+        string safeName = Path.GetFileName(trimmed);
+        if (string.IsNullOrWhiteSpace(safeName) || safeName is "." or "..")
+            return null;
+
+        string rootFull;
+        try
+        {
+            rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(customThemesDir));
+        }
+        catch
+        {
+            return null;
+        }
+
+        string direct = Path.GetFullPath(Path.Combine(
+            rootFull,
+            safeName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) ? safeName : $"{safeName}.xml"));
+        if (direct.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(direct))
+        {
+            return direct;
+        }
+
+        string folderTheme = Path.GetFullPath(Path.Combine(rootFull, safeName, "Theme.xml"));
+        if (folderTheme.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(folderTheme))
+        {
+            return folderTheme;
+        }
 
         return null;
     }

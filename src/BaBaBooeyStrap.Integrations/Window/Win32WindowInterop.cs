@@ -68,7 +68,29 @@ public sealed class Win32WindowInterop : IWin32WindowInterop
             wp.rcNormalPosition.Width > 0 &&
             wp.rcNormalPosition.Height > 0)
         {
-            rect = wp.rcNormalPosition;
+            int dx = 0;
+            int dy = 0;
+            nint hMonitor = User32.MonitorFromWindow(hWnd, User32.MONITOR_DEFAULTTONEAREST);
+            if (hMonitor != nint.Zero)
+            {
+                var mi = new User32.MONITORINFO
+                {
+                    cbSize = Marshal.SizeOf<User32.MONITORINFO>()
+                };
+                if (User32.GetMonitorInfoW(hMonitor, ref mi))
+                {
+                    dx = mi.rcWork.Left - mi.rcMonitor.Left;
+                    dy = mi.rcWork.Top - mi.rcMonitor.Top;
+                }
+            }
+
+            rect = new User32.RECT
+            {
+                Left = wp.rcNormalPosition.Left + dx,
+                Top = wp.rcNormalPosition.Top + dy,
+                Right = wp.rcNormalPosition.Right + dx,
+                Bottom = wp.rcNormalPosition.Bottom + dy
+            };
             return true;
         }
 
@@ -108,6 +130,19 @@ public sealed class Win32WindowInterop : IWin32WindowInterop
 
     public nint SendMessage(nint hWnd, uint msg, nint wParam, nint lParam) =>
         User32.SendMessageW(hWnd, msg, wParam, lParam);
+
+    public nint SendMessageTimeout(nint hWnd, uint msg, nint wParam, nint lParam, uint timeoutMs = 200)
+    {
+        nint sent = User32.SendMessageTimeoutW(
+            hWnd,
+            msg,
+            wParam,
+            lParam,
+            User32.SMTO_ABORTIFHUNG,
+            timeoutMs,
+            out nint result);
+        return sent != nint.Zero ? result : nint.Zero;
+    }
 
     public nint LoadImageIcon(string filePath, int cx, int cy) =>
         User32.LoadImageW(nint.Zero, filePath, User32.IMAGE_ICON, cx, cy, User32.LR_LOADFROMFILE);

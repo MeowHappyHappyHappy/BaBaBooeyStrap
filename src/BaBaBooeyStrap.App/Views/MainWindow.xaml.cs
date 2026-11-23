@@ -4,6 +4,7 @@ using System.Windows.Documents;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.Views.Pages;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Storage;
@@ -43,15 +44,8 @@ public partial class MainWindow : FluentWindow
         ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
         UpdateBackdrop();
 
-        ViewModel.WindowIntegrations.ThemeChanged += (_, theme) => ApplyTheme(theme);
-        ViewModel.WindowIntegrations.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(ViewModels.Sections.WindowAndIntegrationsViewModel.UseAcrylicBackground))
-            {
-                UpdateBackdrop();
-                ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
-            }
-        };
+        ViewModel.WindowIntegrations.ThemeChanged += OnWindowThemeChanged;
+        ViewModel.WindowIntegrations.PropertyChanged += OnWindowIntegrationsPropertyChanged;
 
         Loaded += (_, _) =>
         {
@@ -78,9 +72,22 @@ public partial class MainWindow : FluentWindow
 
         Closed += (_, _) =>
         {
+            ViewModel.WindowIntegrations.ThemeChanged -= OnWindowThemeChanged;
+            ViewModel.WindowIntegrations.PropertyChanged -= OnWindowIntegrationsPropertyChanged;
             ThemeService.UnwatchWindow(this);
-            ViewModel.DetachLocalization();
+            ViewModel.Dispose();
         };
+    }
+
+    private void OnWindowThemeChanged(object? sender, Theme theme) => ApplyTheme(theme);
+
+    private void OnWindowIntegrationsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(ViewModels.Sections.WindowAndIntegrationsViewModel.UseAcrylicBackground))
+        {
+            UpdateBackdrop();
+            ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
+        }
     }
 
     public void ForceClose()
@@ -122,7 +129,10 @@ public partial class MainWindow : FluentWindow
                 ViewModel.AccountManagement.PersistLastTargetState();
                 _stateManager.Save();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.ExceptionStatic("MainWindow.PersistState", ex);
+            }
         }
 
         if (!_allowRealClose && _trayWrapper != null && ViewModel.WindowIntegrations.MinimizeToTray)
@@ -160,18 +170,47 @@ public partial class MainWindow : FluentWindow
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.SaveSettings(_settingsManager);
+        try
+        {
+            ViewModel.SaveSettings(_settingsManager);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("MainWindow.Save", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                this);
+        }
     }
 
     private void SaveAndLaunch_Click(object sender, RoutedEventArgs e)
     {
-        ViewModel.SaveSettings(_settingsManager);
-        _onLaunchRequested?.Invoke();
+        try
+        {
+            ViewModel.SaveSettings(_settingsManager);
+            _onLaunchRequested?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("MainWindow.SaveAndLaunch", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                this);
+        }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e)
     {
-        Close();
+        try
+        {
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("MainWindow.Close", ex);
+        }
     }
 
     private void RestoreWindowBounds()

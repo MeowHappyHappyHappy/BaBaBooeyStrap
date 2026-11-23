@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Logging;
 
 namespace BaBaBooeyStrap.App.Services;
 
@@ -45,10 +48,52 @@ public static class FluentDialogService
             owner: owner);
     }
 
+    public static FluentDialogResult ShowThreeChoice(
+        string title,
+        string message,
+        string primaryText,
+        string secondaryText,
+        string? cancelText = null,
+        FluentDialogSeverity severity = FluentDialogSeverity.Question,
+        bool isDestructive = false,
+        Window? owner = null)
+    {
+        return ShowCore(
+            title,
+            message,
+            severity,
+            primaryText,
+            secondaryText,
+            cancelText ?? LocalizationService.Instance.GetString("Str_Common_Cancel"),
+            isDestructive,
+            owner);
+    }
+
     private static void ShowSingleButton(string title, string message, FluentDialogSeverity severity, Window? owner)
     {
         string okText = LocalizationService.Instance.GetString("Str_Common_Ok");
         ShowCore(title, message, severity, okText, null, null, isDestructive: false, owner: owner);
+    }
+
+    public static bool TryOpenFolderInExplorer(string? folderPath, Window? owner = null)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath))
+            return false;
+
+        try
+        {
+            Directory.CreateDirectory(folderPath);
+            var psi = new ProcessStartInfo("explorer.exe") { UseShellExecute = false };
+            psi.ArgumentList.Add(folderPath);
+            using var proc = Process.Start(psi);
+            return proc != null;
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("FluentDialogService.TryOpenFolderInExplorer", ex);
+            ShowError(LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"), ex.Message, owner);
+            return false;
+        }
     }
 
     private static FluentDialogResult ShowCore(
@@ -61,11 +106,19 @@ public static class FluentDialogService
         bool isDestructive,
         Window? owner)
     {
-        var app = Application.Current;
-        if (app?.Dispatcher != null && !app.Dispatcher.CheckAccess())
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher != null)
         {
-            return app.Dispatcher.Invoke(() =>
-                ShowOnUiThread(title, message, severity, primaryText, secondaryText, cancelText, isDestructive, owner));
+            if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+            {
+                return FluentDialogResult.Cancel;
+            }
+
+            if (!dispatcher.CheckAccess())
+            {
+                return dispatcher.Invoke(() =>
+                    ShowOnUiThread(title, message, severity, primaryText, secondaryText, cancelText, isDestructive, owner));
+            }
         }
 
         return ShowOnUiThread(title, message, severity, primaryText, secondaryText, cancelText, isDestructive, owner);

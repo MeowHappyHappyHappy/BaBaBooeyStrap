@@ -27,7 +27,9 @@ public sealed class LaunchGate : ILaunchGate
 
     /// <inheritdoc/>
     public MultiInstanceStatus GetDiagnosticStatus() =>
-        GetDiagnosticStatus(_controller);
+        _controller == null
+            ? new MultiInstanceStatus(false, false, false, Array.Empty<int>(), "Multi-instance controller is not configured.")
+            : GetDiagnosticStatus(_controller);
 
     /// <inheritdoc/>
     string ILaunchGate.BuildDiagnosticBlockedMessage(MultiInstanceStatus status) =>
@@ -43,7 +45,7 @@ public sealed class LaunchGate : ILaunchGate
             return new LaunchGateResult(
                 CanLaunch: true,
                 WarningMessage: null,
-                Status: controller?.GetStatus() ?? new MultiInstanceStatus(false, false, false, Array.Empty<int>(), null));
+                Status: new MultiInstanceStatus(false, false, false, Array.Empty<int>(), null));
         }
 
         if (controller == null)

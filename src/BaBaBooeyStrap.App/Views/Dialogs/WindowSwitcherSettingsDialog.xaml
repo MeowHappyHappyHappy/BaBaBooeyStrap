@@ -36,27 +36,41 @@
                                    FontWeight="SemiBold"
                                    Margin="0,0,0,8"/>
 
-                        <DockPanel Margin="0,0,0,10">
-                            <StackPanel>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
                                 <TextBlock Text="{DynamicResource Str_SwitcherSettings_AutoTagTitle}" FontWeight="SemiBold"/>
                                 <TextBlock Text="{DynamicResource Str_SwitcherSettings_AutoTagDesc}"
                                            FontSize="11.5"
                                            Opacity="0.72"
                                            TextWrapping="Wrap"/>
                             </StackPanel>
-                            <ui:ToggleSwitch x:Name="AutoTagToggle" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                        </DockPanel>
+                            <ui:ToggleSwitch x:Name="AutoTagToggle"
+                                             Grid.Column="1"
+                                             AutomationProperties.Name="{DynamicResource Str_SwitcherSettings_AutoTagTitle}"
+                                             VerticalAlignment="Center"/>
+                        </Grid>
 
-                        <DockPanel Margin="0,0,0,10">
-                            <StackPanel>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,12,0">
                                 <TextBlock Text="{DynamicResource Str_SwitcherSettings_RestoreAccountBoundsTitle}" FontWeight="SemiBold"/>
                                 <TextBlock Text="{DynamicResource Str_SwitcherSettings_RestoreAccountBoundsDesc}"
                                            FontSize="11.5"
                                            Opacity="0.72"
                                            TextWrapping="Wrap"/>
                             </StackPanel>
-                            <ui:ToggleSwitch x:Name="RestoreAccountBoundsToggle" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                        </DockPanel>
+                            <ui:ToggleSwitch x:Name="RestoreAccountBoundsToggle"
+                                             Grid.Column="1"
+                                             AutomationProperties.Name="{DynamicResource Str_SwitcherSettings_RestoreAccountBoundsTitle}"
+                                             VerticalAlignment="Center"/>
+                        </Grid>
 
                         <TextBlock Text="{DynamicResource Str_SwitcherSettings_TemplateLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
                         <ui:TextBox x:Name="TitleTemplateBox"
@@ -195,20 +209,32 @@
                                    FontWeight="SemiBold"
                                    Margin="0,0,0,8"/>
 
-                        <DockPanel Margin="0,0,0,8">
-                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_SwitchHighlight}" VerticalAlignment="Center"/>
-                            <ui:ToggleSwitch x:Name="SwitchHighlightToggle" HorizontalAlignment="Right"/>
-                        </DockPanel>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{DynamicResource Str_SwitcherSettings_SwitchHighlight}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="SwitchHighlightToggle" Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_SwitcherSettings_SwitchHighlight}"/>
+                        </Grid>
 
-                        <DockPanel Margin="0,0,0,8">
-                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingEnabled}" VerticalAlignment="Center"/>
-                            <ui:ToggleSwitch x:Name="FloatingBarEnabledToggle" HorizontalAlignment="Right"/>
-                        </DockPanel>
+                        <Grid Margin="0,0,0,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{DynamicResource Str_SwitcherSettings_FloatingEnabled}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="FloatingBarEnabledToggle" Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_SwitcherSettings_FloatingEnabled}"/>
+                        </Grid>
 
-                        <DockPanel Margin="0,0,0,10">
-                            <TextBlock Text="{DynamicResource Str_SwitcherSettings_FloatingAutoShow}" VerticalAlignment="Center"/>
-                            <ui:ToggleSwitch x:Name="FloatingBarAutoShowToggle" HorizontalAlignment="Right"/>
-                        </DockPanel>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{DynamicResource Str_SwitcherSettings_FloatingAutoShow}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                            <ui:ToggleSwitch x:Name="FloatingBarAutoShowToggle" Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_SwitcherSettings_FloatingAutoShow}"/>
+                        </Grid>
 
                         <ui:Button Content="{DynamicResource Str_SwitcherSettings_ResetFloatingPos}"
                                    HorizontalAlignment="Left"
@@ -270,8 +296,8 @@
 
         <!-- Footer -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-            <ui:Button Content="{DynamicResource Str_Common_Cancel}" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
-            <ui:Button Content="{DynamicResource Str_Common_Save}" Appearance="Primary" Click="Save_Click" MinWidth="100"/>
+            <ui:Button Content="{DynamicResource Str_Common_Cancel}" IsCancel="True" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <ui:Button Content="{DynamicResource Str_Common_Save}" Appearance="Primary" IsDefault="True" Click="Save_Click" MinWidth="100"/>
         </StackPanel>
     </Grid>
 </ui:FluentWindow>

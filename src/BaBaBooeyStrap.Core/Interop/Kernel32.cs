@@ -1,5 +1,7 @@
 using System.Runtime.InteropServices;
 
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
 namespace BaBaBooeyStrap.Core.Interop;
 
 public static class Kernel32
@@ -20,6 +22,15 @@ public static class Kernel32
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public static readonly nint INVALID_HANDLE_VALUE = new(-1);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SECURITY_ATTRIBUTES
+    {
+        public uint nLength;
+        public nint lpSecurityDescriptor;
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool bInheritHandle;
+    }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct PROCESSENTRY32W
     {
@@ -36,64 +47,61 @@ public static class Kernel32
         public string szExeFile;
     }
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint CreateMutexW(
         nint lpMutexAttributes,
         [MarshalAs(UnmanagedType.Bool)] bool bInitialOwner,
         string lpName);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint OpenMutexW(
         uint dwDesiredAccess,
         [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle,
         string lpName);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ReleaseMutex(nint hMutex);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint CreateEventW(
         nint lpEventAttributes,
         [MarshalAs(UnmanagedType.Bool)] bool bManualReset,
         [MarshalAs(UnmanagedType.Bool)] bool bInitialState,
         string lpName);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint OpenEventW(
         uint dwDesiredAccess,
         [MarshalAs(UnmanagedType.Bool)] bool bInheritHandle,
         string lpName);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetEvent(nint hEvent);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool ResetEvent(nint hEvent);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     public static extern uint WaitForSingleObject(nint hHandle, uint dwMilliseconds);
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseHandle(nint hObject);
 
-    [DllImport("kernel32.dll")]
-    public static extern uint GetLastError();
-
-    [DllImport("kernel32.dll")]
+    [DllImport("kernel32.dll", ExactSpelling = true)]
     public static extern uint GetCurrentThreadId();
 
-    [DllImport("kernel32.dll", SetLastError = true)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     public static extern nint CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool Process32FirstW(nint hSnapshot, ref PROCESSENTRY32W lppe);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool Process32NextW(nint hSnapshot, ref PROCESSENTRY32W lppe);
 }

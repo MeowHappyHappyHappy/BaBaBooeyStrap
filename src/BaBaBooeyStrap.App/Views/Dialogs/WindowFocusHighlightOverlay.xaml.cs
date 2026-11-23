@@ -12,6 +12,7 @@ public partial class WindowFocusHighlightOverlay : Window
 {
     private readonly DispatcherTimer _holdTimer;
     private bool _allowClose;
+    private User32.RECT _lastBounds;
 
     public WindowFocusHighlightOverlay()
     {
@@ -43,6 +44,11 @@ public partial class WindowFocusHighlightOverlay : Window
 
     public void ShowForWindow(nint targetHwnd, RunningRobloxInstance instance)
     {
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            return;
+        }
+
         if (targetHwnd == nint.Zero || !User32.IsWindow(targetHwnd))
         {
             return;
@@ -69,20 +75,31 @@ public partial class WindowFocusHighlightOverlay : Window
         var helper = new WindowInteropHelper(this);
         nint overlayHwnd = helper.EnsureHandle();
 
+        bool wasVisible = IsVisible;
+        bool boundsChanged = !wasVisible ||
+                             rect.Left != _lastBounds.Left ||
+                             rect.Top != _lastBounds.Top ||
+                             rect.Right != _lastBounds.Right ||
+                             rect.Bottom != _lastBounds.Bottom;
+
         Opacity = 0;
-        if (!IsVisible)
+        if (!wasVisible)
         {
             Show();
         }
 
-        User32.SetWindowPos(
-            overlayHwnd,
-            User32.HWND_TOPMOST,
-            rect.Left,
-            rect.Top,
-            rect.Width,
-            rect.Height,
-            User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
+        if (boundsChanged)
+        {
+            _lastBounds = rect;
+            User32.SetWindowPos(
+                overlayHwnd,
+                User32.HWND_TOPMOST,
+                rect.Left,
+                rect.Top,
+                rect.Width,
+                rect.Height,
+                User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
+        }
 
         var fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(90));
         BeginAnimation(OpacityProperty, fadeIn);
@@ -93,6 +110,7 @@ public partial class WindowFocusHighlightOverlay : Window
     {
         _allowClose = true;
         _holdTimer.Stop();
+        BeginAnimation(OpacityProperty, null);
         Close();
     }
 
@@ -102,6 +120,7 @@ public partial class WindowFocusHighlightOverlay : Window
         {
             e.Cancel = true;
             _holdTimer.Stop();
+            BeginAnimation(OpacityProperty, null);
             Hide();
             return;
         }
@@ -113,7 +132,7 @@ public partial class WindowFocusHighlightOverlay : Window
         var fadeOut = new DoubleAnimation(Opacity, 0, TimeSpan.FromMilliseconds(260));
         fadeOut.Completed += (_, _) =>
         {
-            if (!_holdTimer.IsEnabled)
+            if (!_allowClose && !_holdTimer.IsEnabled)
             {
                 Hide();
             }

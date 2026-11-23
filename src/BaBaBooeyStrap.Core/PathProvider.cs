@@ -1,9 +1,20 @@
+using System.Text.RegularExpressions;
+
 namespace BaBaBooeyStrap.Core;
 
-public class PathProvider : IPaths
+public partial class PathProvider : IPaths
 {
-    private string _base;
-    private bool _initialized;
+    private static readonly Lazy<string> CachedUserProfile = new(() => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    private static readonly Lazy<string> CachedLocalAppData = new(() => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    private static readonly Lazy<string> CachedDesktop = new(() => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+    private static readonly Lazy<string> CachedWindowsStartMenu = new(() => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs"));
+    private static readonly Lazy<string> CachedSystem = new(() => Environment.GetFolderPath(Environment.SpecialFolder.System));
+
+    [GeneratedRegex(@"^version-[A-Za-z0-9][A-Za-z0-9_-]{0,127}$", RegexOptions.CultureInvariant, matchTimeoutMilliseconds: 100)]
+    private static partial Regex SafeVersionGuidRegex();
+
+    private volatile string _base;
+    private volatile bool _initialized;
 
     public string Base => _base;
     public string Downloads => Path.Combine(_base, "Downloads");
@@ -25,11 +36,11 @@ public class PathProvider : IPaths
     public string TempUpdates => Path.Combine(Temp, "BaBaBooeyStrap", "Updates");
     public string TempLogs => Path.Combine(Temp, "BaBaBooeyStrap", "Logs");
 
-    public string UserProfile => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    public string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    public string Desktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-    public string WindowsStartMenu => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs");
-    public string System => Environment.GetFolderPath(Environment.SpecialFolder.System);
+    public string UserProfile => CachedUserProfile.Value;
+    public string LocalAppData => CachedLocalAppData.Value;
+    public string Desktop => CachedDesktop.Value;
+    public string WindowsStartMenu => CachedWindowsStartMenu.Value;
+    public string System => CachedSystem.Value;
     public virtual string Process => Environment.ProcessPath ?? string.Empty;
 
     public string Roblox => Path.Combine(LocalAppData, "Roblox");
@@ -44,9 +55,10 @@ public class PathProvider : IPaths
 
     public PathProvider(string? baseDirectory = null)
     {
-        _base = !string.IsNullOrWhiteSpace(baseDirectory)
+        string rawBase = !string.IsNullOrWhiteSpace(baseDirectory)
             ? baseDirectory
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BaBaBooeyStrap");
+            : Path.Combine(CachedLocalAppData.Value, "BaBaBooeyStrap");
+        _base = Path.GetFullPath(rawBase);
         _initialized = !string.IsNullOrWhiteSpace(baseDirectory);
     }
 
@@ -54,7 +66,7 @@ public class PathProvider : IPaths
     {
         if (!string.IsNullOrWhiteSpace(baseDirectory))
         {
-            _base = baseDirectory;
+            _base = Path.GetFullPath(baseDirectory);
         }
         _initialized = true;
     }
@@ -71,10 +83,48 @@ public class PathProvider : IPaths
         Directory.CreateDirectory(Integrations);
     }
 
+    public static bool TryValidateVersionGuid(string? versionGuid, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(versionGuid)) return false;
+
+        string trimmed = versionGuid.Trim();
+        if (!SafeVersionGuidRegex().IsMatch(trimmed) ||
+            trimmed.Contains("..", StringComparison.Ordinal) ||
+            trimmed.IndexOfAny(['/', '\\', ':']) >= 0)
+        {
+            return false;
+        }
+
+        normalized = trimmed;
+        return true;
+    }
+
+    public static string ValidateVersionGuid(string versionGuid)
+    {
+        if (!TryValidateVersionGuid(versionGuid, out string normalized))
+        {
+            throw new ArgumentException($"Invalid Roblox version GUID '{versionGuid}'.", nameof(versionGuid));
+        }
+
+        return normalized;
+    }
+
     public string GetVersionDirectory(string versionGuid)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(versionGuid);
-        return Path.Combine(Versions, versionGuid);
+        string safeGuid = ValidateVersionGuid(versionGuid);
+        string versionsRoot = Path.GetFullPath(Versions);
+        string combined = Path.GetFullPath(Path.Combine(versionsRoot, safeGuid));
+
+        string prefix = versionsRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? versionsRoot
+            : versionsRoot + Path.DirectorySeparatorChar;
+        if (!combined.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException($"Version directory '{versionGuid}' escapes Versions root.", nameof(versionGuid));
+        }
+
+        return combined;
     }
 
     public string GetClientSettingsPath(string? versionGuid = null)

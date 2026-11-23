@@ -23,13 +23,16 @@
                    Foreground="#FF4EC9B0"
                    Margin="0,0,0,8"/>
 
-        <ListBox Grid.Row="1"
+        <ListBox x:Name="LogListBox"
+                 Grid.Row="1"
+                 SelectionMode="Extended"
                  ItemsSource="{Binding LogLines}"
                  Background="#FF0A0A0A"
                  Foreground="#FFD4D4D4"
                  BorderBrush="#FF333333"
                  FontFamily="Consolas"
                  FontSize="11.5"
+                 PreviewKeyDown="LogListBox_PreviewKeyDown"
                  Margin="0,0,0,10"/>
 
         <ProgressBar Grid.Row="2"

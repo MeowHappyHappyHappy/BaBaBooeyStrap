@@ -1,4 +1,6 @@
 using System.IO;
+using System.Xml;
+using System.Xml.Linq;
 using BaBaBooeyStrap.Bootstrapper.Deployment;
 using BaBaBooeyStrap.Bootstrapper.Mods;
 using BaBaBooeyStrap.Core;
@@ -74,7 +76,15 @@ internal static class VersionInstallationValidator
 
             try
             {
-                var doc = System.Xml.Linq.XDocument.Load(appSettingsPath);
+                var xmlSettings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersInDocument = 1_000_000
+                };
+                using var stream = new FileStream(appSettingsPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = XmlReader.Create(stream, xmlSettings);
+                var doc = XDocument.Load(reader);
                 string? contentFolder = doc.Root?.Element("ContentFolder")?.Value;
                 string? baseUrl = doc.Root?.Element("BaseUrl")?.Value;
 
@@ -103,8 +113,7 @@ internal static class VersionInstallationValidator
 
         foreach (var root in new[] { paths.Versions, paths.RobloxVersions })
         {
-            if (!Directory.Exists(root)) continue;
-            foreach (var dir in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
+            foreach (var dir in EnumerateVersionDirectoriesSafely(root))
             {
                 if (IsVersionInstallationComplete(dir, isStudio))
                     return dir;
@@ -290,8 +299,7 @@ internal static class VersionInstallationValidator
 
             foreach (var root in new[] { paths.Versions, paths.RobloxVersions })
             {
-                if (!Directory.Exists(root)) continue;
-                foreach (var dir in Directory.GetDirectories(root).OrderByDescending(Directory.GetLastWriteTimeUtc))
+                foreach (var dir in EnumerateVersionDirectoriesSafely(root))
                 {
                     string candidateDll = Path.Combine(dir, "WebView2Loader.dll");
                     if (File.Exists(candidateDll))
@@ -305,6 +313,46 @@ internal static class VersionInstallationValidator
         catch (Exception ex)
         {
             logger.Warn("VersionInstallationValidator", $"Failed to recover WebView2Loader.dll: {ex.Message}");
+        }
+    }
+
+    private static IEnumerable<string> EnumerateVersionDirectoriesSafely(string root)
+    {
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            return Directory.GetDirectories(root)
+                .Where(dir =>
+                {
+                    try
+                    {
+                        return (File.GetAttributes(dir) & FileAttributes.ReparsePoint) == 0;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        return false;
+                    }
+                })
+                .OrderByDescending(dir =>
+                {
+                    try
+                    {
+                        return Directory.GetLastWriteTimeUtc(dir);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        return DateTime.MinValue;
+                    }
+                })
+                .ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Array.Empty<string>();
         }
     }
 }

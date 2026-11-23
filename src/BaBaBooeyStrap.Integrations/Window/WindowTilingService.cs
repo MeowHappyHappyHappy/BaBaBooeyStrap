@@ -170,39 +170,64 @@ public sealed class WindowTilingService
             _interop.ShowWindow(hWnd, User32.SW_RESTORE);
         }
 
-        int x = targetRect.Left;
-        int y = targetRect.Top;
-        int width = Math.Max(1, targetRect.Width);
-        int height = Math.Max(1, targetRect.Height);
+        int baseWidth = Math.Max(1, targetRect.Width);
+        int baseHeight = Math.Max(1, targetRect.Height);
+
+        TryComputeShadowInsets(hWnd, out int leftInset, out int topInset, out int rightInset, out int bottomInset);
+        const uint flags = User32.SWP_NOZORDER | User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW;
+
+        bool moved = _interop.SetWindowPos(
+            hWnd,
+            nint.Zero,
+            targetRect.Left - leftInset,
+            targetRect.Top - topInset,
+            baseWidth + leftInset + rightInset,
+            baseHeight + topInset + bottomInset,
+            flags);
+
+        if (moved)
+        {
+            // Re-measure after cross-DPI monitor transition if DWM shadow border thickness changed
+            TryComputeShadowInsets(hWnd, out int newLeft, out int newTop, out int newRight, out int newBottom);
+            if (newLeft != leftInset || newTop != topInset || newRight != rightInset || newBottom != bottomInset)
+            {
+                _interop.SetWindowPos(
+                    hWnd,
+                    nint.Zero,
+                    targetRect.Left - newLeft,
+                    targetRect.Top - newTop,
+                    baseWidth + newLeft + newRight,
+                    baseHeight + newTop + newBottom,
+                    flags);
+            }
+        }
+
+        return moved;
+    }
+
+    private void TryComputeShadowInsets(nint hWnd, out int leftInset, out int topInset, out int rightInset, out int bottomInset)
+    {
+        leftInset = topInset = rightInset = bottomInset = 0;
 
         if (_interop.GetWindowRect(hWnd, out var winRect) &&
             _interop.TryGetExtendedFrameBounds(hWnd, out var extRect))
         {
-            int leftInset = extRect.Left - winRect.Left;
-            int topInset = extRect.Top - winRect.Top;
-            int rightInset = winRect.Right - extRect.Right;
-            int bottomInset = winRect.Bottom - extRect.Bottom;
+            int l = extRect.Left - winRect.Left;
+            int t = extRect.Top - winRect.Top;
+            int r = winRect.Right - extRect.Right;
+            int b = winRect.Bottom - extRect.Bottom;
 
-            if (leftInset is >= 0 and <= MaxReasonableShadowInset &&
-                topInset is >= 0 and <= MaxReasonableShadowInset &&
-                rightInset is >= 0 and <= MaxReasonableShadowInset &&
-                bottomInset is >= 0 and <= MaxReasonableShadowInset)
+            if (l is >= 0 and <= MaxReasonableShadowInset &&
+                t is >= 0 and <= MaxReasonableShadowInset &&
+                r is >= 0 and <= MaxReasonableShadowInset &&
+                b is >= 0 and <= MaxReasonableShadowInset)
             {
-                x -= leftInset;
-                y -= topInset;
-                width += leftInset + rightInset;
-                height += topInset + bottomInset;
+                leftInset = l;
+                topInset = t;
+                rightInset = r;
+                bottomInset = b;
             }
         }
-
-        return _interop.SetWindowPos(
-            hWnd,
-            nint.Zero,
-            x,
-            y,
-            width,
-            height,
-            User32.SWP_NOZORDER | User32.SWP_NOACTIVATE | User32.SWP_SHOWWINDOW);
     }
 
     private List<nint> FilterValidWindows(IReadOnlyList<nint> hwnds)

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.Services.Pipeline;
@@ -49,7 +50,12 @@ public static class AppServiceConfiguration
         var installerService = new InstallerService(resolvedPaths, stateManager);
         var globalSettingsManager = new GlobalSettingsManager(resolvedPaths.RobloxGlobalSettings);
         var globalSettingsGuard = new GlobalSettingsGuard(globalSettingsManager, resolvedPaths.Base, logger: Logger.Current);
-        var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        var httpHandler = new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+        };
+        var httpClient = new HttpClient(httpHandler, disposeHandler: true) { Timeout = TimeSpan.FromMinutes(10) };
         var appUpdateService = new AppUpdateService(resolvedPaths, httpClient, Logger.Current);
         var windowInterop = new Win32WindowInterop();
         var monitorProvider = new Win32MonitorProvider();
@@ -57,7 +63,7 @@ public static class AppServiceConfiguration
             () => settingsManager.Prop,
             windowInterop,
             monitorProvider,
-            accountLookupByUserId: uid => accountStore.LoadAll().FirstOrDefault(a => a.UserId == uid),
+            accountLookupByUserId: uid => accountStore.GetMetadataByUserId(uid),
             logger: Logger.Current);
         var windowFocusHelper = new WindowFocusHelper(windowInterop);
         var windowTilingService = new WindowTilingService(windowInterop, monitorProvider);
@@ -180,7 +186,7 @@ public static class AppServiceConfiguration
             () => services.SettingsManager.Prop,
             windowInterop,
             monitorProvider,
-            accountLookupByUserId: uid => services.AccountStore.LoadAll().FirstOrDefault(a => a.UserId == uid),
+            accountLookupByUserId: uid => services.AccountStore.GetMetadataByUserId(uid),
             logger: Logger.Current);
         var focusHelper = services.WindowFocusHelper ?? new WindowFocusHelper(windowInterop);
         var tilingService = services.WindowTilingService ?? new WindowTilingService(windowInterop, monitorProvider);

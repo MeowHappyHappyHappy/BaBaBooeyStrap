@@ -11,9 +11,9 @@ public sealed class WindowFocusHelper
         _interop = interop ?? throw new ArgumentNullException(nameof(interop));
     }
 
-    public bool ActivateWindow(nint hWnd)
+    public bool ActivateWindow(nint hWnd, uint? expectedProcessId = null)
     {
-        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        if (!IsTargetRobloxWindow(hWnd, expectedProcessId))
         {
             return false;
         }
@@ -71,24 +71,24 @@ public sealed class WindowFocusHelper
         }
     }
 
-    public bool ToggleMinimizeRestore(nint hWnd)
+    public bool ToggleMinimizeRestore(nint hWnd, uint? expectedProcessId = null)
     {
-        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        if (!IsTargetRobloxWindow(hWnd, expectedProcessId))
         {
             return false;
         }
 
         if (_interop.IsIconic(hWnd))
         {
-            return ActivateWindow(hWnd);
+            return ActivateWindow(hWnd, expectedProcessId);
         }
 
         return _interop.ShowWindow(hWnd, User32.SW_MINIMIZE);
     }
 
-    public bool MinimizeWindow(nint hWnd)
+    public bool MinimizeWindow(nint hWnd, uint? expectedProcessId = null)
     {
-        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        if (!IsTargetRobloxWindow(hWnd, expectedProcessId))
         {
             return false;
         }
@@ -101,9 +101,9 @@ public sealed class WindowFocusHelper
         return _interop.ShowWindow(hWnd, User32.SW_MINIMIZE);
     }
 
-    public bool CloseWindow(nint hWnd)
+    public bool CloseWindow(nint hWnd, uint? expectedProcessId = null)
     {
-        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        if (!IsTargetRobloxWindow(hWnd, expectedProcessId))
         {
             return false;
         }
@@ -111,11 +111,11 @@ public sealed class WindowFocusHelper
         return _interop.PostMessage(hWnd, User32.WM_CLOSE, nint.Zero, nint.Zero);
     }
 
-    public bool MoveWindowToMonitor(nint hWnd, MonitorInfo targetMonitor, bool activateAfterMove = true)
+    public bool MoveWindowToMonitor(nint hWnd, MonitorInfo targetMonitor, bool activateAfterMove = true, uint? expectedProcessId = null)
     {
         ArgumentNullException.ThrowIfNull(targetMonitor);
 
-        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        if (!IsTargetRobloxWindow(hWnd, expectedProcessId))
         {
             return false;
         }
@@ -149,9 +149,34 @@ public sealed class WindowFocusHelper
         bool moved = _interop.SetWindowPos(hWnd, nint.Zero, targetX, targetY, targetW, targetH, flags);
         if (moved && activateAfterMove)
         {
-            ActivateWindow(hWnd);
+            ActivateWindow(hWnd, expectedProcessId);
         }
 
         return moved;
+    }
+
+    private bool IsTargetRobloxWindow(nint hWnd, uint? expectedProcessId)
+    {
+        if (hWnd == nint.Zero || !_interop.IsWindow(hWnd))
+        {
+            return false;
+        }
+
+        string className = _interop.GetClassName(hWnd);
+        if (!string.Equals(className, "WINDOWSCLIENT", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (expectedProcessId is > 0)
+        {
+            _interop.GetWindowThreadProcessId(hWnd, out uint actualPid);
+            if (actualPid != expectedProcessId.Value)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -71,6 +71,14 @@ public sealed class AsyncRelayCommand : ICommand
         {
             await _execute(parameter);
         }
+        catch (OperationCanceledException)
+        {
+            // Normal cancellation
+        }
+        catch (Exception ex)
+        {
+            BaBaBooeyStrap.Core.Logging.Logger.ExceptionStatic("AsyncRelayCommand.Execute", ex);
+        }
         finally
         {
             Interlocked.Exchange(ref _isExecuting, 0);

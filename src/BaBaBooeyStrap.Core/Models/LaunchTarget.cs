@@ -9,5 +9,6 @@ public sealed record LaunchTarget(
     string? LinkCode = null,
     string? ShareCode = null,
     long? UserId = null,
-    string? Username = null
+    string? Username = null,
+    string? AccessCode = null
 );

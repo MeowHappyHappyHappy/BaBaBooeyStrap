@@ -21,7 +21,7 @@ public sealed class LocalizationService : INotifyPropertyChanged
     private readonly IReadOnlyDictionary<string, string> _zhTwCatalog;
     private readonly object _syncLock = new();
 
-    private Dictionary<string, string> _activeStrings;
+    private volatile Dictionary<string, string> _activeStrings;
     private ResourceDictionary? _activeWpfDictionary;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -117,7 +117,21 @@ public sealed class LocalizationService : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedLanguage));
         OnPropertyChanged(nameof(CurrentLanguageTag));
         OnPropertyChanged("Item[]");
-        LanguageChanged?.Invoke(this, effectiveTag);
+
+        var handlers = LanguageChanged;
+        if (handlers != null)
+        {
+            foreach (EventHandler<string> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(this, effectiveTag);
+                }
+                catch
+                {
+                }
+            }
+        }
     }
 
     public string GetString(string key)
@@ -180,20 +194,26 @@ public sealed class LocalizationService : INotifyPropertyChanged
 
         void Swap()
         {
-            var dict = new ResourceDictionary();
-            foreach (var kvp in strings)
+            try
             {
-                dict[kvp.Key] = kvp.Value;
-            }
+                var dict = new ResourceDictionary();
+                foreach (var kvp in strings)
+                {
+                    dict[kvp.Key] = kvp.Value;
+                }
 
-            var mergedDictionaries = app.Resources.MergedDictionaries;
-            if (_activeWpfDictionary != null)
+                var mergedDictionaries = app.Resources.MergedDictionaries;
+                if (_activeWpfDictionary != null)
+                {
+                    mergedDictionaries.Remove(_activeWpfDictionary);
+                }
+
+                mergedDictionaries.Add(dict);
+                _activeWpfDictionary = dict;
+            }
+            catch
             {
-                mergedDictionaries.Remove(_activeWpfDictionary);
             }
-
-            mergedDictionaries.Add(dict);
-            _activeWpfDictionary = dict;
         }
 
         var dispatcher = app.Dispatcher;
@@ -202,7 +222,13 @@ public sealed class LocalizationService : INotifyPropertyChanged
 
         if (!dispatcher.CheckAccess())
         {
-            dispatcher.Invoke(Swap);
+            try
+            {
+                dispatcher.Invoke(Swap);
+            }
+            catch (Exception ex) when (ex is TaskCanceledException or OperationCanceledException)
+            {
+            }
         }
         else
         {
@@ -222,16 +248,23 @@ public sealed class LocalizationService : INotifyPropertyChanged
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
-        using Stream? stream = asm.GetManifestResourceStream(resourceName);
-        if (stream == null)
+        try
+        {
+            using Stream? stream = asm.GetManifestResourceStream(resourceName);
+            if (stream == null)
+            {
+                return new Dictionary<string, string>(StringComparer.Ordinal);
+            }
+
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(stream);
+            return parsed != null
+                ? new Dictionary<string, string>(parsed, StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+        catch
         {
             return new Dictionary<string, string>(StringComparer.Ordinal);
         }
-
-        var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(stream);
-        return parsed != null
-            ? new Dictionary<string, string>(parsed, StringComparer.Ordinal)
-            : new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

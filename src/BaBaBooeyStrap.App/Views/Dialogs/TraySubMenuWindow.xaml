@@ -11,6 +11,7 @@
         SizeToContent="WidthAndHeight"
         MinWidth="236"
         MaxWidth="360"
+        Focusable="True"
         PreviewKeyDown="Window_PreviewKeyDown"
         Deactivated="Window_Deactivated">
     <Border x:Name="CardBorder"

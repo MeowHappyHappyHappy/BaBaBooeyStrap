@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
 using BaBaBooeyStrap.App.Services;
+using Brush = System.Windows.Media.Brush;
+using Color = System.Windows.Media.Color;
 
 namespace BaBaBooeyStrap.App.Converters;
 
@@ -50,22 +53,49 @@ public sealed class NullOrEmptyToVisibilityConverter : IValueConverter
 
 public sealed class HexStringToBrushConverter : IValueConverter
 {
+    private const int MaxCacheSize = 256;
+    private static readonly ConcurrentDictionary<string, Brush> BrushCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Brush FallbackBrush = CreateFrozenBrush(Color.FromRgb(0x20, 0x20, 0x20));
+
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is string hex && !string.IsNullOrWhiteSpace(hex))
         {
+            string key = hex.Trim();
+            if (BrushCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+
             try
             {
-                var color = (Color)ColorConverter.ConvertFromString(hex);
-                return new SolidColorBrush(color);
+                var color = (Color)ColorConverter.ConvertFromString(key);
+                var brush = CreateFrozenBrush(color);
+                if (BrushCache.Count >= MaxCacheSize)
+                {
+                    BrushCache.Clear();
+                }
+
+                BrushCache.TryAdd(key, brush);
+                return brush;
             }
-            catch { }
+            catch
+            {
+            }
         }
-        return new SolidColorBrush(Color.FromRgb(0x20, 0x20, 0x20));
+
+        return FallbackBrush;
     }
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
         Binding.DoNothing;
+
+    private static Brush CreateFrozenBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
 }
 
 public sealed class LocalizedEnumMultiConverter : IMultiValueConverter

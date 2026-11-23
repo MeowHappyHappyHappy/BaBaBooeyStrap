@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security;
 using System.Text.RegularExpressions;
 using ICSharpCode.SharpZipLib.Zip;
@@ -7,6 +8,22 @@ namespace BaBaBooeyStrap.Bootstrapper.Deployment;
 
 public class PackageExtractor : IPackageExtractor
 {
+    public const int MaxArchiveEntries = 50_000;
+    public const long MaxEntryBytes = 512L * 1024 * 1024;
+    public const long MaxTotalExtractedBytes = 4L * 1024 * 1024 * 1024;
+    public const double MaxCompressionRatio = 100.0;
+    private const long CompressionRatioCheckThresholdBytes = 1024 * 1024;
+
+    private const int ErrorSharingViolation = unchecked((int)0x80070020);
+    private const int ErrorLockViolation = unchecked((int)0x80070021);
+
+    private static readonly HashSet<string> ReservedDeviceNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    };
+
     public static readonly IReadOnlyDictionary<string, string> PackageDirectoryMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         { "RobloxApp.zip", "" },
@@ -75,19 +92,23 @@ public class PackageExtractor : IPackageExtractor
         ArgumentNullException.ThrowIfNull(targetDirectory);
         ct.ThrowIfCancellationRequested();
 
-        if (!File.Exists(zipFilePath))
+        try
+        {
+            using var stream = File.OpenRead(zipFilePath);
+            if (stream.Length == 0)
+            {
+                throw new InvalidDataException("Zero-byte zip file is invalid.");
+            }
+            return ExtractFromStream(stream, targetDirectory, fileFilter, exactNormalizedFiles, ct);
+        }
+        catch (FileNotFoundException)
+        {
+            throw;
+        }
+        catch (DirectoryNotFoundException)
         {
             throw new FileNotFoundException("Zip package file not found.", zipFilePath);
         }
-
-        var fileInfo = new FileInfo(zipFilePath);
-        if (fileInfo.Length == 0)
-        {
-            throw new InvalidDataException("Zero-byte zip file is invalid.");
-        }
-
-        using var stream = File.OpenRead(zipFilePath);
-        return ExtractFromStream(stream, targetDirectory, fileFilter, exactNormalizedFiles, ct);
     }
 
     public Task ExtractPackageAsync(
@@ -108,6 +129,7 @@ public class PackageExtractor : IPackageExtractor
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetVersionDirectory);
 
         HashSet<string>? exactFiles = null;
         if (specificFiles != null)
@@ -123,7 +145,23 @@ public class PackageExtractor : IPackageExtractor
             }
         }
 
-        string fullTargetDir = Path.Combine(targetVersionDirectory, relativeSubdirectory ?? string.Empty);
+        string fullVersionDir = Path.GetFullPath(targetVersionDirectory);
+        string versionPrefix = fullVersionDir.EndsWith(Path.DirectorySeparatorChar)
+            ? fullVersionDir
+            : fullVersionDir + Path.DirectorySeparatorChar;
+        string sub = relativeSubdirectory ?? string.Empty;
+        if (Path.IsPathRooted(sub) || sub.Contains(':') || sub.Contains("..", StringComparison.Ordinal))
+        {
+            throw new SecurityException($"Invalid relative subdirectory '{relativeSubdirectory}'.");
+        }
+
+        string fullTargetDir = Path.GetFullPath(Path.Combine(fullVersionDir, sub));
+        if (!string.Equals(fullTargetDir.TrimEnd(Path.DirectorySeparatorChar), fullVersionDir.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) &&
+            !fullTargetDir.StartsWith(versionPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new SecurityException($"Relative subdirectory '{relativeSubdirectory}' escapes target version directory.");
+        }
+
         return Task.Run(() =>
         {
             Directory.CreateDirectory(fullTargetDir);
@@ -141,6 +179,10 @@ public class PackageExtractor : IPackageExtractor
         IReadOnlySet<string>? exactNormalizedFiles = null,
         CancellationToken ct = default)
     {
+        Regex? filterRegex = string.IsNullOrEmpty(fileFilter)
+            ? null
+            : new Regex(fileFilter, RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(200));
+
         Directory.CreateDirectory(targetDirectory);
         string fullTargetDir = Path.GetFullPath(targetDirectory);
         if (!fullTargetDir.EndsWith(Path.DirectorySeparatorChar.ToString(), StringComparison.Ordinal))
@@ -148,25 +190,34 @@ public class PackageExtractor : IPackageExtractor
             fullTargetDir += Path.DirectorySeparatorChar;
         }
 
-        ZipFile? zipFile = null;
-        try
+        if (HasReparsePointInPath(fullTargetDir))
         {
-            zipFile = new ZipFile(stream) { IsStreamOwner = false };
-        }
-        catch (Exception ex) when (ex is not SecurityException)
-        {
-            throw new InvalidDataException("Failed to open zip archive. Archive may be corrupted or malformed.", ex);
+            throw new SecurityException($"Refused extraction into reparse point path: '{targetDirectory}'.");
         }
 
-        Regex? filterRegex = string.IsNullOrEmpty(fileFilter) ? null : new Regex(fileFilter, RegexOptions.IgnoreCase);
+        using var zipFile = OpenZipSafe(stream);
         int extractedFiles = 0;
+        int processedEntries = 0;
+        long totalExtractedBytes = 0;
 
+        byte[] copyBuffer = ArrayPool<byte>.Shared.Rent(81920);
         try
         {
-            byte[] copyBuffer = new byte[81920];
             foreach (ZipEntry entry in zipFile)
             {
                 ct.ThrowIfCancellationRequested();
+
+                processedEntries++;
+                if (processedEntries > MaxArchiveEntries)
+                {
+                    throw new InvalidDataException($"Zip archive exceeds maximum allowed entry count ({MaxArchiveEntries}).");
+                }
+
+                // Reject Unix symlinks (S_IFLNK = 0xA000)
+                if (((entry.ExternalFileAttributes >> 16) & 0xF000) == 0xA000)
+                {
+                    throw new SecurityException($"Zip archive contains disallowed symlink entry: {entry.Name}");
+                }
 
                 string normalizedZipPath = NormalizeZipRelativePath(entry.Name);
                 if (exactNormalizedFiles != null)
@@ -182,7 +233,18 @@ public class PackageExtractor : IPackageExtractor
                 }
 
                 bool isDirectory = entry.IsDirectory || entry.Name.EndsWith('/') || entry.Name.EndsWith('\\');
-                string normalizedEntryName = entry.Name
+                string rawName = entry.Name;
+                if (string.IsNullOrWhiteSpace(rawName))
+                {
+                    continue;
+                }
+
+                if (rawName.Contains(':') || Path.IsPathRooted(rawName))
+                {
+                    throw new SecurityException($"ZipSlip invalid/rooted entry name detected: {entry.Name}");
+                }
+
+                string normalizedEntryName = rawName
                     .Replace('/', Path.DirectorySeparatorChar)
                     .Replace('\\', Path.DirectorySeparatorChar)
                     .TrimStart(Path.DirectorySeparatorChar);
@@ -192,11 +254,21 @@ public class PackageExtractor : IPackageExtractor
                     continue;
                 }
 
+                if (ContainsUnsafeSegment(normalizedEntryName))
+                {
+                    throw new SecurityException($"ZipSlip or reserved segment detected in entry: {entry.Name}");
+                }
+
                 // ZipSlip directory traversal check
                 string destinationPath = Path.GetFullPath(Path.Combine(fullTargetDir, normalizedEntryName));
                 if (!destinationPath.StartsWith(fullTargetDir, StringComparison.OrdinalIgnoreCase))
                 {
                     throw new SecurityException($"ZipSlip directory traversal detected in entry: {entry.Name}");
+                }
+
+                if (HasReparsePointAncestor(fullTargetDir, destinationPath))
+                {
+                    throw new SecurityException($"Refused extraction across reparse point / junction: {entry.Name}");
                 }
 
                 if (isDirectory)
@@ -211,46 +283,193 @@ public class PackageExtractor : IPackageExtractor
                     Directory.CreateDirectory(parentDir);
                 }
 
+                string tempDest = $"{destinationPath}.{Guid.NewGuid():N}.extracttmp";
                 try
                 {
                     if (File.Exists(destinationPath))
                     {
                         var attrs = File.GetAttributes(destinationPath);
+                        if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                        {
+                            throw new SecurityException($"Refused overwriting reparse point destination: {entry.Name}");
+                        }
                         if (attrs.HasFlag(FileAttributes.ReadOnly))
                         {
                             File.SetAttributes(destinationPath, attrs & ~FileAttributes.ReadOnly);
                         }
                     }
 
-                    using var entryStream = zipFile.GetInputStream(entry);
-                    using var destStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                    int read;
-                    while ((read = entryStream.Read(copyBuffer, 0, copyBuffer.Length)) > 0)
+                    long entryBytes = 0;
+                    using (var entryStream = zipFile.GetInputStream(entry))
+                    using (var destStream = new FileStream(tempDest, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        ct.ThrowIfCancellationRequested();
-                        destStream.Write(copyBuffer, 0, read);
+                        int read;
+                        while ((read = entryStream.Read(copyBuffer, 0, copyBuffer.Length)) > 0)
+                        {
+                            ct.ThrowIfCancellationRequested();
+
+                            entryBytes += read;
+                            totalExtractedBytes += read;
+
+                            if (entryBytes > MaxEntryBytes)
+                            {
+                                throw new InvalidDataException($"Zip entry '{entry.Name}' exceeds maximum extracted size ({MaxEntryBytes} bytes).");
+                            }
+                            if (totalExtractedBytes > MaxTotalExtractedBytes)
+                            {
+                                throw new InvalidDataException($"Zip archive exceeds maximum total extracted size ({MaxTotalExtractedBytes} bytes).");
+                            }
+                            if (entryBytes > CompressionRatioCheckThresholdBytes &&
+                                entry.CompressedSize > 0 &&
+                                (double)entryBytes / entry.CompressedSize > MaxCompressionRatio)
+                            {
+                                throw new InvalidDataException($"Zip entry '{entry.Name}' exceeds maximum permitted compression ratio ({MaxCompressionRatio}x).");
+                            }
+
+                            destStream.Write(copyBuffer, 0, read);
+                        }
                     }
+
+                    File.Move(tempDest, destinationPath, overwrite: true);
                     extractedFiles++;
                 }
-                catch (IOException)
+                catch (UnauthorizedAccessException) when (ProbeLockedFileSharingViolation(destinationPath, out var sharingIoEx))
                 {
-                    // DirectWrite / GDI Windows font cache locks font files (.ttf, .otf, .ttc)
-                    if (destinationPath.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
-                        destinationPath.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) ||
-                        destinationPath.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase))
+                    TryDeleteQuietly(tempDest);
+                    if (IsToleratedLockedFont(destinationPath, sharingIoEx))
+                    {
+                        continue;
+                    }
+                    throw sharingIoEx;
+                }
+                catch (IOException ex)
+                {
+                    TryDeleteQuietly(tempDest);
+                    if (IsToleratedLockedFont(destinationPath, ex))
                     {
                         // Tolerated font lock - continue extraction
                         continue;
                     }
                     throw;
                 }
+                catch
+                {
+                    TryDeleteQuietly(tempDest);
+                    throw;
+                }
             }
         }
         finally
         {
-            zipFile?.Close();
+            ArrayPool<byte>.Shared.Return(copyBuffer);
         }
 
         return extractedFiles;
+    }
+
+    private static bool IsToleratedLockedFont(string destinationPath, IOException ex)
+    {
+        return (ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation) &&
+               (destinationPath.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                destinationPath.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) ||
+                destinationPath.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ProbeLockedFileSharingViolation(string destinationPath, out IOException sharingException)
+    {
+        sharingException = null!;
+        if (!File.Exists(destinationPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var _ = new FileStream(destinationPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException ex)
+        {
+            sharingException = ex;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static ZipFile OpenZipSafe(Stream stream)
+    {
+        try
+        {
+            return new ZipFile(stream) { IsStreamOwner = false };
+        }
+        catch (Exception ex) when (ex is not SecurityException)
+        {
+            throw new InvalidDataException("Failed to open zip archive. Archive may be corrupted or malformed.", ex);
+        }
+    }
+
+    private static bool ContainsUnsafeSegment(string relativePath)
+    {
+        string[] segments = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+        foreach (string seg in segments)
+        {
+            if (seg == "..") return true;
+            if (seg.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return true;
+            int dotIdx = seg.IndexOf('.');
+            string stem = dotIdx >= 0 ? seg[..dotIdx] : seg;
+            if (ReservedDeviceNames.Contains(stem)) return true;
+        }
+        return false;
+    }
+
+    private static bool HasReparsePointInPath(string fullPath)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(fullPath);
+            while (dir != null)
+            {
+                if (dir.Exists && dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return true;
+                }
+                dir = dir.Parent;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static bool HasReparsePointAncestor(string rootDirWithSep, string targetFullPath)
+    {
+        try
+        {
+            string trimmedRoot = rootDirWithSep.TrimEnd(Path.DirectorySeparatorChar);
+            string? current = Path.GetDirectoryName(targetFullPath);
+            while (!string.IsNullOrEmpty(current) &&
+                   current.Length >= trimmedRoot.Length)
+            {
+                if (Directory.Exists(current) &&
+                    new DirectoryInfo(current).Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    return true;
+                }
+                if (string.Equals(current, trimmedRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+                current = Path.GetDirectoryName(current);
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static void TryDeleteQuietly(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 }

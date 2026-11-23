@@ -1,3 +1,6 @@
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using BaBaBooeyStrap.App.ViewModels;
 using Wpf.Ui.Controls;
 
@@ -30,24 +33,49 @@ public partial class FluentDialog : FluentWindow, IBootstrapperDialog
         InitializeComponent();
 
         WindowBackdropType = useAeroBackdrop ? WindowBackdropType.Acrylic : WindowBackdropType.Mica;
-        ViewModel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
-        Closing += (_, e) =>
+        MouseLeftButtonDown += (_, e) =>
         {
-            if (!_closingProgrammatically && ViewModel.CancelEnabled)
+            if (e.OriginalSource is DependencyObject source && HasButtonAncestor(source))
             {
-                ViewModel.RequestCancel();
+                return;
+            }
+
+            try
+            {
+                DragMove();
+            }
+            catch
+            {
             }
         };
+
+        ViewModel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
+        Closing += (_, e) => BootstrapperDialogHelper.HandleClosing(_closingProgrammatically, ViewModel, e);
     }
 
     public void SetProgress(double value, double max, bool indeterminate) =>
         ViewModel.UpdateProgress(value, max, indeterminate);
 
-    public void ShowBootstrapper() => Show();
+    public void ShowBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, Show);
 
-    public void CloseBootstrapper()
+    public void CloseBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, () =>
+        {
+            _closingProgrammatically = true;
+            Close();
+        });
+
+    private static bool HasButtonAncestor(DependencyObject? current)
     {
-        _closingProgrammatically = true;
-        Close();
+        while (current != null)
+        {
+            if (current is System.Windows.Controls.Primitives.ButtonBase)
+            {
+                return true;
+            }
+            current = VisualTreeHelper.GetParent(current);
+        }
+        return false;
     }
 }

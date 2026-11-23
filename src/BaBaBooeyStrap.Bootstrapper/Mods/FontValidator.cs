@@ -81,27 +81,43 @@ public class FontValidator : IFontValidator
         format = FontFormat.Unknown;
         errorMessage = null;
 
-        if (stream == null || stream.Length < 4)
+        if (stream == null)
         {
-            errorMessage = "File is too small to be a valid font.";
+            errorMessage = "File stream cannot be null.";
             return false;
         }
 
-        if (stream.Length > MaxFontFileSizeBytes)
+        if (stream.CanSeek)
         {
-            errorMessage = $"Font file stream exceeds maximum limit of 50MB.";
-            return false;
+            long remaining = stream.Length - stream.Position;
+            if (remaining < 4)
+            {
+                errorMessage = "File is too small to be a valid font.";
+                return false;
+            }
+
+            if (remaining > MaxFontFileSizeBytes)
+            {
+                errorMessage = "Font file stream exceeds maximum limit of 50MB.";
+                return false;
+            }
         }
 
         byte[] header = new byte[4];
         long originalPosition = stream.CanSeek ? stream.Position : 0;
-        int read = stream.Read(header, 0, 4);
+        int totalRead = 0;
+        while (totalRead < 4)
+        {
+            int read = stream.Read(header, totalRead, 4 - totalRead);
+            if (read <= 0) break;
+            totalRead += read;
+        }
         if (stream.CanSeek)
         {
             stream.Position = originalPosition;
         }
 
-        if (read != 4)
+        if (totalRead != 4)
         {
             errorMessage = "Unable to read 4-byte font header.";
             return false;
@@ -110,30 +126,50 @@ public class FontValidator : IFontValidator
         if (header.SequenceEqual(TrueTypeMagic))
         {
             format = FontFormat.TrueType;
-            return true;
         }
-        if (header.SequenceEqual(OpenTypeMagic))
+        else if (header.SequenceEqual(OpenTypeMagic))
         {
             format = FontFormat.OpenType;
-            return true;
         }
-        if (header.SequenceEqual(TtcMagic))
+        else if (header.SequenceEqual(TtcMagic))
         {
             format = FontFormat.TrueTypeCollection;
-            return true;
         }
-        if (header.SequenceEqual(WoffMagic))
+        else if (header.SequenceEqual(WoffMagic))
         {
             format = FontFormat.Woff;
-            return true;
         }
-        if (header.SequenceEqual(Woff2Magic))
+        else if (header.SequenceEqual(Woff2Magic))
         {
             format = FontFormat.Woff2;
-            return true;
+        }
+        else
+        {
+            errorMessage = "File header does not match valid font magic bytes (00 01 00 00, OTTO, ttcf, wOFF, or wOF2).";
+            return false;
         }
 
-        errorMessage = "File header does not match valid font magic bytes (00 01 00 00, OTTO, ttcf, wOFF, or wOF2).";
-        return false;
+        string ext = (extension ?? string.Empty).Trim().ToLowerInvariant();
+        if (!string.IsNullOrEmpty(ext))
+        {
+            bool extMatches = ext switch
+            {
+                ".ttf" => format is FontFormat.TrueType or FontFormat.OpenType,
+                ".otf" => format is FontFormat.OpenType or FontFormat.TrueType,
+                ".ttc" => format == FontFormat.TrueTypeCollection,
+                ".woff" => format == FontFormat.Woff,
+                ".woff2" => format == FontFormat.Woff2,
+                _ => false
+            };
+
+            if (!extMatches)
+            {
+                format = FontFormat.Unknown;
+                errorMessage = $"Font magic bytes do not match file extension '{ext}'.";
+                return false;
+            }
+        }
+
+        return true;
     }
 }

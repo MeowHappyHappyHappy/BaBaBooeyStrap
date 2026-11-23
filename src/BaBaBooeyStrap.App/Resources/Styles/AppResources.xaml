@@ -6,6 +6,10 @@
     <conv:LocalizedFormatMultiConverter x:Key="LocalizedFormatMultiConverter" />
     <conv:HexStringToBrushConverter x:Key="HexStringToBrushConverter" />
 
+    <SolidColorBrush x:Key="AppWarningForegroundBrush" Color="#FFF59E0B" />
+    <SolidColorBrush x:Key="AppWarningBackgroundBrush" Color="#33F59E0B" />
+    <SolidColorBrush x:Key="AppWarningBorderBrush" Color="#FFF59E0B" />
+
     <DataTemplate x:Key="LocalizedEnumItemTemplate">
         <TextBlock>
             <TextBlock.Text>

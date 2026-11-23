@@ -50,6 +50,7 @@ public sealed class ModsApplicationStep : IBootstrapPipelineStep
                 if (File.Exists(modClientSettings))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(versionClientSettings)!);
+                    ClearReadOnlyAttribute(versionClientSettings);
                     string jsonContent = await File.ReadAllTextAsync(modClientSettings, Encoding.UTF8, ct).ConfigureAwait(false);
                     await File.WriteAllTextAsync(
                         versionClientSettings,
@@ -62,11 +63,7 @@ public sealed class ModsApplicationStep : IBootstrapPipelineStep
             {
                 try
                 {
-                    var attr = File.GetAttributes(versionClientSettings);
-                    if (attr.HasFlag(FileAttributes.ReadOnly))
-                    {
-                        File.SetAttributes(versionClientSettings, attr & ~FileAttributes.ReadOnly);
-                    }
+                    ClearReadOnlyAttribute(versionClientSettings);
                     File.Delete(versionClientSettings);
                 }
                 catch (Exception ex)
@@ -84,23 +81,39 @@ public sealed class ModsApplicationStep : IBootstrapPipelineStep
 
             async Task<PackageFileRestoreOutcome> RestorePackageFileAsync(string packageName, string packageRelativeFile)
             {
+                bool IsCachedZipValid(string candidatePath, bool requireExpectedHash)
+                {
+                    if (!File.Exists(candidatePath))
+                    {
+                        return false;
+                    }
+
+                    string? expectedMd5 = null;
+                    bool hasExpectedHash = expectedHashes != null
+                        && expectedHashes.TryGetValue(packageName, out expectedMd5)
+                        && !string.IsNullOrWhiteSpace(expectedMd5);
+
+                    if (hasExpectedHash)
+                    {
+                        return verifier.VerifyFileMd5(candidatePath, expectedMd5!);
+                    }
+
+                    return !requireExpectedHash;
+                }
+
                 string? zipPath = null;
                 string versionedZip = !string.IsNullOrWhiteSpace(versionKey)
                     ? Path.Combine(_paths.Downloads, versionKey, packageName)
                     : string.Empty;
 
-                if (!string.IsNullOrEmpty(versionedZip) && File.Exists(versionedZip))
+                if (!string.IsNullOrEmpty(versionedZip) && IsCachedZipValid(versionedZip, requireExpectedHash: false))
                 {
                     zipPath = versionedZip;
                 }
                 else
                 {
                     string flatZip = Path.Combine(_paths.Downloads, packageName);
-                    if (File.Exists(flatZip) &&
-                        (expectedHashes == null ||
-                         !expectedHashes.TryGetValue(packageName, out string? expectedMd5) ||
-                         string.IsNullOrWhiteSpace(expectedMd5) ||
-                         verifier.VerifyFileMd5(flatZip, expectedMd5)))
+                    if (IsCachedZipValid(flatZip, requireExpectedHash: true))
                     {
                         zipPath = flatZip;
                     }
@@ -151,6 +164,16 @@ public sealed class ModsApplicationStep : IBootstrapPipelineStep
         catch (Exception ex)
         {
             _logger.Warn("ModsApplicationStep", $"Mod/FastFlag application error: {ex.Message}");
+        }
+    }
+
+    private static void ClearReadOnlyAttribute(string path)
+    {
+        if (!File.Exists(path)) return;
+        FileAttributes attr = File.GetAttributes(path);
+        if (attr.HasFlag(FileAttributes.ReadOnly))
+        {
+            File.SetAttributes(path, attr & ~FileAttributes.ReadOnly);
         }
     }
 }

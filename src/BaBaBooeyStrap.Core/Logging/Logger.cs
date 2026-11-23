@@ -1,10 +1,14 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace BaBaBooeyStrap.Core.Logging;
 
-public class Logger : ILogger
+public partial class Logger : ILogger
 {
-    private static ILogger _current = new Logger();
+    private const int MaxHistoryEntries = 2000;
+    private const long MaxLogFileBytes = 10 * 1024 * 1024;
+
+    private static volatile ILogger _current = new Logger();
     public static ILogger Current => _current;
     public static void SetLogger(ILogger logger) => _current = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -24,10 +28,13 @@ public class Logger : ILogger
         _current.Exception(identifier, ex);
 
     private readonly object _syncLock = new();
-    private readonly List<string> _history = new();
+    private readonly Queue<string> _history = new();
     private FileStream? _fileStream;
     private StreamWriter? _writer;
-    private bool _disposed;
+    private string? _logDirectory;
+    private long _currentFileBytes;
+    private int _rotationIndex;
+    private volatile bool _disposed;
 
     public LogLevel MinLevel { get; set; } = LogLevel.Info;
     public bool Initialized { get; private set; }
@@ -50,7 +57,7 @@ public class Logger : ILogger
     {
         lock (_syncLock)
         {
-            if (Initialized) return;
+            if (_disposed || Initialized) return;
 
             string logDir;
             if (!string.IsNullOrWhiteSpace(customLogDirectory))
@@ -69,17 +76,12 @@ public class Logger : ILogger
             try
             {
                 Directory.CreateDirectory(logDir);
+                _logDirectory = logDir;
                 CleanOldLogs(logDir, 7);
 
                 if (!NoWriteMode)
                 {
-                    string timestamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'");
-                    int pid = Environment.ProcessId;
-                    string filename = $"BaBaBooeyStrap_{timestamp}_{pid}.log";
-                    FileLocation = Path.Combine(logDir, filename);
-
-                    _fileStream = new FileStream(FileLocation, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                    _writer = new StreamWriter(_fileStream, Encoding.UTF8) { AutoFlush = true };
+                    OpenNewLogFileLocked(logDir);
                 }
 
                 Initialized = true;
@@ -87,15 +89,52 @@ public class Logger : ILogger
             catch (Exception)
             {
                 // Fall back to memory-only logging if filesystem access fails
+                try { _writer?.Dispose(); } catch { }
+                try { _fileStream?.Dispose(); } catch { }
+                _writer = null;
+                _fileStream = null;
                 NoWriteMode = true;
                 Initialized = true;
             }
         }
     }
 
+    private void OpenNewLogFileLocked(string logDir)
+    {
+        try { _writer?.Flush(); } catch { }
+        try { _writer?.Dispose(); } catch { }
+        try { _fileStream?.Dispose(); } catch { }
+        _writer = null;
+        _fileStream = null;
+
+        string timestamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'");
+        int pid = Environment.ProcessId;
+        string suffix = _rotationIndex == 0 ? string.Empty : $"_{_rotationIndex}";
+        string filename = $"BaBaBooeyStrap_{timestamp}_{pid}{suffix}.log";
+        string path = Path.Combine(logDir, filename);
+
+        FileStream? fs = null;
+        StreamWriter? writer = null;
+        try
+        {
+            fs = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+            writer = new StreamWriter(fs, Encoding.UTF8) { AutoFlush = true };
+            FileLocation = path;
+            _fileStream = fs;
+            _writer = writer;
+            _currentFileBytes = fs.Length;
+        }
+        catch
+        {
+            try { writer?.Dispose(); } catch { }
+            try { fs?.Dispose(); } catch { }
+            throw;
+        }
+    }
+
     public void Log(LogLevel level, string identifier, string message)
     {
-        if (level < MinLevel) return;
+        if (level < MinLevel || _disposed) return;
 
         string timestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
         int pid = Environment.ProcessId;
@@ -114,13 +153,26 @@ public class Logger : ILogger
 
         lock (_syncLock)
         {
-            _history.Add(formattedLine);
+            if (_disposed) return;
+
+            if (_history.Count >= MaxHistoryEntries)
+            {
+                _history.Dequeue();
+            }
+            _history.Enqueue(formattedLine);
 
             if (_writer != null && !NoWriteMode)
             {
                 try
                 {
+                    if (_currentFileBytes >= MaxLogFileBytes && !string.IsNullOrWhiteSpace(_logDirectory))
+                    {
+                        _rotationIndex++;
+                        OpenNewLogFileLocked(_logDirectory);
+                    }
+
                     _writer.WriteLine(formattedLine);
+                    _currentFileBytes += Encoding.UTF8.GetByteCount(formattedLine) + Environment.NewLine.Length;
                 }
                 catch { }
             }
@@ -135,13 +187,14 @@ public class Logger : ILogger
     public void Exception(string identifier, Exception ex)
     {
         ArgumentNullException.ThrowIfNull(ex);
-        Log(LogLevel.Error, identifier, $"{ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+        Log(LogLevel.Error, identifier, ex.ToString());
     }
 
     public void Flush()
     {
         lock (_syncLock)
         {
+            if (_disposed) return;
             try
             {
                 _writer?.Flush();
@@ -151,16 +204,45 @@ public class Logger : ILogger
         }
     }
 
-    private static string SanitizeMessage(string message)
+    public static string RedactSensitiveText(string? message)
     {
         if (string.IsNullOrEmpty(message)) return string.Empty;
+
         string userProfile = Paths.UserProfile;
         if (!string.IsNullOrEmpty(userProfile) && message.Contains(userProfile, StringComparison.OrdinalIgnoreCase))
         {
             message = message.Replace(userProfile, "%USERPROFILE%", StringComparison.OrdinalIgnoreCase);
         }
+
+        message = RobloSecurityWarningRegex().Replace(message, "[REDACTED_COOKIE]");
+        message = RobloSecurityPairRegex().Replace(message, ".ROBLOSECURITY=[REDACTED]");
+        message = GameInfoTicketRegex().Replace(message, "gameinfo:[REDACTED]");
+        message = AuthTicketHeaderRegex().Replace(message, "$1=[REDACTED]");
+        message = SensitiveHttpHeaderRegex().Replace(message, "$1: [REDACTED]");
+        message = PrivateServerCodeRegex().Replace(message, "$1=[REDACTED]");
+
         return message;
     }
+
+    private static string SanitizeMessage(string message) => RedactSensitiveText(message);
+
+    [GeneratedRegex(@"_\|WARNING:-DO-NOT-SHARE-THIS[^\s""'&;+`]*", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex RobloSecurityWarningRegex();
+
+    [GeneratedRegex(@"\.ROBLOSECURITY=[^\s;""'&+`]+", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex RobloSecurityPairRegex();
+
+    [GeneratedRegex(@"gameinfo:[^+\s""']+", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex GameInfoTicketRegex();
+
+    [GeneratedRegex(@"\b(rbx-authentication-ticket)\s*[:=]\s*[^\s""'&;]+", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex AuthTicketHeaderRegex();
+
+    [GeneratedRegex(@"^\s*(Cookie|Authorization|X-CSRF-TOKEN)\s*:\s*[^\r\n]+", RegexOptions.IgnoreCase | RegexOptions.Multiline, matchTimeoutMilliseconds: 100)]
+    private static partial Regex SensitiveHttpHeaderRegex();
+
+    [GeneratedRegex(@"\b(privateServerLinkCode|accessCode|linkCode)=([^&\s""'+`#]+)", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 100)]
+    private static partial Regex PrivateServerCodeRegex();
 
     private static void CleanOldLogs(string directory, int retentionDays)
     {

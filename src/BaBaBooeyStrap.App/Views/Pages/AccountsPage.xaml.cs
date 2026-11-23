@@ -29,7 +29,14 @@ public partial class AccountsPage : Page
         };
         _statusTimer.Tick += (_, _) =>
         {
-            ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
+            try
+            {
+                ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
+            }
+            catch (Exception ex)
+            {
+                Logger.ExceptionStatic("AccountsPage.StatusTimerTick", ex);
+            }
         };
 
         Loaded += OnLoaded;
@@ -95,163 +102,207 @@ public partial class AccountsPage : Page
         LogTextBox.ScrollToEnd();
     }
 
-    private void RefreshStatus_Click(object sender, RoutedEventArgs e)
-    {
-        ViewModel?.AccountManagement.RefreshProtocolStatus();
-        ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
-        ViewModel?.AccountManagement.RefreshRunningInstances();
-    }
+    private void RefreshStatus_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.RefreshStatus", () =>
+        {
+            ViewModel?.AccountManagement.RefreshProtocolStatus();
+            ViewModel?.AccountManagement.RefreshMultiInstanceStatus();
+            ViewModel?.AccountManagement.RefreshRunningInstances();
+        });
 
     private void QuickSwitcher_Click(object sender, RoutedEventArgs e) =>
-        ViewModel?.AccountManagement.ShowQuickSwitcher();
+        RunSafe("AccountsPage.QuickSwitcher", () => ViewModel?.AccountManagement.ShowQuickSwitcher());
 
     private void ToggleFloatingBar_Click(object sender, RoutedEventArgs e) =>
-        ViewModel?.AccountManagement.ToggleFloatingBar();
+        RunSafe("AccountsPage.ToggleFloatingBar", () => ViewModel?.AccountManagement.ToggleFloatingBar());
 
-    private void TileMenu_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel == null) return;
-        var monitors = ViewModel.AccountManagement.AvailableMonitors;
+    private void TileMenu_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.TileMenu", () =>
+        {
+            if (ViewModel == null) return;
+            var monitors = ViewModel.AccountManagement.AvailableMonitors;
 
-        var menu = new ContextMenu();
-        if (monitors.Count <= 1)
+            var menu = new ContextMenu();
+            if (monitors.Count <= 1)
+            {
+                var grid = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
+                grid.Click += (_, _) => RunSafe("AccountsPage.TileSingleMonitor", () =>
+                    ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid));
+                menu.Items.Add(grid);
+            }
+            else
+            {
+                var gridSub = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
+                var autoItem = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MonitorCursorAuto") };
+                autoItem.Click += (_, _) => RunSafe("AccountsPage.TileMonitorAuto", () =>
+                    ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, null));
+                gridSub.Items.Add(autoItem);
+                gridSub.Items.Add(new Separator());
+                foreach (var mon in monitors)
+                {
+                    var captured = mon;
+                    var mItem = new MenuItem { Header = mon.DisplayLabel };
+                    mItem.Click += (_, _) => RunSafe("AccountsPage.TileMonitorSpecific", () =>
+                        ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, captured.DeviceName));
+                    gridSub.Items.Add(mItem);
+                }
+                menu.Items.Add(gridSub);
+
+                var spread = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors") };
+                spread.Click += (_, _) => RunSafe("AccountsPage.TileSpread", () =>
+                    ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SpreadAcrossMonitors));
+                menu.Items.Add(spread);
+
+                var mainSide = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MainAndSide") };
+                mainSide.Click += (_, _) => RunSafe("AccountsPage.TileMainAndSide", () =>
+                    ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.MainAndSide));
+                menu.Items.Add(mainSide);
+            }
+
+            menu.PlacementTarget = TileWindowsButton;
+            menu.IsOpen = true;
+        });
+
+    private void SwitcherSettings_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.SwitcherSettings", () =>
         {
-            var grid = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
-            grid.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid);
-            menu.Items.Add(grid);
-        }
-        else
+            if (ViewModel == null) return;
+            var dlg = new WindowSwitcherSettingsDialog(
+                ViewModel.Settings,
+                ViewModel.AccountManagement.SwitcherCoordinator,
+                ViewModel.SettingsManager)
+            {
+                Owner = Window.GetWindow(this)
+            };
+            dlg.ShowDialog();
+        });
+
+    private void MinimizeAllRunning_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.MinimizeAllRunning", () => ViewModel?.AccountManagement.MinimizeAllRunningInstances());
+
+    private void RunningInstancePill_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.FocusRunningInstance", () =>
         {
-            var gridSub = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SingleMonitorGrid") };
-            var autoItem = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MonitorCursorAuto") };
-            autoItem.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, null);
-            gridSub.Items.Add(autoItem);
-            gridSub.Items.Add(new Separator());
+            if (sender is FrameworkElement { Tag: int pid })
+            {
+                ViewModel?.AccountManagement.FocusRunningInstance(pid);
+            }
+        });
+
+    private void RunningInstanceMoveMonitor_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.MoveMonitorMenu", () =>
+        {
+            if (ViewModel == null || sender is not FrameworkElement { Tag: int pid } el) return;
+            var monitors = ViewModel.AccountManagement.AvailableMonitors;
+            if (monitors.Count <= 1) return;
+
+            var instance = ViewModel.AccountManagement.RunningInstances.FirstOrDefault(i => i.ProcessId == pid);
+            var menu = new ContextMenu();
             foreach (var mon in monitors)
             {
                 var captured = mon;
-                var mItem = new MenuItem { Header = mon.DisplayLabel };
-                mItem.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SingleMonitorGrid, captured.DeviceName);
-                gridSub.Items.Add(mItem);
+                var item = new MenuItem
+                {
+                    Header = mon.DisplayLabel,
+                    IsChecked = instance != null && string.Equals(mon.DeviceName, instance.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)
+                };
+                item.Click += (_, _) => RunSafe("AccountsPage.MoveMonitor", () =>
+                    ViewModel.AccountManagement.MoveRunningInstanceToMonitor(pid, captured.DeviceName));
+                menu.Items.Add(item);
             }
-            menu.Items.Add(gridSub);
+            menu.PlacementTarget = el;
+            menu.IsOpen = true;
+        });
 
-            var spread = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_SpreadAcrossMonitors") };
-            spread.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.SpreadAcrossMonitors);
-            menu.Items.Add(spread);
-
-            var mainSide = new MenuItem { Header = LocalizationService.Instance.GetString("Str_Tiling_MainAndSide") };
-            mainSide.Click += (_, _) => ViewModel.AccountManagement.TileRunningWindows(WindowTilingMode.MainAndSide);
-            menu.Items.Add(mainSide);
-        }
-
-        menu.PlacementTarget = TileWindowsButton;
-        menu.IsOpen = true;
-    }
-
-    private void SwitcherSettings_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel == null) return;
-        var dlg = new WindowSwitcherSettingsDialog(
-            ViewModel.Settings,
-            ViewModel.AccountManagement.SwitcherCoordinator,
-            ViewModel.SettingsManager)
+    private void RunningInstanceMinimize_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.ToggleMinimizeInstance", () =>
         {
-            Owner = Window.GetWindow(this)
-        };
-        dlg.ShowDialog();
-    }
-
-    private void MinimizeAllRunning_Click(object sender, RoutedEventArgs e) =>
-        ViewModel?.AccountManagement.MinimizeAllRunningInstances();
-
-    private void RunningInstancePill_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: int pid })
-        {
-            ViewModel?.AccountManagement.FocusRunningInstance(pid);
-        }
-    }
-
-    private void RunningInstanceMoveMonitor_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel == null || sender is not FrameworkElement { Tag: int pid } el) return;
-        var monitors = ViewModel.AccountManagement.AvailableMonitors;
-        if (monitors.Count <= 1) return;
-
-        var instance = ViewModel.AccountManagement.RunningInstances.FirstOrDefault(i => i.ProcessId == pid);
-        var menu = new ContextMenu();
-        foreach (var mon in monitors)
-        {
-            var captured = mon;
-            var item = new MenuItem
+            if (sender is FrameworkElement { Tag: int pid })
             {
-                Header = mon.DisplayLabel,
-                IsChecked = instance != null && string.Equals(mon.DeviceName, instance.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)
-            };
-            item.Click += (_, _) => ViewModel.AccountManagement.MoveRunningInstanceToMonitor(pid, captured.DeviceName);
-            menu.Items.Add(item);
-        }
-        menu.PlacementTarget = el;
-        menu.IsOpen = true;
-    }
+                ViewModel?.AccountManagement.ToggleMinimizeRunningInstance(pid);
+            }
+        });
 
-    private void RunningInstanceMinimize_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: int pid })
+    private void RunningInstanceClose_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.CloseInstance", () =>
         {
-            ViewModel?.AccountManagement.ToggleMinimizeRunningInstance(pid);
-        }
-    }
+            if (sender is FrameworkElement { Tag: int pid })
+            {
+                ViewModel?.AccountManagement.CloseRunningInstance(pid);
+            }
+        });
 
-    private void RunningInstanceClose_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: int pid })
+    private void ImportMultiRoblox_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.ImportMultiRoblox", () => ViewModel?.AccountManagement.ImportFromMultiRoblox());
+
+    private void MoveUp_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.MoveUp", () => ViewModel?.AccountManagement.MoveSelectedAccount(-1));
+
+    private void MoveDown_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.MoveDown", () => ViewModel?.AccountManagement.MoveSelectedAccount(1));
+
+    private void BatchAfkPreset_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.BatchAfkPreset", () =>
         {
-            ViewModel?.AccountManagement.CloseRunningInstance(pid);
-        }
-    }
+            if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
 
-    private void ImportMultiRoblox_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ImportFromMultiRoblox();
+            int checkedCount = ViewModel.AccountManagement.GetCheckedAccounts().Count;
+            int targetCount = checkedCount > 0
+                ? checkedCount
+                : (ViewModel.AccountManagement.SelectedAccountItem != null ? 1 : 0);
 
-    private void MoveUp_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.MoveSelectedAccount(-1);
+            if (targetCount > 0)
+            {
+                bool confirmed = FluentDialogService.ShowConfirm(
+                    LocalizationService.Instance.GetString("Str_Accounts_BatchAfkConfirmTitle"),
+                    LocalizationService.Instance.Format("Str_Accounts_BatchAfkConfirmMessageFormat", targetCount),
+                    isDestructive: true,
+                    owner: Window.GetWindow(this));
+                if (!confirmed)
+                {
+                    return;
+                }
+            }
 
-    private void MoveDown_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.MoveSelectedAccount(1);
+            ViewModel.AccountManagement.ApplyBatchAfkPreset();
+        });
 
-    private void BatchAfkPreset_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ApplyBatchAfkPreset();
+    private void EditSettings_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.EditSettings", OpenSettingsForSelectedAccount);
 
-    private void EditSettings_Click(object sender, RoutedEventArgs e) => OpenSettingsForSelectedAccount();
+    private void SelectAll_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.SelectAll", () => ViewModel?.AccountManagement.ToggleSelectAllAccounts());
 
-    private void SelectAll_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ToggleSelectAllAccounts();
-
-    private void AddAccount_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel == null) return;
-        var dlg = new AddAccountDialog { Owner = Window.GetWindow(this) };
-        if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
+    private void AddAccount_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.AddAccount", () =>
         {
-            ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
-            ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
-        }
-    }
+            if (ViewModel == null) return;
+            var dlg = new AddAccountDialog { Owner = Window.GetWindow(this) };
+            if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
+            {
+                ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
+                ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
+            }
+        });
 
-    private void UpdateCookie_Click(object sender, RoutedEventArgs e)
-    {
-        if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
-
-        if (ViewModel.AccountManagement.SelectedAccountItem is not AccountItem selected)
+    private void UpdateCookie_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.UpdateCookie", () =>
         {
-            ViewModel.StatusMessage = LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForCookieUpdate");
-            return;
-        }
+            if (ViewModel == null || ViewModel.AccountManagement.IsLaunching) return;
 
-        var dlg = new AddAccountDialog(selected.Username, selected.Notes) { Owner = Window.GetWindow(this) };
-        if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
-        {
-            ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
-            ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
-        }
-    }
+            if (ViewModel.AccountManagement.SelectedAccountItem is not AccountItem selected)
+            {
+                ViewModel.StatusMessage = LocalizationService.Instance.GetString("Str_Accounts_StatusSelectForCookieUpdate");
+                return;
+            }
+
+            var dlg = new AddAccountDialog(selected.Username, selected.Notes) { Owner = Window.GetWindow(this) };
+            if (dlg.ShowDialog() == true && dlg.CreatedAccount != null)
+            {
+                ViewModel.AccountManagement.AddOrUpdateAccount(dlg.CreatedAccount);
+                ViewModel.AccountManagement.SelectedAccountItem?.SetCookieHealth(AccountCookieHealth.Valid);
+            }
+        });
 
     private async void VerifyCookies_Click(object sender, RoutedEventArgs e)
     {
@@ -313,13 +364,35 @@ public partial class AccountsPage : Page
         }
     }
 
-    private void SaveTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.SaveCurrentJoinTarget();
+    private void SaveTarget_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.SaveTarget", () => ViewModel?.AccountManagement.SaveCurrentJoinTarget());
 
-    private void DeleteTarget_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.DeleteSelectedJoinTarget();
+    private void DeleteTarget_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.DeleteTarget", () =>
+        {
+            if (ViewModel == null) return;
+            if (ViewModel.AccountManagement.SelectedSavedTarget is { } selected)
+            {
+                bool confirmed = FluentDialogService.ShowConfirm(
+                    LocalizationService.Instance.GetString("Str_Accounts_DeleteTargetConfirmTitle"),
+                    LocalizationService.Instance.Format("Str_Accounts_DeleteTargetConfirmMessageFormat", selected.Name),
+                    confirmText: LocalizationService.Instance.GetString("Str_Accounts_DeleteTarget"),
+                    isDestructive: true,
+                    owner: Window.GetWindow(this));
+                if (!confirmed)
+                {
+                    return;
+                }
+            }
 
-    private void ClearLog_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.ClearActivityLog();
+            ViewModel.AccountManagement.DeleteSelectedJoinTarget();
+        });
 
-    private void CancelLaunch_Click(object sender, RoutedEventArgs e) => ViewModel?.AccountManagement.CancelActiveLaunch();
+    private void ClearLog_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.ClearLog", () => ViewModel?.AccountManagement.ClearActivityLog());
+
+    private void CancelLaunch_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.CancelLaunch", () => ViewModel?.AccountManagement.CancelActiveLaunch());
 
     private void AccountsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
@@ -328,30 +401,41 @@ public partial class AccountsPage : Page
             return;
         }
 
-        Dispatcher.BeginInvoke(() => ViewModel?.AccountManagement.CommitAccountNotesEdit(item));
+        Dispatcher.BeginInvoke(() => RunSafe("AccountsPage.CommitNotes", () => ViewModel?.AccountManagement.CommitAccountNotesEdit(item)));
     }
 
     private async void AccountsGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.OriginalSource is DependencyObject source && FindVisualParent<CheckBox>(source) != null)
+        try
         {
-            return;
-        }
+            if (e.OriginalSource is DependencyObject source && FindVisualParent<CheckBox>(source) != null)
+            {
+                return;
+            }
 
-        if (ViewModel?.AccountManagement.SelectedAccountItem is null)
-        {
-            return;
-        }
+            if (ViewModel?.AccountManagement.SelectedAccountItem is null)
+            {
+                return;
+            }
 
-        if (ReferenceEquals(AccountsGrid.CurrentColumn, SettingsSummaryColumn))
-        {
-            OpenSettingsForSelectedAccount();
-            return;
-        }
+            if (ReferenceEquals(AccountsGrid.CurrentColumn, SettingsSummaryColumn))
+            {
+                OpenSettingsForSelectedAccount();
+                return;
+            }
 
-        if (AccountsGrid.CurrentColumn is { IsReadOnly: true })
+            if (AccountsGrid.CurrentColumn is { IsReadOnly: true })
+            {
+                await LaunchSelectedWithConfirmationAsync();
+            }
+        }
+        catch (Exception ex)
         {
-            await LaunchSelectedWithConfirmationAsync();
+            Logger.ExceptionStatic("AccountsPage.GridDoubleClick", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                Window.GetWindow(this));
         }
     }
 
@@ -460,6 +544,22 @@ public partial class AccountsPage : Page
             LocalizationService.Instance.Format("Str_Dialog_ConfirmLaunchAccountsMessageFormat", accountCount, accountSummary, target),
             confirmText: LocalizationService.Instance.GetString("Str_Common_Launch"),
             owner: Window.GetWindow(this));
+    }
+
+    private void RunSafe(string operation, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic(operation, ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                Window.GetWindow(this));
+        }
     }
 
     private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject

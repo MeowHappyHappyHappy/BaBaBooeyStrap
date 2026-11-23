@@ -9,10 +9,14 @@
       Title="{DynamicResource Str_FastFlags_PageTitle}">
     <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,16">
         <StackPanel>
-            <DockPanel Margin="0,0,0,16">
-                <TextBlock Text="{DynamicResource Str_FastFlags_Header}" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <ui:Button Content="{DynamicResource Str_FastFlags_OpenEditor}" Appearance="Primary" Click="OpenEditor_Click" HorizontalAlignment="Right"/>
-            </DockPanel>
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="{DynamicResource Str_FastFlags_Header}" FontSize="24" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                <ui:Button Grid.Column="1" Content="{DynamicResource Str_FastFlags_OpenEditor}" Appearance="Primary" Click="OpenEditor_Click" HorizontalAlignment="Right"/>
+            </Grid>
 
             <Border CornerRadius="8" Padding="16" Margin="0,0,0,16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>

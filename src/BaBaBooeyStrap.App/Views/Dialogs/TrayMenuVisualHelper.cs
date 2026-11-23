@@ -86,6 +86,12 @@ internal sealed class TrayMenuPalette
         }
     }
 
+    private static readonly TrayMenuPalette LightInstance = new(isLight: true);
+    private static readonly TrayMenuPalette DarkInstance = new(isLight: false);
+    private static readonly Brush ActiveStatusBrush = Freeze(Color.FromRgb(0x10, 0xB9, 0x81));
+    private static readonly Brush BlockedStatusBrush = Freeze(Color.FromRgb(0xF5, 0x9E, 0x0B));
+    private static readonly Brush DefaultStatusBrush = Freeze(Color.FromRgb(0x71, 0x71, 0x7A));
+
     public static TrayMenuPalette CreateCurrent()
     {
         bool isLight = false;
@@ -94,14 +100,14 @@ internal sealed class TrayMenuPalette
             isLight = ApplicationThemeManager.GetAppTheme() == ApplicationTheme.Light;
         }
         catch { }
-        return new TrayMenuPalette(isLight);
+        return isLight ? LightInstance : DarkInstance;
     }
 
     public static Brush GetStatusColor(TrayMultiInstanceState state) => state switch
     {
-        TrayMultiInstanceState.Active => Freeze(Color.FromRgb(0x10, 0xB9, 0x81)),
-        TrayMultiInstanceState.Blocked => Freeze(Color.FromRgb(0xF5, 0x9E, 0x0B)),
-        _ => Freeze(Color.FromRgb(0x71, 0x71, 0x7A))
+        TrayMultiInstanceState.Active => ActiveStatusBrush,
+        TrayMultiInstanceState.Blocked => BlockedStatusBrush,
+        _ => DefaultStatusBrush
     };
 
     private static SolidColorBrush Freeze(Color c)
@@ -122,12 +128,14 @@ internal sealed class TrayMenuBranchController : IDisposable
     private readonly Func<nint, bool> _isChainWindow;
     private readonly Action _dismissAll;
     private readonly DispatcherTimer _hoverTimer;
+    private readonly List<(Border Row, TrayMenuItemModel Item)> _selectableRows = new();
 
     private TrayMenuPalette _palette;
     private TraySubMenuWindow? _activeChild;
     private TrayMenuItemModel? _pendingItem;
     private FrameworkElement? _pendingRow;
     private TrayMenuItemModel? _openParentItem;
+    private int _focusedIndex = -1;
     private bool _disposed;
 
     public TrayMenuBranchController(
@@ -146,7 +154,7 @@ internal sealed class TrayMenuBranchController : IDisposable
 
         _hoverTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(110)
+            Interval = TimeSpan.FromMilliseconds(220)
         };
         _hoverTimer.Tick += OnHoverTimerTick;
     }
@@ -155,6 +163,8 @@ internal sealed class TrayMenuBranchController : IDisposable
     {
         _palette = palette;
         CloseChild();
+        _selectableRows.Clear();
+        _focusedIndex = -1;
         _itemsHost.Children.Clear();
 
         foreach (var item in items)
@@ -171,6 +181,114 @@ internal sealed class TrayMenuBranchController : IDisposable
             }
 
             _itemsHost.Children.Add(BuildRowElement(item, palette));
+        }
+    }
+
+    public void SelectFirst()
+    {
+        if (_selectableRows.Count > 0)
+        {
+            SetFocusedIndex(0);
+        }
+    }
+
+    public void HandleKeyDown(KeyEventArgs e, bool isSubMenu, Action? onCloseSubMenu = null)
+    {
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            _dismissAll();
+            return;
+        }
+
+        if (e.Key == Key.Left && isSubMenu)
+        {
+            e.Handled = true;
+            onCloseSubMenu?.Invoke();
+            return;
+        }
+
+        if (_selectableRows.Count == 0)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Down)
+        {
+            e.Handled = true;
+            int next = _focusedIndex < 0 ? 0 : (_focusedIndex + 1) % _selectableRows.Count;
+            SetFocusedIndex(next);
+            return;
+        }
+
+        if (e.Key == Key.Up)
+        {
+            e.Handled = true;
+            int prev = _focusedIndex < 0 ? _selectableRows.Count - 1 : (_focusedIndex - 1 + _selectableRows.Count) % _selectableRows.Count;
+            SetFocusedIndex(prev);
+            return;
+        }
+
+        if ((e.Key == Key.Right || e.Key == Key.Enter || e.Key == Key.Space) &&
+            _focusedIndex >= 0 &&
+            _focusedIndex < _selectableRows.Count)
+        {
+            var (row, item) = _selectableRows[_focusedIndex];
+            if (item.Children is { Count: > 0 })
+            {
+                e.Handled = true;
+                _hoverTimer.Stop();
+                OpenChildForRow(row, item, focusChild: true);
+                return;
+            }
+
+            if (e.Key is Key.Enter or Key.Space && item.OnClick != null)
+            {
+                e.Handled = true;
+                InvokeRowAction(item.OnClick);
+            }
+        }
+    }
+
+    private void SetFocusedIndex(int index)
+    {
+        if (_focusedIndex >= 0 && _focusedIndex < _selectableRows.Count)
+        {
+            var (prevRow, prevItem) = _selectableRows[_focusedIndex];
+            ApplyRowVisual(prevRow, prevItem, highlighted: false);
+        }
+
+        _focusedIndex = index;
+        if (_focusedIndex >= 0 && _focusedIndex < _selectableRows.Count)
+        {
+            var (row, item) = _selectableRows[_focusedIndex];
+            ApplyRowVisual(row, item, highlighted: true);
+            row.BringIntoView();
+        }
+    }
+
+    private void InvokeRowAction(Action onClick)
+    {
+        var dispatcher = _ownerWindow.Dispatcher;
+        _dismissAll();
+        if (!dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+        {
+            _ = dispatcher.BeginInvoke(DispatcherPriority.Normal, onClick);
+        }
+    }
+
+    private void ApplyRowVisual(Border rowBorder, TrayMenuItemModel item, bool highlighted)
+    {
+        bool hasChildren = item.Children is { Count: > 0 };
+        if (highlighted && item.IsEnabled)
+        {
+            rowBorder.Background = item.IsDanger ? _palette.DangerHoverBackground : _palette.RowHoverBackground;
+            rowBorder.BorderBrush = item.IsDanger ? _palette.DangerHoverBorder : _palette.RowHoverBorder;
+        }
+        else
+        {
+            rowBorder.Background = item.IsChecked && !hasChildren ? _palette.RowCheckedBackground : Brushes.Transparent;
+            rowBorder.BorderBrush = item.IsChecked && !hasChildren ? _palette.RowCheckedBorder : Brushes.Transparent;
         }
     }
 
@@ -373,16 +491,22 @@ internal sealed class TrayMenuBranchController : IDisposable
 
         rowBorder.Child = grid;
 
+        int rowIndex = -1;
+        if (isInteractive)
+        {
+            rowIndex = _selectableRows.Count;
+            _selectableRows.Add((rowBorder, item));
+        }
+
         rowBorder.MouseEnter += (_, _) =>
         {
-            if (item.IsEnabled)
+            if (isInteractive)
             {
-                rowBorder.Background = item.IsDanger
-                    ? palette.DangerHoverBackground
-                    : palette.RowHoverBackground;
-                rowBorder.BorderBrush = item.IsDanger
-                    ? palette.DangerHoverBorder
-                    : palette.RowHoverBorder;
+                SetFocusedIndex(rowIndex);
+            }
+            else if (item.IsEnabled)
+            {
+                ApplyRowVisual(rowBorder, item, highlighted: true);
             }
 
             if (_disposed) return;
@@ -401,8 +525,12 @@ internal sealed class TrayMenuBranchController : IDisposable
 
         rowBorder.MouseLeave += (_, _) =>
         {
-            rowBorder.Background = item.IsChecked && !hasChildren ? palette.RowCheckedBackground : Brushes.Transparent;
-            rowBorder.BorderBrush = item.IsChecked && !hasChildren ? palette.RowCheckedBorder : Brushes.Transparent;
+            if (isInteractive && _focusedIndex == rowIndex)
+            {
+                _focusedIndex = -1;
+            }
+
+            ApplyRowVisual(rowBorder, item, highlighted: false);
         };
 
         rowBorder.MouseLeftButtonUp += (_, e) =>
@@ -413,16 +541,13 @@ internal sealed class TrayMenuBranchController : IDisposable
             if (hasChildren)
             {
                 _hoverTimer.Stop();
-                OpenChildForRow(rowBorder, item);
+                OpenChildForRow(rowBorder, item, focusChild: false);
                 return;
             }
 
             if (item.OnClick != null)
             {
-                var action = item.OnClick;
-                var dispatcher = _ownerWindow.Dispatcher;
-                _dismissAll();
-                _ = dispatcher.BeginInvoke(DispatcherPriority.Normal, action);
+                InvokeRowAction(item.OnClick);
             }
         };
 
@@ -443,7 +568,7 @@ internal sealed class TrayMenuBranchController : IDisposable
 
         if (item.Children is { Count: > 0 } && item.IsEnabled)
         {
-            OpenChildForRow(row, item);
+            OpenChildForRow(row, item, focusChild: false);
         }
         else
         {
@@ -451,7 +576,7 @@ internal sealed class TrayMenuBranchController : IDisposable
         }
     }
 
-    private void OpenChildForRow(FrameworkElement row, TrayMenuItemModel parentItem)
+    private void OpenChildForRow(FrameworkElement row, TrayMenuItemModel parentItem, bool focusChild)
     {
         if (_disposed || parentItem.Children == null || parentItem.Children.Count == 0) return;
 
@@ -478,7 +603,7 @@ internal sealed class TrayMenuBranchController : IDisposable
 
         int itemTopPhys = (int)Math.Round(rowScreenPos.Y) - (int)Math.Round(6 * parentDpi.DpiScaleY);
 
-        _activeChild ??= new TraySubMenuWindow(_getWorkArea, _isChainWindow, _dismissAll);
+        _activeChild ??= new TraySubMenuWindow(_ownerWindow, _getWorkArea, _isChainWindow, _dismissAll);
         _openParentItem = parentItem;
         _activeChild.ShowAtParentRow(
             parentItem.Children,
@@ -487,6 +612,11 @@ internal sealed class TrayMenuBranchController : IDisposable
             parentCardRight,
             itemTopPhys,
             _getWorkArea());
+
+        if (focusChild)
+        {
+            _activeChild.FocusFromKeyboard();
+        }
     }
 
     public static void ApplyPaletteToCard(Border cardBorder, TrayMenuPalette palette)
@@ -500,6 +630,7 @@ internal sealed class TrayMenuBranchController : IDisposable
         if (_disposed) return;
         _disposed = true;
         _hoverTimer.Stop();
+        _hoverTimer.Tick -= OnHoverTimerTick;
         ForceCloseChild();
     }
 }

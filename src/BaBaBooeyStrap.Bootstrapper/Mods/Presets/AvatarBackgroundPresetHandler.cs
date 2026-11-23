@@ -9,26 +9,49 @@ public static class AvatarBackgroundPresetHandler
 
     public static void SetOldAvatarBackground(bool enabled, string destinationBaseDir)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationBaseDir);
+
         string dest = Path.Combine(destinationBaseDir, RelativeMobileRbxlPath);
         if (enabled)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            var assembly = Assembly.GetExecutingAssembly();
-            using var stream = assembly.GetManifestResourceStream(ResourceName);
-            if (stream != null)
+            if (File.Exists(dest))
             {
-                using var destStream = File.Create(dest);
-                stream.CopyTo(destStream);
+                var attrs = File.GetAttributes(dest);
+                if (attrs.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(dest, attrs & ~FileAttributes.ReadOnly);
+                }
             }
-            else
+
+            var assembly = Assembly.GetExecutingAssembly();
+            using var stream = assembly.GetManifestResourceStream(ResourceName)
+                ?? throw new InvalidOperationException($"Missing embedded mod resource '{ResourceName}'.");
+
+            string tempPath = $"{dest}.{Guid.NewGuid():N}.tmp";
+            try
             {
-                File.WriteAllText(dest, "<roblox xmlns:xmime=\"http://www.w3.org/2005/05/xmlmime\" version=\"4\"></roblox>");
+                using (var destStream = File.Create(tempPath))
+                {
+                    stream.CopyTo(destStream);
+                }
+                File.Move(tempPath, dest, overwrite: true);
+            }
+            catch
+            {
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+                throw;
             }
         }
         else
         {
             if (File.Exists(dest))
             {
+                var attrs = File.GetAttributes(dest);
+                if (attrs.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(dest, attrs & ~FileAttributes.ReadOnly);
+                }
                 File.Delete(dest);
             }
         }

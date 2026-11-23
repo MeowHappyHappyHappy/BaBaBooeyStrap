@@ -1,12 +1,14 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.MultiInstance.Abstractions;
 
 namespace BaBaBooeyStrap.MultiInstance;
 
 /// <summary>
-/// Preemptively holds <c>ROBLOX_singletonMutex</c> and <c>ROBLOX_singletonEvent</c> on a dedicated STA
+/// Preemptively holds <c>ROBLOX_singletonMutex</c> and <c>ROBLOX_singletonEvent</c> on a dedicated
 /// background thread so multiple RobloxPlayerBeta client instances can run concurrently without tripping Byfron anti-cheat.
 /// </summary>
 public sealed class WindowsMultiInstanceController : IMultiInstanceController, IDisposable
@@ -16,6 +18,13 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
 
     private const int MutexPollMs = 100;
     private const int HealIntervalMs = 2000;
+
+    private sealed class WorkerState
+    {
+        public nint MutexHandle;
+        public nint EventHandle;
+        public bool ThreadHoldsMutex;
+    }
 
     private readonly string _mutexName;
     private readonly string _eventName;
@@ -27,15 +36,11 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
     private ManualResetEventSlim? _stopEvent;
     private ManualResetEventSlim? _initialAttemptDone;
 
-    private nint _mutexHandle;
-    private nint _eventHandle;
-
     private volatile bool _enabled;
     private volatile bool _ownsMutex;
     private volatile bool _waitingForMutex;
-    private volatile bool _threadHoldsMutex;
     private volatile string? _lastError;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     /// <summary>
     /// Initializes a controller using the default Roblox kernel object names.
@@ -58,11 +63,12 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
     }
 
     /// <summary>
-    /// Starts the dedicated STA background thread and preemptively acquires the mutex and event.
+    /// Starts the dedicated background thread and preemptively acquires the mutex and event.
     /// </summary>
     public MultiInstanceStatus Enable()
     {
         ManualResetEventSlim? initialAttempt = null;
+        bool returnCurrentStatusImmediately = false;
 
         while (true)
         {
@@ -77,7 +83,7 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
                     initialAttempt = _initialAttemptDone;
                     if (initialAttempt == null || initialAttempt.IsSet)
                     {
-                        return GetStatusLocked();
+                        returnCurrentStatusImmediately = true;
                     }
                     break;
                 }
@@ -94,22 +100,22 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
                     _stopEvent?.Dispose();
                     _initialAttemptDone?.Dispose();
 
-                    _stopEvent = new ManualResetEventSlim(false);
-                    _initialAttemptDone = new ManualResetEventSlim(false);
-                    initialAttempt = _initialAttemptDone;
+                    var stopEvent = new ManualResetEventSlim(false);
+                    var initialDone = new ManualResetEventSlim(false);
+                    _stopEvent = stopEvent;
+                    _initialAttemptDone = initialDone;
+                    initialAttempt = initialDone;
 
                     _enabled = true;
                     _ownsMutex = false;
                     _waitingForMutex = false;
-                    _threadHoldsMutex = false;
                     _lastError = null;
 
-                    _workerThread = new Thread(HoldUntilReleased)
+                    _workerThread = new Thread(() => HoldUntilReleased(stopEvent, initialDone))
                     {
                         Name = "multi-roblox-singleton",
                         IsBackground = true
                     };
-                    _workerThread.SetApartmentState(ApartmentState.STA);
                     _workerThread.Start();
                     break;
                 }
@@ -121,15 +127,15 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             }
         }
 
-        if (initialAttempt != null)
+        if (!returnCurrentStatusImmediately && initialAttempt != null)
         {
             try
             {
-                initialAttempt.Wait(TimeSpan.FromMilliseconds(500));
+                initialAttempt.Wait(TimeSpan.FromSeconds(2));
             }
             catch (ObjectDisposedException)
             {
-                // Concurrent Disable/Dispose tore down the signal; return current locked status cleanly.
+                // Concurrent Disable/Dispose tore down the signal; return current status cleanly.
             }
         }
 
@@ -193,16 +199,6 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         }
     }
 
-    private MultiInstanceStatus GetStatusLocked()
-    {
-        return new MultiInstanceStatus(
-            Enabled: _enabled,
-            OwnsMutex: _ownsMutex,
-            WaitingForMutex: _waitingForMutex,
-            RunningRobloxPids: GetRunningRobloxPidsLocked(),
-            LastError: _lastError);
-    }
-
     /// <summary>
     /// Adds a PID to manually tracked processes (for unit testing and process supervision).
     /// </summary>
@@ -230,9 +226,13 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        lock (_stateLock)
         {
-            return;
+            if (_disposed)
+            {
+                return;
+            }
+            _disposed = true;
         }
 
         Disable();
@@ -243,20 +243,18 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             _stopEvent = null;
             _initialAttemptDone?.Dispose();
             _initialAttemptDone = null;
-            _disposed = true;
         }
 
         GC.SuppressFinalize(this);
     }
 
-    private void HoldUntilReleased()
+    private void HoldUntilReleased(ManualResetEventSlim stopEvent, ManualResetEventSlim initialAttempt)
     {
-        var stopEvent = _stopEvent!;
-        var initialAttempt = _initialAttemptDone!;
+        var state = new WorkerState();
 
         try
         {
-            AcquireInitialObjects(stopEvent, initialAttempt);
+            AcquireInitialObjects(state, stopEvent, initialAttempt);
 
             while (!stopEvent.IsSet)
             {
@@ -265,7 +263,7 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
                     break;
                 }
 
-                Heal();
+                Heal(state, stopEvent);
             }
         }
         catch (Exception ex)
@@ -278,14 +276,14 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         }
         finally
         {
-            ReleaseObjects();
+            ReleaseObjects(state);
         }
     }
 
-    private void AcquireInitialObjects(ManualResetEventSlim stopEvent, ManualResetEventSlim initialAttempt)
+    private void AcquireInitialObjects(WorkerState state, ManualResetEventSlim stopEvent, ManualResetEventSlim initialAttempt)
     {
-        _eventHandle = Kernel32.CreateEventW(nint.Zero, bManualReset: true, bInitialState: false, _eventName);
-        if (_eventHandle == nint.Zero)
+        state.EventHandle = CreateCurrentUserEvent();
+        if (state.EventHandle == nint.Zero)
         {
             lock (_stateLock)
             {
@@ -294,11 +292,11 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         }
         else
         {
-            Kernel32.ResetEvent(_eventHandle);
+            Kernel32.ResetEvent(state.EventHandle);
         }
 
-        _mutexHandle = Kernel32.CreateMutexW(nint.Zero, bInitialOwner: false, _mutexName);
-        if (_mutexHandle == nint.Zero)
+        state.MutexHandle = CreateCurrentUserMutex();
+        if (state.MutexHandle == nint.Zero)
         {
             lock (_stateLock)
             {
@@ -308,12 +306,12 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             return;
         }
 
-        uint waitResult = Kernel32.WaitForSingleObject(_mutexHandle, 0);
+        uint waitResult = Kernel32.WaitForSingleObject(state.MutexHandle, 0);
         if (waitResult is Kernel32.WAIT_OBJECT_0 or Kernel32.WAIT_ABANDONED)
         {
             lock (_stateLock)
             {
-                _threadHoldsMutex = true;
+                state.ThreadHoldsMutex = true;
                 if (_enabled && !stopEvent.IsSet)
                 {
                     _ownsMutex = true;
@@ -333,7 +331,7 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
                 _waitingForMutex = _enabled && !stopEvent.IsSet;
             }
             try { initialAttempt.Set(); } catch (ObjectDisposedException) { }
-            WaitForMutexUntilAcquired(stopEvent);
+            WaitForMutexUntilAcquired(state, stopEvent);
             return;
         }
 
@@ -344,16 +342,16 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         try { initialAttempt.Set(); } catch (ObjectDisposedException) { }
     }
 
-    private void WaitForMutexUntilAcquired(ManualResetEventSlim stopEvent)
+    private void WaitForMutexUntilAcquired(WorkerState state, ManualResetEventSlim stopEvent)
     {
-        while (!stopEvent.IsSet && _mutexHandle != nint.Zero)
+        while (!stopEvent.IsSet && state.MutexHandle != nint.Zero)
         {
-            uint waitResult = Kernel32.WaitForSingleObject(_mutexHandle, MutexPollMs);
+            uint waitResult = Kernel32.WaitForSingleObject(state.MutexHandle, MutexPollMs);
             if (waitResult is Kernel32.WAIT_OBJECT_0 or Kernel32.WAIT_ABANDONED)
             {
                 lock (_stateLock)
                 {
-                    _threadHoldsMutex = true;
+                    state.ThreadHoldsMutex = true;
                     if (!stopEvent.IsSet && _enabled)
                     {
                         _ownsMutex = true;
@@ -376,28 +374,34 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         }
     }
 
-    private void Heal()
+    private void Heal(WorkerState state, ManualResetEventSlim stopEvent)
     {
-        if (_eventHandle == nint.Zero)
+        if (stopEvent.IsSet)
         {
-            _eventHandle = Kernel32.CreateEventW(nint.Zero, bManualReset: true, bInitialState: false, _eventName);
-            if (_eventHandle == nint.Zero)
+            return;
+        }
+
+        if (state.EventHandle == nint.Zero)
+        {
+            state.EventHandle = CreateCurrentUserEvent();
+            if (state.EventHandle == nint.Zero)
             {
                 lock (_stateLock)
                 {
                     _lastError = $"Heal CreateEventW failed with Win32 error {Marshal.GetLastWin32Error()}.";
                 }
             }
-            else
-            {
-                Kernel32.ResetEvent(_eventHandle);
-            }
         }
 
-        if (_mutexHandle == nint.Zero)
+        if (state.EventHandle != nint.Zero)
         {
-            _mutexHandle = Kernel32.CreateMutexW(nint.Zero, bInitialOwner: false, _mutexName);
-            if (_mutexHandle == nint.Zero)
+            Kernel32.ResetEvent(state.EventHandle);
+        }
+
+        if (state.MutexHandle == nint.Zero)
+        {
+            state.MutexHandle = CreateCurrentUserMutex();
+            if (state.MutexHandle == nint.Zero)
             {
                 lock (_stateLock)
                 {
@@ -407,15 +411,15 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             }
         }
 
-        if (!_threadHoldsMutex && _mutexHandle != nint.Zero)
+        if (!state.ThreadHoldsMutex && state.MutexHandle != nint.Zero)
         {
-            uint waitResult = Kernel32.WaitForSingleObject(_mutexHandle, 0);
+            uint waitResult = Kernel32.WaitForSingleObject(state.MutexHandle, 0);
             if (waitResult is Kernel32.WAIT_OBJECT_0 or Kernel32.WAIT_ABANDONED)
             {
                 lock (_stateLock)
                 {
-                    _threadHoldsMutex = true;
-                    if (_enabled && !(_stopEvent?.IsSet ?? false))
+                    state.ThreadHoldsMutex = true;
+                    if (_enabled && !stopEvent.IsSet)
                     {
                         _ownsMutex = true;
                     }
@@ -427,7 +431,7 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             {
                 lock (_stateLock)
                 {
-                    if (_enabled && !(_stopEvent?.IsSet ?? false))
+                    if (_enabled && !stopEvent.IsSet)
                     {
                         _waitingForMutex = true;
                     }
@@ -436,37 +440,107 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
         }
     }
 
-    private void ReleaseObjects()
+    private void ReleaseObjects(WorkerState state)
     {
-        if (_mutexHandle != nint.Zero)
+        if (state.MutexHandle != nint.Zero)
         {
             bool hadOwnership;
             lock (_stateLock)
             {
-                hadOwnership = _threadHoldsMutex || _ownsMutex;
+                hadOwnership = state.ThreadHoldsMutex || _ownsMutex;
                 _ownsMutex = false;
-                _threadHoldsMutex = false;
+                state.ThreadHoldsMutex = false;
                 _waitingForMutex = false;
             }
 
             if (hadOwnership)
             {
-                Kernel32.ReleaseMutex(_mutexHandle);
+                Kernel32.ReleaseMutex(state.MutexHandle);
             }
 
-            Kernel32.CloseHandle(_mutexHandle);
-            _mutexHandle = nint.Zero;
+            Kernel32.CloseHandle(state.MutexHandle);
+            state.MutexHandle = nint.Zero;
         }
 
-        if (_eventHandle != nint.Zero)
+        if (state.EventHandle != nint.Zero)
         {
-            Kernel32.CloseHandle(_eventHandle);
-            _eventHandle = nint.Zero;
+            Kernel32.CloseHandle(state.EventHandle);
+            state.EventHandle = nint.Zero;
         }
 
         lock (_stateLock)
         {
             _waitingForMutex = false;
+        }
+    }
+
+    private nint CreateCurrentUserMutex() =>
+        WithCurrentUserSecurityAttributes(isEvent: false, sa => Kernel32.CreateMutexW(sa, bInitialOwner: false, _mutexName));
+
+    private nint CreateCurrentUserEvent() =>
+        WithCurrentUserSecurityAttributes(isEvent: true, sa => Kernel32.CreateEventW(sa, bManualReset: true, bInitialState: false, _eventName));
+
+    private static nint WithCurrentUserSecurityAttributes(bool isEvent, Func<nint, nint> factory)
+    {
+        nint saPtr = nint.Zero;
+        GCHandle sdHandle = default;
+
+        try
+        {
+            var sid = WindowsIdentity.GetCurrent().User;
+            if (sid != null)
+            {
+                var dacl = new DiscretionaryAcl(isContainer: false, isDS: false, capacity: 1);
+                dacl.AddAccess(
+                    AccessControlType.Allow,
+                    sid,
+                    unchecked((int)(isEvent ? Kernel32.EVENT_ALL_ACCESS : Kernel32.MUTEX_ALL_ACCESS)),
+                    InheritanceFlags.None,
+                    PropagationFlags.None);
+                var sd = new CommonSecurityDescriptor(
+                    isContainer: false,
+                    isDS: false,
+                    flags: ControlFlags.DiscretionaryAclPresent,
+                    owner: sid,
+                    group: null,
+                    systemAcl: null,
+                    discretionaryAcl: dacl);
+                byte[] sdBytes = new byte[sd.BinaryLength];
+                sd.GetBinaryForm(sdBytes, 0);
+
+                sdHandle = GCHandle.Alloc(sdBytes, GCHandleType.Pinned);
+                var sa = new Kernel32.SECURITY_ATTRIBUTES
+                {
+                    nLength = (uint)Marshal.SizeOf<Kernel32.SECURITY_ATTRIBUTES>(),
+                    lpSecurityDescriptor = sdHandle.AddrOfPinnedObject(),
+                    bInheritHandle = false
+                };
+                saPtr = Marshal.AllocHGlobal((int)sa.nLength);
+                Marshal.StructureToPtr(sa, saPtr, false);
+            }
+        }
+        catch
+        {
+            if (saPtr != nint.Zero)
+            {
+                Marshal.FreeHGlobal(saPtr);
+                saPtr = nint.Zero;
+            }
+            if (sdHandle.IsAllocated)
+            {
+                sdHandle.Free();
+                sdHandle = default;
+            }
+        }
+
+        try
+        {
+            return factory(saPtr);
+        }
+        finally
+        {
+            if (saPtr != nint.Zero) Marshal.FreeHGlobal(saPtr);
+            if (sdHandle.IsAllocated) sdHandle.Free();
         }
     }
 
@@ -478,16 +552,6 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             {
                 return _manualTrackedPids.OrderBy(p => p).ToList().AsReadOnly();
             }
-        }
-
-        return EnumerateExternalPids();
-    }
-
-    private IReadOnlyList<int> GetRunningRobloxPidsLocked()
-    {
-        if (_manualTrackedPids.Count > 0)
-        {
-            return _manualTrackedPids.OrderBy(p => p).ToList().AsReadOnly();
         }
 
         return EnumerateExternalPids();
@@ -507,6 +571,10 @@ public sealed class WindowsMultiInstanceController : IMultiInstanceController, I
             try
             {
                 pids.Add(process.Id);
+            }
+            catch
+            {
+                // Process exited concurrently
             }
             finally
             {

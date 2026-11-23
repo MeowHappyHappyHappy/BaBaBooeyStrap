@@ -2,6 +2,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using BaBaBooeyStrap.Core.Interop;
 using BaBaBooeyStrap.Core.Models.Enums;
 using Drawing = System.Drawing;
 
@@ -13,13 +14,13 @@ public static class IconResolver
 
     public static ImageSource? ResolveImageSource(BootstrapperIcon iconKind, string? customIconPath)
     {
-        if (iconKind == BootstrapperIcon.IconCustom && !string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath))
+        if (iconKind == BootstrapperIcon.IconCustom && IsSafeLocalFilePath(customIconPath))
         {
             try
             {
                 var bitmap = new BitmapImage();
                 bitmap.BeginInit();
-                bitmap.UriSource = new Uri(Path.GetFullPath(customIconPath), UriKind.Absolute);
+                bitmap.UriSource = new Uri(Path.GetFullPath(customIconPath!), UriKind.Absolute);
                 bitmap.CacheOption = BitmapCacheOption.OnLoad;
                 bitmap.EndInit();
                 bitmap.Freeze();
@@ -50,11 +51,28 @@ public static class IconResolver
 
     public static Drawing.Icon ResolveDrawingIcon(BootstrapperIcon iconKind, string? customIconPath)
     {
-        if (iconKind == BootstrapperIcon.IconCustom && !string.IsNullOrWhiteSpace(customIconPath) && File.Exists(customIconPath))
+        if (iconKind == BootstrapperIcon.IconCustom && IsSafeLocalFilePath(customIconPath))
         {
             try
             {
-                return new Drawing.Icon(customIconPath);
+                string fullPath = Path.GetFullPath(customIconPath!);
+                if (string.Equals(Path.GetExtension(fullPath), ".ico", StringComparison.OrdinalIgnoreCase))
+                {
+                    return new Drawing.Icon(fullPath);
+                }
+
+                using var srcBitmap = new Drawing.Bitmap(fullPath);
+                using var resizedBitmap = new Drawing.Bitmap(srcBitmap, new Drawing.Size(32, 32));
+                nint hIcon = resizedBitmap.GetHicon();
+                try
+                {
+                    using var tempIcon = Drawing.Icon.FromHandle(hIcon);
+                    return (Drawing.Icon)tempIcon.Clone();
+                }
+                finally
+                {
+                    User32.DestroyIcon(hIcon);
+                }
             }
             catch
             {
@@ -85,5 +103,29 @@ public static class IconResolver
         catch { }
 
         return (Drawing.Icon)Drawing.SystemIcons.Application.Clone();
+    }
+
+    private static bool IsSafeLocalFilePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return false;
+
+        string trimmed = path.Trim();
+        if (trimmed.StartsWith(@"\\", StringComparison.Ordinal) ||
+            trimmed.StartsWith("//", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!Path.IsPathRooted(trimmed)) return false;
+
+        try
+        {
+            string full = Path.GetFullPath(trimmed);
+            return !full.StartsWith(@"\\", StringComparison.Ordinal) && File.Exists(full);
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

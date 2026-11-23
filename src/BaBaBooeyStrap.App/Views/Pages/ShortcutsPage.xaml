@@ -29,7 +29,7 @@
                         <ui:Button Content="{DynamicResource Str_Shortcuts_RegisterPlayer}" Appearance="Primary" Click="RegisterPlayer_Click" Margin="0,0,8,8"/>
                         <ui:Button Content="{DynamicResource Str_Shortcuts_RegisterStudio}" Click="RegisterStudio_Click" Margin="0,0,8,8"/>
                         <ui:Button Content="{DynamicResource Str_Shortcuts_RemoveStartup}" Click="RemoveStartup_Click" Margin="0,0,8,8"/>
-                        <ui:Button Content="{DynamicResource Str_Shortcuts_UnregisterAll}" Click="UnregisterAll_Click" Margin="0,0,8,8"/>
+                        <ui:Button Content="{DynamicResource Str_Shortcuts_UnregisterAll}" Appearance="Danger" Click="UnregisterAll_Click" Margin="0,0,8,8"/>
                     </WrapPanel>
                 </StackPanel>
             </Border>

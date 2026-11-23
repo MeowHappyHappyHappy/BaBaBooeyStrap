@@ -10,9 +10,10 @@ using BaBaBooeyStrap.Core.Models.Enums;
 
 namespace BaBaBooeyStrap.App.ViewModels;
 
-public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<PackageDownloadProgress>
+public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<PackageDownloadProgress>, IDisposable
 {
     private readonly CancellationTokenSource _cts;
+    private readonly bool _ownsCts;
     private readonly Dispatcher? _dispatcher;
     private readonly Stopwatch _throttleTimer = Stopwatch.StartNew();
     private readonly TimeSpan _throttleInterval = TimeSpan.FromMilliseconds(33);
@@ -29,6 +30,7 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
     private ImageSource? _iconSource;
     private BootstrapperStyle _style = BootstrapperStyle.FluentDialog;
     private long _lastDispatchMs;
+    private int _disposed;
 
     public event EventHandler? CancelRequested;
 
@@ -36,6 +38,7 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
         CancellationTokenSource? cts = null,
         Dispatcher? dispatcher = null)
     {
+        _ownsCts = cts == null;
         _cts = cts ?? new CancellationTokenSource();
         _dispatcher = dispatcher;
         CancelCommand = new RelayCommand(ExecuteCancel, () => CancelEnabled);
@@ -56,9 +59,29 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
         get => _message;
         set
         {
-            if (SetProperty(ref _message, value) && !string.IsNullOrWhiteSpace(value))
+            if (string.Equals(_message, value, StringComparison.Ordinal))
             {
-                AppendLogLine($"[INFO] {value}");
+                return;
+            }
+
+            void ApplyMessage()
+            {
+                if (SetProperty(ref _message, value) && !string.IsNullOrWhiteSpace(value))
+                {
+                    AppendLogLine($"[INFO] {value}");
+                }
+            }
+
+            if (_dispatcher != null && !_dispatcher.CheckAccess())
+            {
+                if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+                {
+                    _dispatcher.InvokeAsync(ApplyMessage, DispatcherPriority.Normal);
+                }
+            }
+            else
+            {
+                ApplyMessage();
             }
         }
     }
@@ -90,7 +113,24 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
     public bool CancelEnabled
     {
         get => _cancelEnabled;
-        set => SetProperty(ref _cancelEnabled, value);
+        set
+        {
+            if (SetProperty(ref _cancelEnabled, value))
+            {
+                void Notify() => ((RelayCommand)CancelCommand).RaiseCanExecuteChanged();
+                if (_dispatcher != null && !_dispatcher.CheckAccess())
+                {
+                    if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+                    {
+                        _dispatcher.InvokeAsync(Notify, DispatcherPriority.Normal);
+                    }
+                }
+                else
+                {
+                    Notify();
+                }
+            }
+        }
     }
 
     public ThemeDefinition ThemeColors
@@ -147,7 +187,10 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
 
         if (_dispatcher != null && !_dispatcher.CheckAccess())
         {
-            _dispatcher.InvokeAsync(ApplyUpdate, DispatcherPriority.Background);
+            if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+            {
+                _dispatcher.InvokeAsync(ApplyUpdate, DispatcherPriority.Background);
+            }
         }
         else
         {
@@ -166,7 +209,10 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
 
         if (_dispatcher != null && !_dispatcher.CheckAccess())
         {
-            _dispatcher.InvokeAsync(Apply, DispatcherPriority.Background);
+            if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+            {
+                _dispatcher.InvokeAsync(Apply, DispatcherPriority.Background);
+            }
         }
         else
         {
@@ -196,11 +242,28 @@ public sealed class BootstrapperDialogViewModel : ViewModelBase, IProgress<Packa
 
         if (_dispatcher != null && !_dispatcher.CheckAccess())
         {
-            _dispatcher.InvokeAsync(Add, DispatcherPriority.Background);
+            if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
+            {
+                _dispatcher.InvokeAsync(Add, DispatcherPriority.Background);
+            }
         }
         else
         {
             Add();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (_ownsCts)
+        {
+            try { _cts.Cancel(); } catch { }
+            try { _cts.Dispose(); } catch { }
         }
     }
 }

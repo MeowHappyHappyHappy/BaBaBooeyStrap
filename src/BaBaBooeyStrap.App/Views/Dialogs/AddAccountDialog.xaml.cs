@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Roblox;
 using Microsoft.Web.WebView2.Core;
@@ -21,6 +22,8 @@ public partial class AddAccountDialog : FluentWindow
     private readonly bool _isUpdateMode;
     private string? _webViewUserDataFolder;
     private DispatcherTimer? _cookiePollTimer;
+    private CancellationTokenSource? _verifyCts;
+    private EventHandler? _pollTickHandler;
     private bool _webViewInitialized;
     private bool _webViewInitAttempted;
     private bool _isVerifyingWebCookie;
@@ -60,35 +63,49 @@ public partial class AddAccountDialog : FluentWindow
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        UpdateFooterForSelectedTab();
-        if (LoginTabControl.SelectedItem == ManualCookieTab)
+        try
         {
-            CookieBox.Focus();
+            UpdateFooterForSelectedTab();
+            if (LoginTabControl.SelectedItem == ManualCookieTab)
+            {
+                CookieBox.Focus();
+            }
+            else
+            {
+                await EnsureWebViewInitializedAsync();
+            }
         }
-        else
+        catch (Exception ex)
         {
-            await EnsureWebViewInitializedAsync();
+            Logger.ExceptionStatic("AddAccountDialog.OnLoaded", ex);
         }
     }
 
     private async void LoginTabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || !ReferenceEquals(e.Source, LoginTabControl))
+        try
         {
-            return;
-        }
+            if (!IsLoaded || !ReferenceEquals(e.Source, LoginTabControl))
+            {
+                return;
+            }
 
-        UpdateFooterForSelectedTab();
+            UpdateFooterForSelectedTab();
 
-        if (LoginTabControl.SelectedItem == WebLoginTab)
-        {
-            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_WebInitialStatus");
-            await EnsureWebViewInitializedAsync();
+            if (LoginTabControl.SelectedItem == WebLoginTab)
+            {
+                StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_WebInitialStatus");
+                await EnsureWebViewInitializedAsync();
+            }
+            else if (LoginTabControl.SelectedItem == ManualCookieTab)
+            {
+                StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_InitialStatus");
+                CookieBox.Focus();
+            }
         }
-        else if (LoginTabControl.SelectedItem == ManualCookieTab)
+        catch (Exception ex)
         {
-            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_InitialStatus");
-            CookieBox.Focus();
+            Logger.ExceptionStatic("AddAccountDialog.SelectionChanged", ex);
         }
     }
 
@@ -110,20 +127,35 @@ public partial class AddAccountDialog : FluentWindow
         WebLoginLoadingOverlay.Visibility = Visibility.Visible;
         WebViewFallbackPanel.Visibility = Visibility.Collapsed;
 
+        string? profileFolder = null;
         try
         {
-            _webViewUserDataFolder = Path.Combine(
+            profileFolder = Path.Combine(
                 Paths.Current.Temp,
                 "BaBaBooeyStrap",
                 "WebViewLogin",
                 Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(_webViewUserDataFolder);
+            _webViewUserDataFolder = profileFolder;
+            Directory.CreateDirectory(profileFolder);
 
-            var environment = await CoreWebView2Environment.CreateAsync(null, _webViewUserDataFolder);
-            if (_dialogClosed) return;
+            var environment = await CoreWebView2Environment.CreateAsync(null, profileFolder);
+            if (_dialogClosed)
+            {
+                ScheduleFolderCleanup(profileFolder);
+                return;
+            }
 
-            await LoginWebView.EnsureCoreWebView2Async(environment);
-            if (_dialogClosed) return;
+            var controllerOptions = environment.CreateCoreWebView2ControllerOptions();
+            controllerOptions.IsInPrivateModeEnabled = true;
+
+            await LoginWebView.EnsureCoreWebView2Async(environment, controllerOptions);
+            if (_dialogClosed)
+            {
+                try { LoginWebView.CoreWebView2?.CookieManager?.DeleteAllCookies(); } catch { }
+                try { LoginWebView.Dispose(); } catch { }
+                ScheduleFolderCleanup(profileFolder);
+                return;
+            }
 
             _webViewInitialized = true;
             LoginWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
@@ -136,16 +168,42 @@ public partial class AddAccountDialog : FluentWindow
             {
                 Interval = TimeSpan.FromSeconds(1)
             };
-            _cookiePollTimer.Tick += async (_, _) => await TryCaptureRobloxCookieAsync();
+            _pollTickHandler = async (_, _) =>
+            {
+                try
+                {
+                    await TryCaptureRobloxCookieAsync();
+                }
+                catch (Exception ex)
+                {
+                    Logger.ExceptionStatic("AddAccountDialog.CookiePollTick", ex);
+                }
+            };
+            _cookiePollTimer.Tick += _pollTickHandler;
             _cookiePollTimer.Start();
         }
         catch (WebView2RuntimeNotFoundException)
         {
-            ShowWebViewFallback(LocalizationService.Instance.GetString("Str_AddAccount_WebViewMissingDesc"));
+            if (!_dialogClosed)
+            {
+                ShowWebViewFallback(LocalizationService.Instance.GetString("Str_AddAccount_WebViewMissingDesc"));
+            }
+            if (_dialogClosed && !string.IsNullOrWhiteSpace(profileFolder))
+            {
+                ScheduleFolderCleanup(profileFolder);
+            }
         }
         catch (Exception ex)
         {
-            ShowWebViewFallback(LocalizationService.Instance.Format("Str_AddAccount_WebViewInitFailedFormat", ex.Message));
+            Logger.ExceptionStatic("AddAccountDialog.EnsureWebViewInitializedAsync", ex);
+            if (!_dialogClosed)
+            {
+                ShowWebViewFallback(LocalizationService.Instance.Format("Str_AddAccount_WebViewInitFailedFormat", ex.Message));
+            }
+            if (_dialogClosed && !string.IsNullOrWhiteSpace(profileFolder))
+            {
+                ScheduleFolderCleanup(profileFolder);
+            }
         }
     }
 
@@ -160,8 +218,16 @@ public partial class AddAccountDialog : FluentWindow
 
     private async void CoreWebView2_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        WebLoginLoadingOverlay.Visibility = Visibility.Collapsed;
-        await TryCaptureRobloxCookieAsync();
+        try
+        {
+            if (_dialogClosed) return;
+            WebLoginLoadingOverlay.Visibility = Visibility.Collapsed;
+            await TryCaptureRobloxCookieAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("AddAccountDialog.NavigationCompleted", ex);
+        }
     }
 
     private async Task TryCaptureRobloxCookieAsync()
@@ -194,36 +260,65 @@ public partial class AddAccountDialog : FluentWindow
 
             await VerifyAndCompleteAsync(cookieValue, isFromWebView: true);
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.DebugStatic("AddAccountDialog.TryCaptureCookie", ex.Message);
             _isVerifyingWebCookie = false;
         }
     }
 
     private async void VerifyAdd_Click(object sender, RoutedEventArgs e)
     {
-        string cookie = RobloxAuthService.NormalizeCookie(CookieBox.Password);
-        if (string.IsNullOrWhiteSpace(cookie))
+        try
         {
-            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_EmptyCookieError");
-            return;
-        }
+            string cookie = RobloxAuthService.NormalizeCookie(CookieBox.Password);
+            if (string.IsNullOrWhiteSpace(cookie))
+            {
+                StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_EmptyCookieError");
+                return;
+            }
 
-        await VerifyAndCompleteAsync(cookie, isFromWebView: false);
+            await VerifyAndCompleteAsync(cookie, isFromWebView: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("AddAccountDialog.VerifyAdd_Click", ex);
+        }
     }
 
     private async Task VerifyAndCompleteAsync(string cookie, bool isFromWebView)
     {
         cookie = RobloxAuthService.NormalizeCookie(cookie);
-        VerifyAddButton.IsEnabled = false;
+        if (string.IsNullOrWhiteSpace(cookie))
+        {
+            StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_EmptyCookieError");
+            if (isFromWebView)
+            {
+                _isVerifyingWebCookie = false;
+                _cookiePollTimer?.Start();
+            }
+            return;
+        }
+
+        _verifyCts?.Cancel();
+        _verifyCts?.Dispose();
+        _verifyCts = new CancellationTokenSource();
+        var ct = _verifyCts.Token;
+
+        SetVerificationInputsLocked(true);
         VerifyProgressRing.Visibility = Visibility.Visible;
         StatusText.Text = LocalizationService.Instance.GetString("Str_AddAccount_VerifyingStatus");
 
         try
         {
             using var auth = new RobloxAuthService();
-            var user = await auth.GetAuthenticatedUserAsync(cookie);
+            var user = await auth.GetAuthenticatedUserAsync(cookie, ct);
             if (_dialogClosed) return;
+
+            if (isFromWebView)
+            {
+                try { LoginWebView.CoreWebView2?.CookieManager?.DeleteAllCookies(); } catch { }
+            }
 
             CreatedAccount = new RobloxAccount
             {
@@ -238,13 +333,17 @@ public partial class AddAccountDialog : FluentWindow
             DialogResult = true;
             Close();
         }
+        catch (OperationCanceledException) when (_dialogClosed || ct.IsCancellationRequested)
+        {
+            // Dialog closed or superseded
+        }
         catch (Exception ex)
         {
             if (_dialogClosed) return;
 
             VerifyProgressRing.Visibility = Visibility.Collapsed;
             StatusText.Text = LocalizationService.Instance.Format("Str_AddAccount_FailedFormat", ex.Message);
-            VerifyAddButton.IsEnabled = true;
+            SetVerificationInputsLocked(false);
 
             if (isFromWebView)
             {
@@ -253,6 +352,14 @@ public partial class AddAccountDialog : FluentWindow
                 _cookiePollTimer?.Start();
             }
         }
+    }
+
+    private void SetVerificationInputsLocked(bool locked)
+    {
+        VerifyAddButton.IsEnabled = !locked;
+        CookieBox.IsEnabled = !locked;
+        NotesBox.IsEnabled = !locked;
+        LoginTabControl.IsEnabled = !locked;
     }
 
     private void SwitchToManualTab_Click(object sender, RoutedEventArgs e)
@@ -278,14 +385,40 @@ public partial class AddAccountDialog : FluentWindow
     private void OnClosed(object? sender, EventArgs e)
     {
         _dialogClosed = true;
-        _cookiePollTimer?.Stop();
-        _cookiePollTimer = null;
+        Loaded -= OnLoaded;
+        Closed -= OnClosed;
+
+        try
+        {
+            _verifyCts?.Cancel();
+            _verifyCts?.Dispose();
+            _verifyCts = null;
+        }
+        catch { }
+
+        if (_cookiePollTimer != null)
+        {
+            _cookiePollTimer.Stop();
+            if (_pollTickHandler != null)
+            {
+                _cookiePollTimer.Tick -= _pollTickHandler;
+                _pollTickHandler = null;
+            }
+            _cookiePollTimer = null;
+        }
+
+        try
+        {
+            CookieBox.Password = string.Empty;
+        }
+        catch { }
 
         try
         {
             if (_webViewInitialized && LoginWebView.CoreWebView2 != null)
             {
                 LoginWebView.CoreWebView2.NavigationCompleted -= CoreWebView2_NavigationCompleted;
+                try { LoginWebView.CoreWebView2.CookieManager?.DeleteAllCookies(); } catch { }
             }
             LoginWebView.Dispose();
         }
@@ -294,24 +427,48 @@ public partial class AddAccountDialog : FluentWindow
         string? folderToDelete = _webViewUserDataFolder;
         if (!string.IsNullOrWhiteSpace(folderToDelete))
         {
-            _ = Task.Run(async () =>
-            {
-                for (int i = 0; i < 6; i++)
-                {
-                    try
-                    {
-                        if (Directory.Exists(folderToDelete))
-                        {
-                            Directory.Delete(folderToDelete, recursive: true);
-                        }
-                        break;
-                    }
-                    catch
-                    {
-                        await Task.Delay(350);
-                    }
-                }
-            });
+            ScheduleFolderCleanup(folderToDelete);
         }
+    }
+
+    private static void ScheduleFolderCleanup(string folderToDelete)
+    {
+        _ = Task.Run(async () =>
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                try
+                {
+                    if (Directory.Exists(folderToDelete))
+                    {
+                        Directory.Delete(folderToDelete, recursive: true);
+                    }
+                    break;
+                }
+                catch
+                {
+                    await Task.Delay(350);
+                }
+            }
+        });
+    }
+
+    internal static void CleanupOrphanedWebViewProfiles(string tempRoot)
+    {
+        if (string.IsNullOrWhiteSpace(tempRoot)) return;
+        string webViewLoginRoot = Path.Combine(tempRoot, "BaBaBooeyStrap", "WebViewLogin");
+        try
+        {
+            if (!Directory.Exists(webViewLoginRoot)) return;
+            foreach (string dir in Directory.GetDirectories(webViewLoginRoot))
+            {
+                try
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+                catch { }
+            }
+        }
+        catch { }
     }
 }

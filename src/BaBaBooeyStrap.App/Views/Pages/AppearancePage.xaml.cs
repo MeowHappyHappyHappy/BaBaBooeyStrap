@@ -1,10 +1,9 @@
-using System.Diagnostics;
-using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.Core;
+using BaBaBooeyStrap.Core.Logging;
 using Microsoft.Win32;
 
 namespace BaBaBooeyStrap.App.Views.Pages;
@@ -21,8 +20,9 @@ public partial class AppearancePage : Page
     private void BrowseBootstrapperIcon_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
+        var owner = Window.GetWindow(this);
         var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Appearance_IconFileFilter") };
-        if (ofd.ShowDialog() == true)
+        if ((owner != null ? ofd.ShowDialog(owner) : ofd.ShowDialog()) == true)
         {
             ViewModel.WindowIntegrations.BootstrapperIconCustomLocation = ofd.FileName;
         }
@@ -31,8 +31,9 @@ public partial class AppearancePage : Page
     private void BrowseRobloxIcon_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
+        var owner = Window.GetWindow(this);
         var ofd = new OpenFileDialog { Filter = LocalizationService.Instance.GetString("Str_Appearance_RobloxIconFileFilter") };
-        if (ofd.ShowDialog() == true)
+        if ((owner != null ? ofd.ShowDialog(owner) : ofd.ShowDialog()) == true)
         {
             ViewModel.WindowIntegrations.RobloxIconCustomLocation = ofd.FileName;
         }
@@ -40,19 +41,51 @@ public partial class AppearancePage : Page
 
     private void OpenThemesFolder_Click(object sender, RoutedEventArgs e)
     {
-        Directory.CreateDirectory(Paths.CustomThemes);
-        Process.Start(new ProcessStartInfo("explorer.exe", Paths.CustomThemes) { UseShellExecute = true });
+        var owner = Window.GetWindow(this);
+        string dir = ViewModel?.AppPaths.CustomThemes ?? Paths.Current.CustomThemes;
+        FluentDialogService.TryOpenFolderInExplorer(dir, owner);
         ViewModel?.WindowIntegrations.RefreshCustomThemes();
     }
 
     private void PreviewDialog_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
-        var cts = new CancellationTokenSource();
-        var dialog = BootstrapperDialogFactory.Create(ViewModel.Settings, cts);
-        dialog.Message = LocalizationService.Instance.GetString("Str_Bootstrapper_PreviewMessage");
-        dialog.SetProgress(65, 100, false);
-        dialog.CancelRequested += (_, _) => dialog.CloseBootstrapper();
-        dialog.ShowBootstrapper();
+        CancellationTokenSource? cts = null;
+        try
+        {
+            cts = new CancellationTokenSource();
+            var dialog = BootstrapperDialogFactory.Create(ViewModel.Settings, cts);
+            dialog.Message = LocalizationService.Instance.GetString("Str_Bootstrapper_PreviewMessage");
+            dialog.SetProgress(65, 100, false);
+            dialog.CancelRequested += (_, _) => dialog.CloseBootstrapper();
+
+            if (dialog is Window previewWindow)
+            {
+                var capturedCts = cts;
+                previewWindow.Closed += (_, _) =>
+                {
+                    try { capturedCts.Cancel(); } catch { }
+                    try { capturedCts.Dispose(); } catch { }
+                };
+                cts = null;
+            }
+
+            dialog.ShowBootstrapper();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("AppearancePage.PreviewDialog_Click", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                Window.GetWindow(this));
+        }
+        finally
+        {
+            if (cts != null)
+            {
+                try { cts.Dispose(); } catch { }
+            }
+        }
     }
 }

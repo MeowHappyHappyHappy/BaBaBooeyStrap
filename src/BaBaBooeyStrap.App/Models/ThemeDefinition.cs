@@ -8,6 +8,5 @@ public sealed record ThemeDefinition(
     double Width = 500,
     double Height = 320,
     bool AllowTransparency = false,
-    string? RawXml = null,
     bool IsCustomLayout = false
 );

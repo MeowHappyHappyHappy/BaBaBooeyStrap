@@ -1,10 +1,10 @@
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using Microsoft.Win32;
 
@@ -12,6 +12,9 @@ namespace BaBaBooeyStrap.App.Views.Pages;
 
 public partial class AboutPage : Page
 {
+    private bool _isClearingCache;
+    private bool _isExportingDiagnostics;
+
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;
 
     public AboutPage()
@@ -22,8 +25,7 @@ public partial class AboutPage : Page
     private void OpenLogs_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel == null) return;
-        Directory.CreateDirectory(ViewModel.LaunchSettings.LogsPath);
-        Process.Start(new ProcessStartInfo("explorer.exe", ViewModel.LaunchSettings.LogsPath) { UseShellExecute = true });
+        FluentDialogService.TryOpenFolderInExplorer(ViewModel.LaunchSettings.LogsPath, Window.GetWindow(this));
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
@@ -76,6 +78,7 @@ public partial class AboutPage : Page
         }
         catch (Exception ex)
         {
+            Logger.ExceptionStatic("AboutPage.CheckUpdates_Click", ex);
             ViewModel.LaunchSettings.SetAppUpdateStatus("Str_About_UpdateCheckFailedFormat", ex.Message);
         }
         finally
@@ -113,32 +116,44 @@ public partial class AboutPage : Page
         }
     }
 
-    private void ClearCacheImmediate_Click(object sender, RoutedEventArgs e)
+    private async void ClearCacheImmediate_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null || _isClearingCache) return;
 
+        var owner = Window.GetWindow(this);
         bool confirmed = FluentDialogService.ShowConfirm(
             LocalizationService.Instance.GetString("Str_About_ClearCacheNow"),
             LocalizationService.Instance.GetString("Str_About_ClearCacheConfirm"),
             isDestructive: true,
-            owner: Window.GetWindow(this));
+            owner: owner);
         if (!confirmed) return;
+
+        var triggerControl = sender as Control;
+        _isClearingCache = true;
+        if (triggerControl != null) triggerControl.IsEnabled = false;
 
         try
         {
-            var report = DiagnosticsService.ClearAllCachesImmediate(ViewModel.AppPaths);
+            var appPaths = ViewModel.AppPaths;
+            var report = await Task.Run(() => DiagnosticsService.ClearAllCachesImmediate(appPaths)).ConfigureAwait(true);
             double freedMb = report.BytesFreed / (1024.0 * 1024.0);
             FluentDialogService.ShowInfo(
                 LocalizationService.Instance.GetString("Str_About_TroubleshootingHeader"),
                 LocalizationService.Instance.Format("Str_Behaviour_CleanerReportFormat", report.FilesDeleted, freedMb),
-                Window.GetWindow(this));
+                owner);
         }
         catch (Exception ex)
         {
+            Logger.ExceptionStatic("AboutPage.ClearCacheImmediate_Click", ex);
             FluentDialogService.ShowError(
                 LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
                 ex.Message,
-                Window.GetWindow(this));
+                owner);
+        }
+        finally
+        {
+            _isClearingCache = false;
+            if (triggerControl != null) triggerControl.IsEnabled = true;
         }
     }
 
@@ -166,10 +181,11 @@ public partial class AboutPage : Page
         }
     }
 
-    private void ExportDiagnostics_Click(object sender, RoutedEventArgs e)
+    private async void ExportDiagnostics_Click(object sender, RoutedEventArgs e)
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null || _isExportingDiagnostics) return;
 
+        var owner = Window.GetWindow(this);
         var dlg = new SaveFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_About_ExportDiagnostics"),
@@ -177,40 +193,54 @@ public partial class AboutPage : Page
             FileName = $"BaBaBooeyStrap_Diagnostics_{DateTime.Now:yyyyMMdd_HHmmss}.zip"
         };
 
-        if (dlg.ShowDialog() != true) return;
+        if ((owner != null ? dlg.ShowDialog(owner) : dlg.ShowDialog()) != true) return;
+
+        var triggerControl = sender as Control;
+        _isExportingDiagnostics = true;
+        if (triggerControl != null) triggerControl.IsEnabled = false;
 
         try
         {
-            DiagnosticsService.ExportDiagnosticsZip(
-                dlg.FileName,
-                ViewModel.AppPaths,
-                ViewModel.Settings,
-                ViewModel.StateManager?.Prop ?? new State(),
-                ViewModel.RobloxStateManager?.Prop ?? new RobloxState(),
-                ViewModel.LaunchSettings.AppVersion);
+            string filePath = dlg.FileName;
+            var appPaths = ViewModel.AppPaths;
+            var settings = ViewModel.Settings;
+            var state = ViewModel.StateManager?.Prop ?? new State();
+            var robloxState = ViewModel.RobloxStateManager?.Prop ?? new RobloxState();
+            string appVersion = ViewModel.LaunchSettings.AppVersion;
+
+            await Task.Run(() => DiagnosticsService.ExportDiagnosticsZip(
+                filePath,
+                appPaths,
+                settings,
+                state,
+                robloxState,
+                appVersion)).ConfigureAwait(true);
 
             bool openFolder = FluentDialogService.ShowConfirm(
                 LocalizationService.Instance.GetString("Str_About_TroubleshootingHeader"),
-                LocalizationService.Instance.Format("Str_About_ExportDiagnosticsDoneFormat", dlg.FileName),
+                LocalizationService.Instance.Format("Str_About_ExportDiagnosticsDoneFormat", filePath),
                 confirmText: LocalizationService.Instance.GetString("Str_About_OpenFolder"),
                 cancelText: LocalizationService.Instance.GetString("Str_Common_Close"),
-                owner: Window.GetWindow(this));
+                owner: owner);
 
             if (openFolder)
             {
-                string? dir = Path.GetDirectoryName(dlg.FileName);
-                if (!string.IsNullOrWhiteSpace(dir))
-                {
-                    Process.Start(new ProcessStartInfo("explorer.exe", dir) { UseShellExecute = true });
-                }
+                string? dir = Path.GetDirectoryName(filePath);
+                FluentDialogService.TryOpenFolderInExplorer(dir, owner);
             }
         }
         catch (Exception ex)
         {
+            Logger.ExceptionStatic("AboutPage.ExportDiagnostics_Click", ex);
             FluentDialogService.ShowError(
                 LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
                 ex.Message,
-                Window.GetWindow(this));
+                owner);
+        }
+        finally
+        {
+            _isExportingDiagnostics = false;
+            if (triggerControl != null) triggerControl.IsEnabled = true;
         }
     }
 }

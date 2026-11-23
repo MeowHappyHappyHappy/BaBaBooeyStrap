@@ -58,16 +58,28 @@ public class LaunchSettings
         if (args.Length == 0) return;
 
         var flagMap = new Dictionary<string, LaunchFlag>(StringComparer.OrdinalIgnoreCase);
-        foreach (var prop in GetType().GetProperties())
-        {
-            if (prop.PropertyType == typeof(LaunchFlag) && prop.GetValue(this) is LaunchFlag flag)
-            {
-                foreach (var id in flag.Identifiers.Split(','))
-                {
-                    flagMap[id.Trim()] = flag;
-                }
-            }
-        }
+        RegisterFlag(flagMap, MenuFlag);
+        RegisterFlag(flagMap, WatcherFlag);
+        RegisterFlag(flagMap, BackgroundUpdaterFlag);
+        RegisterFlag(flagMap, QuietFlag);
+        RegisterFlag(flagMap, InstallFlag);
+        RegisterFlag(flagMap, UninstallFlag);
+        RegisterFlag(flagMap, NoLaunchFlag);
+        RegisterFlag(flagMap, TestModeFlag);
+        RegisterFlag(flagMap, NoGPUFlag);
+        RegisterFlag(flagMap, UpgradeFlag);
+        RegisterFlag(flagMap, PlayerFlag);
+        RegisterFlag(flagMap, StudioFlag);
+        RegisterFlag(flagMap, VersionFlag);
+        RegisterFlag(flagMap, ChannelFlag);
+        RegisterFlag(flagMap, ForceFlag);
+        RegisterFlag(flagMap, BloxshadeFlag);
+        RegisterFlag(flagMap, HoldFlag);
+        RegisterFlag(flagMap, AccountFlag);
+        RegisterFlag(flagMap, TargetFlag);
+        RegisterFlag(flagMap, JobIdFlag);
+        RegisterFlag(flagMap, NoHoldFlag);
+        RegisterFlag(flagMap, DetachFlag);
 
         int start = 0;
         string first = args[0];
@@ -146,21 +158,34 @@ public class LaunchSettings
                                     ReferenceEquals(targetFlag, TargetFlag) ||
                                     ReferenceEquals(targetFlag, JobIdFlag);
 
-                if (expectsValue && i < args.Length - 1 && !args[i + 1].StartsWith('-'))
+                if (expectsValue && i < args.Length - 1)
                 {
-                    targetFlag.Data = args[++i];
+                    string next = args[i + 1];
+                    if (!next.StartsWith('-') || ReferenceEquals(targetFlag, TargetFlag))
+                    {
+                        targetFlag.Data = args[++i];
+                    }
                 }
             }
         }
 
         if (PlayerFlag.Active)
         {
+            // Protocol invocations must never combine with destructive/privileged CLI modes
+            if (UninstallFlag.Active) UninstallFlag.Active = false;
+            if (InstallFlag.Active) InstallFlag.Active = false;
+            if (WatcherFlag.Active) WatcherFlag.Active = false;
+
             RobloxLaunchMode = LaunchMode.Player;
             if (!string.IsNullOrEmpty(PlayerFlag.Data))
                 RobloxLaunchArgs = PlayerFlag.Data;
         }
         else if (StudioFlag.Active)
         {
+            if (UninstallFlag.Active) UninstallFlag.Active = false;
+            if (InstallFlag.Active) InstallFlag.Active = false;
+            if (WatcherFlag.Active) WatcherFlag.Active = false;
+
             RobloxLaunchMode = LaunchMode.Studio;
             if (!string.IsNullOrEmpty(StudioFlag.Data))
             {
@@ -175,9 +200,34 @@ public class LaunchSettings
                 }
                 else
                 {
-                    RobloxLaunchArgs = $"-task EditFile -localPlaceFile \"{StudioFlag.Data}\"";
+                    string sanitizedPath = SanitizeStudioLocalPath(StudioFlag.Data);
+                    RobloxLaunchArgs = string.IsNullOrEmpty(sanitizedPath)
+                        ? string.Empty
+                        : $"-task EditFile -localPlaceFile \"{sanitizedPath}\"";
                 }
             }
         }
+    }
+
+    private static void RegisterFlag(Dictionary<string, LaunchFlag> map, LaunchFlag flag)
+    {
+        foreach (string id in flag.Identifiers.Split(','))
+        {
+            map[id.Trim()] = flag;
+        }
+    }
+
+    internal static string SanitizeStudioLocalPath(string rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawPath)) return string.Empty;
+        string trimmed = rawPath.Trim().Trim('"');
+        foreach (char ch in trimmed)
+        {
+            if (ch == '"' || char.IsControl(ch))
+            {
+                return string.Empty;
+            }
+        }
+        return trimmed;
     }
 }

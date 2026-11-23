@@ -26,39 +26,41 @@
         <ui:TitleBar Grid.Row="0" Title="{DynamicResource Str_FastFlagEditor_Title}"/>
 
         <!-- Search & Action Toolbar -->
-        <Grid Grid.Row="1" Margin="0,8,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <StackPanel Grid.Row="1" Margin="0,8,0,10">
+            <Grid Margin="0,0,0,8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-            <ui:TextBox x:Name="SearchBox"
-                        Grid.Column="0"
-                        PlaceholderText="{DynamicResource Str_FastFlagEditor_SearchPlaceholder}"
-                        Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
-                        Margin="0,0,8,0"/>
+                <ui:TextBox x:Name="SearchBox"
+                            Grid.Column="0"
+                            AutomationProperties.Name="{DynamicResource Str_FastFlagEditor_SearchPlaceholder}"
+                            PlaceholderText="{DynamicResource Str_FastFlagEditor_SearchPlaceholder}"
+                            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                            Margin="0,0,8,0"/>
 
-            <ComboBox x:Name="TypeFilterBox"
-                      Grid.Column="1"
-                      Width="130"
-                      Margin="0,0,8,0"
-                      SelectionChanged="TypeFilterBox_SelectionChanged">
-                <ComboBoxItem Tag="All" Content="{DynamicResource Str_FastFlagEditor_TypeAll}" IsSelected="True"/>
-                <ComboBoxItem Tag="Boolean" Content="{DynamicResource Str_FastFlagEditor_TypeBoolean}"/>
-                <ComboBoxItem Tag="Integer" Content="{DynamicResource Str_FastFlagEditor_TypeInteger}"/>
-                <ComboBoxItem Tag="String" Content="{DynamicResource Str_FastFlagEditor_TypeString}"/>
-                <ComboBoxItem Tag="Log" Content="{DynamicResource Str_FastFlagEditor_TypeLog}"/>
-                <ComboBoxItem Tag="Unknown" Content="{DynamicResource Str_FastFlagEditor_TypeUnknown}"/>
-            </ComboBox>
+                <ComboBox x:Name="TypeFilterBox"
+                          Grid.Column="1"
+                          AutomationProperties.Name="{DynamicResource Str_FastFlagEditor_ColType}"
+                          Width="140"
+                          SelectionChanged="TypeFilterBox_SelectionChanged">
+                    <ComboBoxItem Tag="All" Content="{DynamicResource Str_FastFlagEditor_TypeAll}" IsSelected="True"/>
+                    <ComboBoxItem Tag="Boolean" Content="{DynamicResource Str_FastFlagEditor_TypeBoolean}"/>
+                    <ComboBoxItem Tag="Integer" Content="{DynamicResource Str_FastFlagEditor_TypeInteger}"/>
+                    <ComboBoxItem Tag="String" Content="{DynamicResource Str_FastFlagEditor_TypeString}"/>
+                    <ComboBoxItem Tag="Log" Content="{DynamicResource Str_FastFlagEditor_TypeLog}"/>
+                    <ComboBoxItem Tag="Unknown" Content="{DynamicResource Str_FastFlagEditor_TypeUnknown}"/>
+                </ComboBox>
+            </Grid>
 
-            <StackPanel Grid.Column="2" Orientation="Horizontal">
+            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <ui:Button Content="{DynamicResource Str_FastFlagEditor_ImportJson}" Click="ImportJson_Click" Margin="0,0,6,0"/>
                 <ui:Button Content="{DynamicResource Str_FastFlagEditor_ExportJson}" Click="ExportJson_Click" Margin="0,0,6,0"/>
                 <ui:Button Content="{DynamicResource Str_FastFlagEditor_DeleteSelected}" Click="DeleteSelected_Click" Margin="0,0,6,0"/>
                 <ui:Button Content="{DynamicResource Str_FastFlagEditor_Clear}" Click="ClearAll_Click"/>
-            </StackPanel>
-        </Grid>
+            </WrapPanel>
+        </StackPanel>
 
         <!-- Inline Add/Edit Row -->
         <Grid Grid.Row="2" Margin="0,0,0,10">
@@ -116,13 +118,25 @@
                         </DataTemplate>
                     </DataGridTextColumn.HeaderTemplate>
                 </DataGridTextColumn>
-                <DataGridTextColumn Binding="{Binding Type}" Width="110" IsReadOnly="True">
-                    <DataGridTextColumn.HeaderTemplate>
+                <DataGridTemplateColumn Width="110" IsReadOnly="True">
+                    <DataGridTemplateColumn.HeaderTemplate>
                         <DataTemplate>
                             <TextBlock Text="{DynamicResource Str_FastFlagEditor_ColType}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
                         </DataTemplate>
-                    </DataGridTextColumn.HeaderTemplate>
-                </DataGridTextColumn>
+                    </DataGridTemplateColumn.HeaderTemplate>
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock VerticalAlignment="Center" Margin="6,0">
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{x:Static conv:LocalizedEnumMultiConverter.Instance}">
+                                        <Binding Path="Type"/>
+                                        <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
             </DataGrid.Columns>
         </ui:DataGrid>
 
@@ -134,8 +148,12 @@
                     Margin="0,0,0,8"/>
 
         <!-- Footer -->
-        <DockPanel Grid.Row="5">
-            <TextBlock VerticalAlignment="Center" Opacity="0.75">
+        <Grid Grid.Row="5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Opacity="0.75" Margin="0,0,12,0" TextTrimming="CharacterEllipsis">
                 <TextBlock.Text>
                     <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_FastFlagEditor_FooterCountFormat">
                         <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
@@ -145,10 +163,10 @@
                 </TextBlock.Text>
             </TextBlock>
 
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <ui:Button Content="{DynamicResource Str_Common_Cancel}" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="{DynamicResource Str_Common_Cancel}" IsCancel="True" Click="Cancel_Click" Margin="0,0,8,0" MinWidth="90"/>
                 <ui:Button Content="{DynamicResource Str_FastFlagEditor_SaveAndClose}" Appearance="Primary" Click="SaveAndClose_Click" MinWidth="120"/>
             </StackPanel>
-        </DockPanel>
+        </Grid>
     </Grid>
 </ui:FluentWindow>

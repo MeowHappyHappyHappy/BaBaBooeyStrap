@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using BaBaBooeyStrap.App.Models;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core;
@@ -12,7 +14,7 @@ using BaBaBooeyStrap.Integrations.Cleaner;
 
 namespace BaBaBooeyStrap.App.ViewModels.Sections;
 
-public sealed class WindowAndIntegrationsViewModel : ViewModelBase
+public sealed class WindowAndIntegrationsViewModel : ViewModelBase, IDisposable
 {
     private readonly Settings _settings;
     private readonly IPaths _paths;
@@ -22,10 +24,14 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     private string _cleanerStatusText = string.Empty;
     private string? _cleanerStatusKey;
     private object?[] _cleanerStatusArgs = Array.Empty<object?>();
+    private bool _isCleaning;
     private string _customIconWarningText = string.Empty;
     private ImageSource? _customIconPreviewImage;
     private string _customRobloxIconWarningText = string.Empty;
     private ImageSource? _customRobloxIconPreviewImage;
+    private CancellationTokenSource? _iconPreviewDebounceCts;
+    private CancellationTokenSource? _robloxIconPreviewDebounceCts;
+    private bool _disposed;
 
     public WindowAndIntegrationsViewModel(
         Settings settings,
@@ -59,13 +65,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _settings.Theme;
         set
         {
-            if (_settings.Theme != value)
-            {
-                _settings.Theme = value;
-                OnPropertyChanged();
-                ThemeChanged?.Invoke(this, value);
-            }
-            else
+            if (SetModelProperty(_settings.Theme, value, v => _settings.Theme = v))
             {
                 ThemeChanged?.Invoke(this, value);
             }
@@ -77,66 +77,42 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _settings.Language;
         set
         {
-            if (_settings.Language != value)
+            if (SetModelProperty(_settings.Language, value, v => _settings.Language = v))
             {
-                _settings.Language = value;
-                OnPropertyChanged();
+                LocalizationService.Instance.ApplyLanguage(value);
+                LanguageChanged?.Invoke(this, value);
             }
-
-            LocalizationService.Instance.ApplyLanguage(value);
-            LanguageChanged?.Invoke(this, value);
         }
     }
 
     public byte AcrylicBackgroundOpacity
     {
         get => _settings.AcrylicBackgroundOpacity;
-        set
-        {
-            if (_settings.AcrylicBackgroundOpacity != value)
-            {
-                _settings.AcrylicBackgroundOpacity = value;
-                OnPropertyChanged();
-            }
-        }
+        set => SetModelProperty(_settings.AcrylicBackgroundOpacity, value, v => _settings.AcrylicBackgroundOpacity = v);
     }
 
     public bool UseAcrylicBackground
     {
         get => _settings.UseAcrylicBackground;
-        set
-        {
-            if (_settings.UseAcrylicBackground != value)
-            {
-                _settings.UseAcrylicBackground = value;
-                OnPropertyChanged();
-            }
-        }
+        set => SetModelProperty(_settings.UseAcrylicBackground, value, v => _settings.UseAcrylicBackground = v);
     }
 
     public bool MinimizeToTray
     {
         get => _settings.MinimizeToTray;
-        set
-        {
-            if (_settings.MinimizeToTray != value)
-            {
-                _settings.MinimizeToTray = value;
-                OnPropertyChanged();
-            }
-        }
+        set => SetModelProperty(_settings.MinimizeToTray, value, v => _settings.MinimizeToTray = v);
     }
 
     public BootstrapperStyle SelectedBootstrapperStyle
     {
         get => _settings.BootstrapperStyle;
-        set { _settings.BootstrapperStyle = value; OnPropertyChanged(); }
+        set => SetModelProperty(_settings.BootstrapperStyle, value, v => _settings.BootstrapperStyle = v);
     }
 
     public string BootstrapperTitle
     {
         get => _settings.BootstrapperTitle;
-        set { _settings.BootstrapperTitle = value; OnPropertyChanged(); }
+        set => SetModelProperty(_settings.BootstrapperTitle, value, v => _settings.BootstrapperTitle = v);
     }
 
     public BootstrapperIcon SelectedBootstrapperIcon
@@ -144,10 +120,8 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _settings.BootstrapperIcon;
         set
         {
-            if (_settings.BootstrapperIcon != value)
+            if (SetModelProperty(_settings.BootstrapperIcon, value, v => _settings.BootstrapperIcon = v))
             {
-                _settings.BootstrapperIcon = value;
-                OnPropertyChanged();
                 OnPropertyChanged(nameof(IsCustomBootstrapperIconSelected));
                 RefreshCustomIconState();
             }
@@ -162,11 +136,9 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         set
         {
             string next = value ?? string.Empty;
-            if (!string.Equals(_settings.BootstrapperIconCustomLocation, next, StringComparison.Ordinal))
+            if (SetModelProperty(_settings.BootstrapperIconCustomLocation, next, v => _settings.BootstrapperIconCustomLocation = v))
             {
-                _settings.BootstrapperIconCustomLocation = next;
-                OnPropertyChanged();
-                RefreshCustomIconState();
+                ScheduleIconPreviewRefresh(ref _iconPreviewDebounceCts, RefreshCustomIconState);
             }
         }
     }
@@ -204,9 +176,10 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _settings.SelectedCustomTheme;
         set
         {
-            _settings.SelectedCustomTheme = value;
-            OnPropertyChanged();
-            UpdatePreviewTheme();
+            if (SetModelProperty(_settings.SelectedCustomTheme, value, v => _settings.SelectedCustomTheme = v))
+            {
+                UpdatePreviewTheme();
+            }
         }
     }
 
@@ -219,7 +192,7 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     public string RobloxTitle
     {
         get => _settings.RobloxTitle;
-        set { _settings.RobloxTitle = value; OnPropertyChanged(); }
+        set => SetModelProperty(_settings.RobloxTitle, value, v => _settings.RobloxTitle = v);
     }
 
     public RobloxIcon SelectedRobloxIcon
@@ -227,10 +200,8 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _settings.RobloxIcon;
         set
         {
-            if (_settings.RobloxIcon != value)
+            if (SetModelProperty(_settings.RobloxIcon, value, v => _settings.RobloxIcon = v))
             {
-                _settings.RobloxIcon = value;
-                OnPropertyChanged();
                 OnPropertyChanged(nameof(IsCustomRobloxIconSelected));
                 RefreshCustomRobloxIconState();
             }
@@ -245,11 +216,9 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         set
         {
             string next = value ?? string.Empty;
-            if (!string.Equals(_settings.RobloxIconCustomLocation, next, StringComparison.Ordinal))
+            if (SetModelProperty(_settings.RobloxIconCustomLocation, next, v => _settings.RobloxIconCustomLocation = v))
             {
-                _settings.RobloxIconCustomLocation = next;
-                OnPropertyChanged();
-                RefreshCustomRobloxIconState();
+                ScheduleIconPreviewRefresh(ref _robloxIconPreviewDebounceCts, RefreshCustomRobloxIconState);
             }
         }
     }
@@ -313,19 +282,19 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
 
     public bool IsDiscordRpcSubOptionsEnabled => EnableActivityTracking && UseDiscordRichPresence;
 
-    public DiscordRPCStatusDisplay RichPresenceStatusDisplayType { get => _settings.RichPresenceStatusDisplayType; set { _settings.RichPresenceStatusDisplayType = value; OnPropertyChanged(); } }
-    public bool HideRPCButtons { get => _settings.HideRPCButtons; set { _settings.HideRPCButtons = value; OnPropertyChanged(); } }
-    public bool ShowAccountOnRichPresence { get => _settings.ShowAccountOnRichPresence; set { _settings.ShowAccountOnRichPresence = value; OnPropertyChanged(); } }
-    public bool ShowServerDetails { get => _settings.ShowServerDetails; set { _settings.ShowServerDetails = value; OnPropertyChanged(); } }
-    public bool EnableWindowManipulation { get => _settings.EnableWindowManipulation; set { _settings.EnableWindowManipulation = value; OnPropertyChanged(); } }
-    public bool FakeBorderlessFullscreen { get => _settings.FakeBorderlessFullscreen; set { _settings.FakeBorderlessFullscreen = value; OnPropertyChanged(); } }
-    public bool EnableBetterMatchmaking { get => _settings.EnableBetterMatchmaking; set { _settings.EnableBetterMatchmaking = value; OnPropertyChanged(); } }
-    public bool EnableBetterMatchmakingRandomization { get => _settings.EnableBetterMatchmakingRandomization; set { _settings.EnableBetterMatchmakingRandomization = value; OnPropertyChanged(); } }
+    public DiscordRPCStatusDisplay RichPresenceStatusDisplayType { get => _settings.RichPresenceStatusDisplayType; set => SetModelProperty(_settings.RichPresenceStatusDisplayType, value, v => _settings.RichPresenceStatusDisplayType = v); }
+    public bool HideRPCButtons { get => _settings.HideRPCButtons; set => SetModelProperty(_settings.HideRPCButtons, value, v => _settings.HideRPCButtons = v); }
+    public bool ShowAccountOnRichPresence { get => _settings.ShowAccountOnRichPresence; set => SetModelProperty(_settings.ShowAccountOnRichPresence, value, v => _settings.ShowAccountOnRichPresence = v); }
+    public bool ShowServerDetails { get => _settings.ShowServerDetails; set => SetModelProperty(_settings.ShowServerDetails, value, v => _settings.ShowServerDetails = v); }
+    public bool EnableWindowManipulation { get => _settings.EnableWindowManipulation; set => SetModelProperty(_settings.EnableWindowManipulation, value, v => _settings.EnableWindowManipulation = v); }
+    public bool FakeBorderlessFullscreen { get => _settings.FakeBorderlessFullscreen; set => SetModelProperty(_settings.FakeBorderlessFullscreen, value, v => _settings.FakeBorderlessFullscreen = v); }
+    public bool EnableBetterMatchmaking { get => _settings.EnableBetterMatchmaking; set => SetModelProperty(_settings.EnableBetterMatchmaking, value, v => _settings.EnableBetterMatchmaking = v); }
+    public bool EnableBetterMatchmakingRandomization { get => _settings.EnableBetterMatchmakingRandomization; set => SetModelProperty(_settings.EnableBetterMatchmakingRandomization, value, v => _settings.EnableBetterMatchmakingRandomization = v); }
 
     public CleanerOptions SelectedCleanerOption
     {
         get => _settings.CleanerOptions;
-        set { _settings.CleanerOptions = value; OnPropertyChanged(); }
+        set => SetModelProperty(_settings.CleanerOptions, value, v => _settings.CleanerOptions = v);
     }
 
     public bool CleanRobloxCache
@@ -363,6 +332,20 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
         get => _cleanerStatusText;
         private set => SetProperty(ref _cleanerStatusText, value);
     }
+
+    public bool IsCleaning
+    {
+        get => _isCleaning;
+        private set
+        {
+            if (SetProperty(ref _isCleaning, value))
+            {
+                OnPropertyChanged(nameof(IsNotCleaning));
+            }
+        }
+    }
+
+    public bool IsNotCleaning => !IsCleaning;
 
     public ObservableCollection<CustomIntegration> CustomIntegrations => _settings.CustomIntegrations;
 
@@ -455,23 +438,60 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
     {
         try
         {
-            var cleaner = new CacheCleaner(_paths);
-            var policy = CleanerPolicyMapper.FromSettings(_settings);
-            var report = cleaner.ExecuteCleanup(policy);
-            double freedMb = report.BytesFreed / (1024.0 * 1024.0);
-            _cleanerStatusKey = "Str_Behaviour_CleanerReportFormat";
-            _cleanerStatusArgs = [report.FilesDeleted, freedMb];
-            CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
-            _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+            var report = ExecuteCleanerCore();
+            ApplyCleanerReport(report);
         }
         catch (Exception ex)
         {
-            Logger.ExceptionStatic("WindowAndIntegrationsViewModel.RunCleanerNow", ex);
-            _cleanerStatusKey = "Str_Behaviour_CleanerErrorFormat";
-            _cleanerStatusArgs = [ex.Message];
-            CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
-            _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+            ApplyCleanerError(ex);
         }
+    }
+
+    public async Task RunCleanerNowAsync()
+    {
+        if (IsCleaning) return;
+
+        IsCleaning = true;
+        try
+        {
+            var policy = CleanerPolicyMapper.FromSettings(_settings);
+            var cleaner = new CacheCleaner(_paths);
+            var report = await Task.Run(() => cleaner.ExecuteCleanup(policy)).ConfigureAwait(true);
+            ApplyCleanerReport(report);
+        }
+        catch (Exception ex)
+        {
+            ApplyCleanerError(ex);
+        }
+        finally
+        {
+            IsCleaning = false;
+        }
+    }
+
+    private CleanerReport ExecuteCleanerCore()
+    {
+        var cleaner = new CacheCleaner(_paths);
+        var policy = CleanerPolicyMapper.FromSettings(_settings);
+        return cleaner.ExecuteCleanup(policy);
+    }
+
+    private void ApplyCleanerReport(CleanerReport report)
+    {
+        double freedMb = report.BytesFreed / (1024.0 * 1024.0);
+        _cleanerStatusKey = "Str_Behaviour_CleanerReportFormat";
+        _cleanerStatusArgs = [report.FilesDeleted, freedMb];
+        CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
+        _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
+    }
+
+    private void ApplyCleanerError(Exception ex)
+    {
+        Logger.ExceptionStatic("WindowAndIntegrationsViewModel.RunCleanerNow", ex);
+        _cleanerStatusKey = "Str_Behaviour_CleanerErrorFormat";
+        _cleanerStatusArgs = [ex.Message];
+        CleanerStatusText = LocalizedFormatHelper.Format(_cleanerStatusKey, _cleanerStatusArgs);
+        _setLocalizedStatus(_cleanerStatusKey, _cleanerStatusArgs);
     }
 
     public void RefreshLocalizedProperties()
@@ -487,64 +507,41 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
 
     private void RefreshCustomRobloxIconState()
     {
-        if (!IsCustomRobloxIconSelected || string.IsNullOrWhiteSpace(RobloxIconCustomLocation))
-        {
-            CustomRobloxIconPreviewImage = null;
-            CustomRobloxIconWarningText = string.Empty;
-            return;
-        }
-
-        string path = RobloxIconCustomLocation.Trim();
-        if (!File.Exists(path))
-        {
-            CustomRobloxIconPreviewImage = null;
-            CustomRobloxIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconNotFound");
-            return;
-        }
-
-        string ext = Path.GetExtension(path);
-        if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".dll", StringComparison.OrdinalIgnoreCase))
-        {
-            CustomRobloxIconPreviewImage = IconResolver.ResolveImageSource(BootstrapperIcon.IconCustom, path);
-            CustomRobloxIconWarningText = string.Empty;
-            return;
-        }
-
-        try
-        {
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.UriSource = new Uri(Path.GetFullPath(path), UriKind.Absolute);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.DecodePixelWidth = 32;
-            bitmap.EndInit();
-            bitmap.Freeze();
-
-            CustomRobloxIconPreviewImage = bitmap;
-            CustomRobloxIconWarningText = string.Empty;
-        }
-        catch
-        {
-            CustomRobloxIconPreviewImage = null;
-            CustomRobloxIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconInvalid");
-        }
+        var (img, warn) = ResolveIconPreview(IsCustomRobloxIconSelected, RobloxIconCustomLocation, allowPeResources: true);
+        CustomRobloxIconPreviewImage = img;
+        CustomRobloxIconWarningText = warn;
     }
 
     private void RefreshCustomIconState()
     {
-        if (!IsCustomBootstrapperIconSelected || string.IsNullOrWhiteSpace(BootstrapperIconCustomLocation))
+        var (img, warn) = ResolveIconPreview(IsCustomBootstrapperIconSelected, BootstrapperIconCustomLocation, allowPeResources: false);
+        CustomIconPreviewImage = img;
+        CustomIconWarningText = warn;
+    }
+
+    private static (ImageSource? Image, string Warning) ResolveIconPreview(
+        bool isSelected,
+        string? rawLocation,
+        bool allowPeResources)
+    {
+        if (!isSelected || string.IsNullOrWhiteSpace(rawLocation))
         {
-            CustomIconPreviewImage = null;
-            CustomIconWarningText = string.Empty;
-            return;
+            return (null, string.Empty);
         }
 
-        string path = BootstrapperIconCustomLocation.Trim();
+        string path = rawLocation.Trim();
         if (!File.Exists(path))
         {
-            CustomIconPreviewImage = null;
-            CustomIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconNotFound");
-            return;
+            return (null, LocalizationService.Instance.GetString("Str_Appearance_CustomIconNotFound"));
+        }
+
+        if (allowPeResources)
+        {
+            string ext = Path.GetExtension(path);
+            if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".dll", StringComparison.OrdinalIgnoreCase))
+            {
+                return (IconResolver.ResolveImageSource(BootstrapperIcon.IconCustom, path), string.Empty);
+            }
         }
 
         try
@@ -557,14 +554,56 @@ public sealed class WindowAndIntegrationsViewModel : ViewModelBase
             bitmap.EndInit();
             bitmap.Freeze();
 
-            CustomIconPreviewImage = bitmap;
-            CustomIconWarningText = string.Empty;
+            return (bitmap, string.Empty);
         }
         catch
         {
-            CustomIconPreviewImage = null;
-            CustomIconWarningText = LocalizationService.Instance.GetString("Str_Appearance_CustomIconInvalid");
+            return (null, LocalizationService.Instance.GetString("Str_Appearance_CustomIconInvalid"));
         }
+    }
+
+    private void ScheduleIconPreviewRefresh(ref CancellationTokenSource? ctsSlot, Action refreshAction)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (_disposed || dispatcher == null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
+        {
+            refreshAction();
+            return;
+        }
+
+        var oldCts = Interlocked.Exchange(ref ctsSlot, new CancellationTokenSource());
+        try { oldCts?.Cancel(); } catch { }
+        try { oldCts?.Dispose(); } catch { }
+
+        var token = ctsSlot!.Token;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(150, token).ConfigureAwait(false);
+                if (!token.IsCancellationRequested && !dispatcher.HasShutdownStarted && !dispatcher.HasShutdownFinished)
+                {
+                    await dispatcher.InvokeAsync(refreshAction, DispatcherPriority.Background);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, CancellationToken.None);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        var c1 = Interlocked.Exchange(ref _iconPreviewDebounceCts, null);
+        try { c1?.Cancel(); } catch { }
+        try { c1?.Dispose(); } catch { }
+
+        var c2 = Interlocked.Exchange(ref _robloxIconPreviewDebounceCts, null);
+        try { c2?.Cancel(); } catch { }
+        try { c2?.Dispose(); } catch { }
     }
 
     private bool HasCleanerDir(string key) =>

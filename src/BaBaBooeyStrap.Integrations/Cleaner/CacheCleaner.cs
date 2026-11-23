@@ -72,18 +72,14 @@ public sealed class CacheCleaner : ICleaner
                 ExcludeDmpFiles: !policy.CleanCrashDumps));
         }
 
-        if (policy.CleanCrashDumps)
+        if (policy.CleanCrashDumps && !policy.CleanLogs)
         {
             string crashesDir = Path.Combine(_paths.RobloxLogs, "crashes");
             specs.Add(new TargetSpec(crashesDir, _paths.Roblox));
-
-            if (!policy.CleanLogs)
-            {
-                specs.Add(new TargetSpec(
-                    _paths.RobloxLogs,
-                    _paths.Roblox,
-                    OnlyExtension: ".dmp"));
-            }
+            specs.Add(new TargetSpec(
+                _paths.RobloxLogs,
+                _paths.Roblox,
+                OnlyExtension: ".dmp"));
         }
 
         if (policy.CleanLauncherLogs)
@@ -205,6 +201,7 @@ public sealed class CacheCleaner : ICleaner
             {
                 try
                 {
+                    file.Refresh();
                     if (!file.Exists) continue;
                     long len = file.Length;
                     totalRemainingBytes += len;
@@ -240,9 +237,14 @@ public sealed class CacheCleaner : ICleaner
         // Phase 3: Empty Subdirectory Pruning (never deletes target root itself)
         foreach (var spec in safeSpecs)
         {
+            if (spec.OnlyExtension != null || spec.ExcludeSubdirectory != null)
+            {
+                continue;
+            }
+
             string fullTarget = PathSafetyValidator.NormalizePath(spec.TargetDirectory);
             if (!Directory.Exists(fullTarget)) continue;
-            PruneEmptySubdirectories(fullTarget, spec.ExcludeSubdirectory);
+            PruneEmptySubdirectories(fullTarget);
         }
 
         return new CleanerReport(filesDeleted, bytesFreed, errors);
@@ -349,6 +351,7 @@ public sealed class CacheCleaner : ICleaner
 
         try
         {
+            file.Refresh();
             if (!file.Exists) return false;
             size = file.Length;
 
@@ -387,44 +390,61 @@ public sealed class CacheCleaner : ICleaner
         }
     }
 
-    private static void PruneEmptySubdirectories(string rootDir, string? excludeSubdir)
+    private static void PruneEmptySubdirectories(string rootDir)
     {
-        string? normalizedExclude = !string.IsNullOrWhiteSpace(excludeSubdir)
-            ? PathSafetyValidator.NormalizePath(excludeSubdir)
-            : null;
-
         try
         {
             var rootInfo = new DirectoryInfo(rootDir);
-            foreach (var child in rootInfo.GetDirectories())
-            {
-                PruneRecursive(child, normalizedExclude);
-            }
-        }
-        catch { }
-    }
-
-    private static void PruneRecursive(DirectoryInfo dir, string? normalizedExclude)
-    {
-        try
-        {
-            if ((dir.Attributes & FileAttributes.ReparsePoint) != 0) return;
-
-            string full = PathSafetyValidator.NormalizePath(dir.FullName);
-            if (normalizedExclude != null &&
-                string.Equals(full, normalizedExclude, StringComparison.OrdinalIgnoreCase))
+            if (!rootInfo.Exists || (rootInfo.Attributes & FileAttributes.ReparsePoint) != 0)
             {
                 return;
             }
 
-            foreach (var sub in dir.GetDirectories())
+            var walk = new Stack<DirectoryInfo>();
+            var candidates = new Stack<DirectoryInfo>();
+
+            foreach (var child in rootInfo.GetDirectories())
             {
-                PruneRecursive(sub, normalizedExclude);
+                if ((child.Attributes & FileAttributes.ReparsePoint) == 0)
+                {
+                    walk.Push(child);
+                }
             }
 
-            if (dir.GetFiles().Length == 0 && dir.GetDirectories().Length == 0)
+            while (walk.Count > 0)
             {
-                dir.Delete(recursive: false);
+                var current = walk.Pop();
+                if ((current.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    continue;
+                }
+
+                candidates.Push(current);
+
+                try
+                {
+                    foreach (var sub in current.GetDirectories())
+                    {
+                        if ((sub.Attributes & FileAttributes.ReparsePoint) == 0)
+                        {
+                            walk.Push(sub);
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            while (candidates.Count > 0)
+            {
+                var dir = candidates.Pop();
+                try
+                {
+                    if (dir.GetFiles().Length == 0 && dir.GetDirectories().Length == 0)
+                    {
+                        dir.Delete(recursive: false);
+                    }
+                }
+                catch { }
             }
         }
         catch { }

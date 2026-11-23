@@ -13,7 +13,7 @@ internal class ShellLink;
 [Guid("000214F9-0000-0000-C000-000000000046")]
 internal interface IShellLinkW
 {
-    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, out nint pfd, uint fFlags);
+    void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cchMaxPath, nint pfd, uint fFlags);
     void GetIDList(out nint ppidl);
     void SetIDList(nint pidl);
     void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cchMaxName);
@@ -43,7 +43,7 @@ internal interface IPersistFile
     void Load([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, uint dwMode);
     void Save([MarshalAs(UnmanagedType.LPWStr)] string? pszFileName, [MarshalAs(UnmanagedType.Bool)] bool fRemember);
     void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string pszFileName);
-    void GetCurFile([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder ppszFileName);
+    void GetCurFile(out nint ppszFileName);
 }
 
 public static class WindowsShortcut
@@ -57,21 +57,40 @@ public static class WindowsShortcut
         string? iconPath = null,
         int iconIndex = 0)
     {
-        var link = (IShellLinkW)new ShellLink();
-        link.SetPath(targetPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shortcutPath);
 
-        if (!string.IsNullOrEmpty(arguments)) link.SetArguments(arguments);
-        if (!string.IsNullOrEmpty(workingDirectory)) link.SetWorkingDirectory(workingDirectory);
-        if (!string.IsNullOrEmpty(description)) link.SetDescription(description);
-        if (!string.IsNullOrEmpty(iconPath)) link.SetIconLocation(iconPath, iconIndex);
-
-        var persistFile = (IPersistFile)link;
-        var dir = Path.GetDirectoryName(shortcutPath);
-        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+        IShellLinkW? link = null;
+        IPersistFile? persistFile = null;
+        try
         {
-            Directory.CreateDirectory(dir);
-        }
+            link = (IShellLinkW)new ShellLink();
+            link.SetPath(targetPath);
 
-        persistFile.Save(shortcutPath, true);
+            if (!string.IsNullOrEmpty(arguments)) link.SetArguments(arguments);
+            if (!string.IsNullOrEmpty(workingDirectory)) link.SetWorkingDirectory(workingDirectory);
+            if (!string.IsNullOrEmpty(description)) link.SetDescription(description);
+            if (!string.IsNullOrEmpty(iconPath)) link.SetIconLocation(iconPath, iconIndex);
+
+            persistFile = (IPersistFile)link;
+            var dir = Path.GetDirectoryName(shortcutPath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            persistFile.Save(shortcutPath, true);
+        }
+        finally
+        {
+            if (persistFile != null && Marshal.IsComObject(persistFile))
+            {
+                Marshal.FinalReleaseComObject(persistFile);
+            }
+            if (link != null && Marshal.IsComObject(link))
+            {
+                Marshal.FinalReleaseComObject(link);
+            }
+        }
     }
 }

@@ -26,8 +26,65 @@ public sealed class JoinTargetStore : IJoinTargetStore
 
     public IReadOnlyList<SavedJoinTarget> LoadAll()
     {
-        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        using var fileLock = CrossProcessFileLock.Acquire(FilePath);
+        return LoadAllUnlocked(out _);
+    }
 
+    public void SaveAll(IEnumerable<SavedJoinTarget> targets)
+    {
+        ArgumentNullException.ThrowIfNull(targets);
+
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        SaveAllUnlocked(targets.ToList());
+    }
+
+    public void Upsert(SavedJoinTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        var list = LoadAllUnlocked(out bool hadCorruptError).ToList();
+        if (hadCorruptError)
+        {
+            throw new InvalidOperationException(
+                $"Refusing to modify join targets store because '{FilePath}' failed to load: {LastLoadError}");
+        }
+
+        var index = list.FindIndex(t => t.Id == target.Id);
+        if (index >= 0)
+        {
+            list[index] = target;
+        }
+        else
+        {
+            list.Add(target);
+        }
+
+        SaveAllUnlocked(list);
+    }
+
+    public bool Delete(Guid id)
+    {
+        using var _ = CrossProcessFileLock.Acquire(FilePath);
+        var list = LoadAllUnlocked(out bool hadCorruptError).ToList();
+        if (hadCorruptError)
+        {
+            throw new InvalidOperationException(
+                $"Refusing to delete from join targets store because '{FilePath}' failed to load: {LastLoadError}");
+        }
+
+        var removed = list.RemoveAll(t => t.Id == id) > 0;
+        if (removed)
+        {
+            SaveAllUnlocked(list);
+        }
+
+        return removed;
+    }
+
+    private IReadOnlyList<SavedJoinTarget> LoadAllUnlocked(out bool hadCorruptError)
+    {
+        hadCorruptError = false;
         if (!File.Exists(FilePath))
         {
             return [];
@@ -64,63 +121,44 @@ public sealed class JoinTargetStore : IJoinTargetStore
         }
         catch (JsonException ex)
         {
+            hadCorruptError = true;
             LastLoadError = ex.Message;
-            string backupPath = $"{FilePath}.corrupted.{DateTime.UtcNow:yyyyMMddHHmmss}.bak";
-            try
+            string? backupPath = BackupCorruptedFile(FilePath);
+            if (!string.IsNullOrWhiteSpace(backupPath))
             {
-                if (File.Exists(FilePath))
-                {
-                    File.Move(FilePath, backupPath, overwrite: true);
-                }
+                OnCorruptionRecovered?.Invoke(backupPath);
             }
-            catch
-            {
-                try { File.Copy(FilePath, backupPath, overwrite: true); } catch { }
-            }
-            OnCorruptionRecovered?.Invoke(backupPath);
             return [];
         }
     }
 
-    public void SaveAll(IEnumerable<SavedJoinTarget> targets)
+    private void SaveAllUnlocked(List<SavedJoinTarget> list)
     {
-        ArgumentNullException.ThrowIfNull(targets);
-
-        using var _ = CrossProcessFileLock.Acquire(FilePath);
-        var list = targets.ToList();
         var json = JsonSerializer.Serialize(list, JsonOptions);
         CrossProcessFileLock.AtomicWrite(FilePath, tempPath => File.WriteAllText(tempPath, json));
     }
 
-    public void Upsert(SavedJoinTarget target)
+    private static string? BackupCorruptedFile(string filePath)
     {
-        ArgumentNullException.ThrowIfNull(target);
-
-        using var _ = CrossProcessFileLock.Acquire(FilePath);
-        var list = LoadAll().ToList();
-        var index = list.FindIndex(t => t.Id == target.Id);
-        if (index >= 0)
+        string uniqueSuffix = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}_{Guid.NewGuid().ToString("N")[..8]}";
+        string backupPath = $"{filePath}.corrupted.{uniqueSuffix}.bak";
+        try
         {
-            list[index] = target;
+            if (!File.Exists(filePath)) return null;
+            File.Move(filePath, backupPath, overwrite: false);
+            return File.Exists(backupPath) ? backupPath : null;
         }
-        else
+        catch
         {
-            list.Add(target);
+            try
+            {
+                File.Copy(filePath, backupPath, overwrite: false);
+                return File.Exists(backupPath) ? backupPath : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
-
-        SaveAll(list);
-    }
-
-    public bool Delete(Guid id)
-    {
-        using var _ = CrossProcessFileLock.Acquire(FilePath);
-        var list = LoadAll().ToList();
-        var removed = list.RemoveAll(t => t.Id == id) > 0;
-        if (removed)
-        {
-            SaveAll(list);
-        }
-
-        return removed;
     }
 }

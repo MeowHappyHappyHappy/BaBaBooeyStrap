@@ -6,6 +6,7 @@ using BaBaBooeyStrap.Bootstrapper.FastFlags;
 using BaBaBooeyStrap.Bootstrapper.Settings;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Launch;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Storage;
 using BaBaBooeyStrap.MultiInstance;
@@ -13,7 +14,7 @@ using BaBaBooeyStrap.MultiInstance.Abstractions;
 
 namespace BaBaBooeyStrap.App.ViewModels;
 
-public class MainWindowViewModel : ViewModelBase
+public class MainWindowViewModel : ViewModelBase, IDisposable
 {
     private readonly Settings _settings;
     private readonly IPaths _paths;
@@ -134,20 +135,32 @@ public class MainWindowViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(manager);
         FastFlags.ApplyFastFlagPresets();
+
+        string? secondaryWarning = null;
         if (LaunchSettings.HasUnsavedGlobalSettings)
         {
             try
             {
                 LaunchSettings.SaveGlobalSettings();
             }
-            catch
+            catch (Exception ex)
             {
-                // Keep general settings persistence resilient even if Roblox settings path is locked
+                Logger.ExceptionStatic("MainWindowViewModel.SaveSettings.GlobalSettings", ex);
+                secondaryWarning = ex.Message;
             }
         }
 
         manager.Save();
-        try { LaunchSettings.SyncRunOnStartupRegistry(); } catch { }
+        try
+        {
+            LaunchSettings.SyncRunOnStartupRegistry();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("MainWindowViewModel.SaveSettings.StartupRegistry", ex);
+            secondaryWarning ??= ex.Message;
+        }
+
         if (_stateManager != null)
         {
             AccountManagement.PersistLastTargetState();
@@ -156,7 +169,14 @@ public class MainWindowViewModel : ViewModelBase
 
         HasUnsavedChanges = false;
         _switcherCoordinator?.ReloadSettings();
-        SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
+        if (!string.IsNullOrEmpty(secondaryWarning))
+        {
+            SetLocalizedStatus("Str_MainWindow_StatusSavedWithWarningFormat", secondaryWarning);
+        }
+        else
+        {
+            SetLocalizedStatus("Str_MainWindow_StatusSavedAt", DateTime.Now.ToString("HH:mm:ss"));
+        }
     }
 
     public void DiscardChanges(IJsonManager<Settings>? manager = null)
@@ -328,6 +348,18 @@ public class MainWindowViewModel : ViewModelBase
         LocalizationService.Instance.LanguageChanged -= _languageChangedHandler;
     }
 
+    public void Dispose()
+    {
+        DetachLocalization();
+        LaunchSettings.PropertyChanged -= OnLaunchSettingsPropertyChanged;
+        FastFlags.PropertyChanged -= OnFastFlagsPropertyChanged;
+        WindowIntegrations.PropertyChanged -= OnWindowIntegrationsPropertyChanged;
+        AccountManagement.PropertyChanged -= OnAccountManagementPropertyChanged;
+        WindowIntegrations.Dispose();
+        AccountManagement.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
     internal void SetLocalizedStatus(string key, params object?[] args)
     {
         _statusMessageKey = key;
@@ -344,17 +376,30 @@ public class MainWindowViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(state);
 
-        double width = double.IsFinite(state.Width) && state.Width is >= 640 and <= 3840 ? state.Width : 1040;
-        double height = double.IsFinite(state.Height) && state.Height is >= 480 and <= 2160 ? state.Height : 680;
+        double safeVirtualWidth = double.IsFinite(virtualWidth) && virtualWidth > 0 ? virtualWidth : 1040;
+        double safeVirtualHeight = double.IsFinite(virtualHeight) && virtualHeight > 0 ? virtualHeight : 680;
+        double safeVirtualLeft = double.IsFinite(virtualLeft) ? virtualLeft : 0;
+        double safeVirtualTop = double.IsFinite(virtualTop) ? virtualTop : 0;
 
-        double maxLeft = Math.Max(virtualLeft, virtualLeft + virtualWidth - width);
-        double maxTop = Math.Max(virtualTop, virtualTop + virtualHeight - height);
+        double maxWidth = Math.Min(3840, safeVirtualWidth);
+        double maxHeight = Math.Min(2160, safeVirtualHeight);
+        double minWidth = Math.Min(640, maxWidth);
+        double minHeight = Math.Min(480, maxHeight);
 
-        double rawLeft = double.IsFinite(state.Left) ? state.Left : virtualLeft;
-        double rawTop = double.IsFinite(state.Top) ? state.Top : virtualTop;
+        double rawWidth = double.IsFinite(state.Width) && state.Width is >= 640 and <= 3840 ? state.Width : 1040;
+        double rawHeight = double.IsFinite(state.Height) && state.Height is >= 480 and <= 2160 ? state.Height : 680;
 
-        double left = Math.Clamp(rawLeft, virtualLeft, maxLeft);
-        double top = Math.Clamp(rawTop, virtualTop, maxTop);
+        double width = Math.Clamp(rawWidth, minWidth, maxWidth);
+        double height = Math.Clamp(rawHeight, minHeight, maxHeight);
+
+        double maxLeft = Math.Max(safeVirtualLeft, safeVirtualLeft + safeVirtualWidth - width);
+        double maxTop = Math.Max(safeVirtualTop, safeVirtualTop + safeVirtualHeight - height);
+
+        double rawLeft = double.IsFinite(state.Left) ? state.Left : safeVirtualLeft;
+        double rawTop = double.IsFinite(state.Top) ? state.Top : safeVirtualTop;
+
+        double left = Math.Clamp(rawLeft, safeVirtualLeft, maxLeft);
+        double top = Math.Clamp(rawTop, safeVirtualTop, maxTop);
 
         return new Core.Models.WindowState
         {

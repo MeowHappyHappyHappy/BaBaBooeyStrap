@@ -1,9 +1,10 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using System.Xml;
 using System.Xml.Linq;
-using System.Xml.XPath;
 using BaBaBooeyStrap.Core;
 using BaBaBooeyStrap.Core.Models;
+using BaBaBooeyStrap.Core.Storage;
 
 namespace BaBaBooeyStrap.Bootstrapper.Settings;
 
@@ -51,6 +52,20 @@ public class GlobalSettingsManager : IGlobalSettingsManager
     private const string PropertiesXPath = "//Item/Properties";
     private readonly string _filePath;
     private XDocument? _document;
+
+    private static XDocument LoadXmlSafely(string xmlPath, LoadOptions loadOptions = LoadOptions.None)
+    {
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersInDocument = 5_000_000
+        };
+
+        using var stream = new FileStream(xmlPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = XmlReader.Create(stream, settings);
+        return XDocument.Load(reader, loadOptions);
+    }
 
     public bool Loaded => _document != null;
     public string FilePath => _filePath;
@@ -166,61 +181,32 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         EnsureTemplateExists();
         try
         {
-            _document = XDocument.Load(_filePath);
+            _document = LoadXmlSafely(_filePath);
         }
-        catch (System.Xml.XmlException)
+        catch (XmlException)
         {
             string backup = $"{_filePath}.corrupted.{DateTime.UtcNow:yyyyMMdd_HHmmss}.bak";
             try { File.Copy(_filePath, backup, true); } catch { }
             EnsureConfigured(_filePath, 60, overwrite: true);
-            _document = XDocument.Load(_filePath);
+            _document = LoadXmlSafely(_filePath);
         }
     }
 
     public void Save()
     {
         if (_document == null) return;
-
-        if (!File.Exists(_filePath))
-        {
-            _document.Save(_filePath);
-            return;
-        }
-
-        FileAttributes originalAttrs = File.GetAttributes(_filePath);
-        FileAttributes writableAttrs = originalAttrs & ~(FileAttributes.ReadOnly | FileAttributes.Hidden);
-        if (writableAttrs == 0)
-        {
-            writableAttrs = FileAttributes.Normal;
-        }
-
-        try
-        {
-            if (writableAttrs != originalAttrs)
-            {
-                File.SetAttributes(_filePath, writableAttrs);
-            }
-
-            _document.Save(_filePath);
-        }
-        finally
-        {
-            if (File.Exists(_filePath) && originalAttrs != writableAttrs)
-            {
-                File.SetAttributes(_filePath, originalAttrs);
-            }
-        }
+        ExecuteWithWritableFile(tempPath => _document.Save(tempPath));
     }
 
     public string? GetValue(string xpath)
     {
-        return _document?.XPathSelectElement(xpath)?.Value;
+        return FindElementByXPath(_document, xpath)?.Value;
     }
 
     public void SetValue(string xpath, object? value)
     {
         if (_document == null) Load();
-        var element = _document?.XPathSelectElement(xpath);
+        var element = FindElementByXPath(_document, xpath);
         if (element != null)
         {
             element.Value = value?.ToString() ?? string.Empty;
@@ -228,7 +214,7 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         else
         {
             var props = GetOrCreatePropertiesElement();
-            if (props != null && TryParseXPathForElement(xpath, out string tagName, out string attrName))
+            if (props != null && TryParseXPathForElement(xpath, out string tagName, out string attrName) && tagName != "*")
             {
                 var newElement = new XElement(tagName, new XAttribute("name", attrName), value?.ToString() ?? string.Empty);
                 props.Add(newElement);
@@ -243,7 +229,8 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         var element = props?
             .Elements()
             .FirstOrDefault(e => string.Equals((string?)e.Attribute("name"), attrName, StringComparison.Ordinal))
-            ?? _document?.XPathSelectElement($"//*[@name='{attrName}']");
+            ?? _document?.Descendants()
+                .FirstOrDefault(e => string.Equals((string?)e.Attribute("name"), attrName, StringComparison.Ordinal));
 
         string text = value?.ToString() ?? string.Empty;
         if (element != null)
@@ -265,7 +252,8 @@ public class GlobalSettingsManager : IGlobalSettingsManager
     private void SetVector2Values(string propertyName, string xValue, string yValue)
     {
         if (_document == null) Load();
-        var elem = _document?.XPathSelectElement($"//Vector2[@name='{propertyName}']");
+        var elem = _document?.Descendants("Vector2")
+            .FirstOrDefault(e => string.Equals((string?)e.Attribute("name"), propertyName, StringComparison.Ordinal));
         if (elem == null)
         {
             var props = GetOrCreatePropertiesElement();
@@ -290,7 +278,9 @@ public class GlobalSettingsManager : IGlobalSettingsManager
     private XElement? GetOrCreatePropertiesElement()
     {
         if (_document == null) return null;
-        var props = _document.XPathSelectElement(PropertiesXPath);
+        var props = _document.Descendants("Item")
+            .Select(item => item.Element("Properties"))
+            .FirstOrDefault(p => p != null);
         if (props == null)
         {
             var item = _document.Root?.Element("Item");
@@ -384,7 +374,7 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         }
 
         var doc = File.Exists(_filePath)
-            ? XDocument.Load(_filePath, LoadOptions.PreserveWhitespace)
+            ? LoadXmlSafely(_filePath, LoadOptions.PreserveWhitespace)
             : CreateMinimalProfileDocument();
 
         var propertiesElement = doc.Descendants("Properties").FirstOrDefault();
@@ -449,6 +439,8 @@ public class GlobalSettingsManager : IGlobalSettingsManager
 
     private void ExecuteWithWritableFile(Action<string> writeTempFile)
     {
+        using var fileLock = CrossProcessFileLock.Acquire(_filePath);
+
         var dir = Path.GetDirectoryName(_filePath);
         if (!string.IsNullOrWhiteSpace(dir))
         {
@@ -463,33 +455,25 @@ public class GlobalSettingsManager : IGlobalSettingsManager
             writableAttrs = FileAttributes.Normal;
         }
 
-        var tempPath = $"{_filePath}.{Guid.NewGuid():N}.tmp";
         try
         {
-            writeTempFile(tempPath);
-
             if (existed && writableAttrs != originalAttrs)
             {
                 File.SetAttributes(_filePath, writableAttrs);
             }
 
-            File.Move(tempPath, _filePath, overwrite: true);
+            CrossProcessFileLock.AtomicWrite(_filePath, writeTempFile);
         }
         finally
         {
             try
             {
-                if (File.Exists(tempPath))
+                if (existed && File.Exists(_filePath) && originalAttrs != writableAttrs)
                 {
-                    File.Delete(tempPath);
+                    File.SetAttributes(_filePath, originalAttrs);
                 }
             }
             catch { }
-
-            if (existed && File.Exists(_filePath) && originalAttrs != writableAttrs)
-            {
-                File.SetAttributes(_filePath, originalAttrs);
-            }
         }
     }
 
@@ -502,7 +486,7 @@ public class GlobalSettingsManager : IGlobalSettingsManager
 
         try
         {
-            _document = XDocument.Load(_filePath);
+            _document = LoadXmlSafely(_filePath);
         }
         catch
         {
@@ -559,6 +543,7 @@ public class GlobalSettingsManager : IGlobalSettingsManager
 
     public static void SetFramerateCap(string xmlPath, int fpsCap, bool lockReadOnly = false)
     {
+        using var fileLock = CrossProcessFileLock.Acquire(xmlPath);
         int clampedFps = Math.Clamp(fpsCap, 0, 1000);
 
         if (!File.Exists(xmlPath))
@@ -583,13 +568,12 @@ public class GlobalSettingsManager : IGlobalSettingsManager
             File.SetAttributes(xmlPath, writableAttrs);
         }
 
-        string tempPath = $"{xmlPath}.{Guid.NewGuid():N}.tmp";
         try
         {
             // Check for file locking (FileShare.None)
             using (var testLock = new FileStream(xmlPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
 
-            var doc = XDocument.Load(xmlPath);
+            var doc = LoadXmlSafely(xmlPath);
             var props = doc.Root?.Element("Item")?.Element("Properties");
             if (props == null)
             {
@@ -600,20 +584,20 @@ public class GlobalSettingsManager : IGlobalSettingsManager
                 props = item.Element("Properties");
             }
 
-            var capElem = props?.XPathSelectElement("int[@name='FramerateCap']");
+            var capElem = props?.Elements("int")
+                .FirstOrDefault(e => string.Equals((string?)e.Attribute("name"), "FramerateCap", StringComparison.Ordinal));
             if (capElem == null)
             {
                 props?.Add(new XElement("int", new XAttribute("name", "FramerateCap"), clampedFps));
             }
             else
             {
-                capElem.Value = clampedFps.ToString();
+                capElem.Value = clampedFps.ToString(CultureInfo.InvariantCulture);
             }
 
-            doc.Save(tempPath);
-            File.Move(tempPath, xmlPath, overwrite: true);
+            CrossProcessFileLock.AtomicWrite(xmlPath, tempPath => doc.Save(tempPath));
         }
-        catch (System.Xml.XmlException)
+        catch (XmlException)
         {
             string backup = $"{xmlPath}.corrupted.{DateTime.UtcNow:yyyyMMdd_HHmmss}.bak";
             try { File.Copy(xmlPath, backup, true); } catch { }
@@ -623,30 +607,26 @@ public class GlobalSettingsManager : IGlobalSettingsManager
         {
             try
             {
-                if (File.Exists(tempPath))
+                if (File.Exists(xmlPath))
                 {
-                    File.Delete(tempPath);
+                    FileAttributes finalAttrs = originalAttrs;
+                    if (lockReadOnly)
+                    {
+                        finalAttrs |= FileAttributes.ReadOnly;
+                    }
+                    if (finalAttrs != writableAttrs)
+                    {
+                        File.SetAttributes(xmlPath, finalAttrs);
+                    }
                 }
             }
             catch { }
-
-            if (File.Exists(xmlPath))
-            {
-                FileAttributes finalAttrs = originalAttrs;
-                if (lockReadOnly)
-                {
-                    finalAttrs |= FileAttributes.ReadOnly;
-                }
-                if (finalAttrs != writableAttrs)
-                {
-                    File.SetAttributes(xmlPath, finalAttrs);
-                }
-            }
         }
     }
 
     public static void EnsureConfigured(string xmlPath, int defaultFps, bool overwrite = false)
     {
+        using var fileLock = CrossProcessFileLock.Acquire(xmlPath);
         if (File.Exists(xmlPath) && !overwrite) return;
 
         string? dir = Path.GetDirectoryName(xmlPath);
@@ -669,14 +649,50 @@ public class GlobalSettingsManager : IGlobalSettingsManager
                 )
             )
         );
-        doc.Save(xmlPath);
+
+        if (File.Exists(xmlPath))
+        {
+            FileAttributes attrs = File.GetAttributes(xmlPath);
+            if ((attrs & (FileAttributes.ReadOnly | FileAttributes.Hidden)) != 0)
+            {
+                FileAttributes clean = attrs & ~(FileAttributes.ReadOnly | FileAttributes.Hidden);
+                File.SetAttributes(xmlPath, clean == 0 ? FileAttributes.Normal : clean);
+            }
+        }
+
+        CrossProcessFileLock.AtomicWrite(xmlPath, tempPath => doc.Save(tempPath));
+    }
+
+    private static XElement? FindElementByXPath(XDocument? doc, string xpath)
+    {
+        if (doc == null || string.IsNullOrWhiteSpace(xpath))
+        {
+            return null;
+        }
+
+        if (string.Equals(xpath, PropertiesXPath, StringComparison.Ordinal))
+        {
+            return doc.Descendants("Item")
+                .Select(item => item.Element("Properties"))
+                .FirstOrDefault(p => p != null);
+        }
+
+        if (TryParseXPathForElement(xpath, out string tagName, out string attrName))
+        {
+            return doc.Descendants()
+                .FirstOrDefault(e =>
+                    (tagName == "*" || string.Equals(e.Name.LocalName, tagName, StringComparison.Ordinal)) &&
+                    string.Equals((string?)e.Attribute("name"), attrName, StringComparison.Ordinal));
+        }
+
+        return null;
     }
 
     private static bool TryParseXPathForElement(string xpath, out string tagName, out string attrName)
     {
         tagName = string.Empty;
         attrName = string.Empty;
-        var match = Regex.Match(xpath, @"/([a-zA-Z0-9]+)\[@name='([^']+)'\]$");
+        var match = Regex.Match(xpath, @"/([*a-zA-Z0-9]+)\[@name='([^']+)'\]$");
         if (match.Success)
         {
             tagName = match.Groups[1].Value;

@@ -1,6 +1,4 @@
-using System.Collections.Specialized;
 using System.Text;
-using System.Web;
 
 namespace BaBaBooeyStrap.Core.Roblox;
 
@@ -32,7 +30,12 @@ public sealed class PlaceLauncherUriBuilder
 
     public string BuildPlaceLauncherUrl()
     {
-        var sb = new StringBuilder(BasePlaceLauncherUrl);
+        if (!IsAllowedPlaceLauncherBaseUrl(BasePlaceLauncherUrl))
+        {
+            throw new InvalidOperationException($"Untrusted PlaceLauncher URL: '{BasePlaceLauncherUrl}'.");
+        }
+
+        var sb = new StringBuilder(BasePlaceLauncherUrl.Trim());
         sb.Append('?');
 
         if (!string.IsNullOrWhiteSpace(AccessCode))
@@ -74,6 +77,9 @@ public sealed class PlaceLauncherUriBuilder
 
     public string BuildProtocolUri()
     {
+        string robloxLocale = ValidateProtocolToken(RobloxLocale, nameof(RobloxLocale));
+        string gameLocale = ValidateProtocolToken(GameLocale, nameof(GameLocale));
+
         var sb = new StringBuilder();
         sb.Append("roblox-player:1+launchmode:play");
 
@@ -88,17 +94,17 @@ public sealed class PlaceLauncherUriBuilder
         string innerUrl = BuildPlaceLauncherUrl();
         sb.Append("+placelauncherurl:").Append(Uri.EscapeDataString(innerUrl));
 
-        sb.Append("+robloxLocale:").Append(RobloxLocale);
-        sb.Append("+gameLocale:").Append(GameLocale);
+        sb.Append("+robloxLocale:").Append(robloxLocale);
+        sb.Append("+gameLocale:").Append(gameLocale);
 
         if (!string.IsNullOrWhiteSpace(BrowserTrackerId))
         {
-            sb.Append("+browserTrackerId:").Append(BrowserTrackerId);
+            sb.Append("+browserTrackerId:").Append(ValidateProtocolToken(BrowserTrackerId, nameof(BrowserTrackerId)));
         }
 
         if (!string.IsNullOrWhiteSpace(Channel))
         {
-            sb.Append("+channel:").Append(Channel);
+            sb.Append("+channel:").Append(ValidateProtocolToken(Channel, nameof(Channel)));
         }
 
         string uri = sb.ToString();
@@ -108,12 +114,47 @@ public sealed class PlaceLauncherUriBuilder
             throw new InvalidOperationException($"Launch URI length ({uri.Length}) exceeds maximum allowed length ({MaxLaunchUriLength}).");
         }
 
-        if (uri.Any(char.IsWhiteSpace))
+        if (uri.Any(char.IsWhiteSpace) || uri.Any(char.IsControl) || uri.Contains('"'))
         {
-            throw new InvalidOperationException("Launch URI must not contain unescaped whitespace characters.");
+            throw new InvalidOperationException("Launch URI must not contain whitespace, control characters, or double quotes.");
         }
 
         return uri;
+    }
+
+    internal static bool IsAllowedPlaceLauncherBaseUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return uri.Host.Equals("roblox.com", StringComparison.OrdinalIgnoreCase) ||
+               uri.Host.EndsWith(".roblox.com", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ValidateProtocolToken(string value, string paramName)
+    {
+        string trimmed = value.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            throw new InvalidOperationException($"Protocol token '{paramName}' cannot be empty.");
+        }
+
+        foreach (char ch in trimmed)
+        {
+            if (char.IsWhiteSpace(ch) || char.IsControl(ch) || ch is '"' or '+' or ':')
+            {
+                throw new InvalidOperationException($"Protocol token '{paramName}' contains invalid character '{ch}'.");
+            }
+        }
+
+        return trimmed;
     }
 
     public static bool IsValidLaunchUri(string uri)
@@ -121,7 +162,7 @@ public sealed class PlaceLauncherUriBuilder
         if (string.IsNullOrWhiteSpace(uri)) return false;
         if (!uri.StartsWith("roblox-player:1+", StringComparison.OrdinalIgnoreCase)) return false;
         if (uri.Length > MaxLaunchUriLength) return false;
-        if (uri.Any(char.IsWhiteSpace)) return false;
+        if (uri.Any(ch => char.IsWhiteSpace(ch) || char.IsControl(ch) || ch == '"')) return false;
         return true;
     }
 

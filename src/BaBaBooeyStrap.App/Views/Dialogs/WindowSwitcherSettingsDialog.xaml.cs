@@ -2,11 +2,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using BaBaBooeyStrap.App.Services;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Storage;
 using BaBaBooeyStrap.Integrations.Window;
 using Wpf.Ui.Controls;
+using TextBox = Wpf.Ui.Controls.TextBox;
 
 namespace BaBaBooeyStrap.App.Views.Dialogs;
 
@@ -166,47 +168,53 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
         UpdateTitlePreview();
     }
 
-    private void QuickHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        e.Handled = true;
-        Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        string? formatted = HotkeyParser.FormatKeyGesture(Keyboard.Modifiers, actualKey);
-        if (!string.IsNullOrEmpty(formatted))
-        {
-            QuickHotkeyBox.Text = formatted;
-        }
-    }
+    private void QuickHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e) => CaptureHotkeyGesture(e, QuickHotkeyBox);
 
-    private void CycleHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
-    {
-        e.Handled = true;
-        Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
-        string? formatted = HotkeyParser.FormatKeyGesture(Keyboard.Modifiers, actualKey);
-        if (!string.IsNullOrEmpty(formatted))
-        {
-            CycleHotkeyBox.Text = formatted;
-        }
-    }
+    private void CycleHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e) => CaptureHotkeyGesture(e, CycleHotkeyBox);
 
-    private void CyclePrevHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void CyclePrevHotkeyBox_PreviewKeyDown(object sender, KeyEventArgs e) => CaptureHotkeyGesture(e, CyclePrevHotkeyBox);
+
+    private static void CaptureHotkeyGesture(KeyEventArgs e, TextBox targetBox)
     {
-        e.Handled = true;
         Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (ShouldAllowDialogNavigationKey(actualKey))
+        {
+            return;
+        }
+
+        e.Handled = true;
         string? formatted = HotkeyParser.FormatKeyGesture(Keyboard.Modifiers, actualKey);
         if (!string.IsNullOrEmpty(formatted))
         {
-            CyclePrevHotkeyBox.Text = formatted;
+            targetBox.Text = formatted;
         }
     }
 
     private void DirectSlotModifierBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        Key actualKey = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (ShouldAllowDialogNavigationKey(actualKey))
+        {
+            return;
+        }
+
         e.Handled = true;
         string mods = HotkeyParser.FormatModifiersOnly(Keyboard.Modifiers);
         if (!string.IsNullOrEmpty(mods))
         {
             DirectSlotModifierBox.Text = mods;
         }
+    }
+
+    private static bool ShouldAllowDialogNavigationKey(Key actualKey)
+    {
+        var nonShiftModifiers = Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Windows);
+        if (actualKey == Key.Tab && nonShiftModifiers == ModifierKeys.None)
+        {
+            return true;
+        }
+
+        return actualKey == Key.Escape && Keyboard.Modifiers == ModifierKeys.None;
     }
 
     private void ResetQuickHotkey_Click(object sender, RoutedEventArgs e) => QuickHotkeyBox.Text = "Ctrl+Alt+Space";
@@ -216,7 +224,18 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
 
     private void ResetFloatingBarPos_Click(object sender, RoutedEventArgs e)
     {
-        _coordinator?.ResetFloatingBarPosition();
+        try
+        {
+            _coordinator?.ResetFloatingBarPosition();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("WindowSwitcherSettingsDialog.ResetFloatingBarPos", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                this);
+        }
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -227,52 +246,118 @@ public partial class WindowSwitcherSettingsDialog : FluentWindow
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        _settings.AutoTagMultiInstanceWindowTitle = AutoTagToggle.IsChecked == true;
-        _settings.RestoreAccountWindowBounds = RestoreAccountBoundsToggle.IsChecked == true;
-        _settings.MultiInstanceWindowTitleTemplate = string.IsNullOrWhiteSpace(TitleTemplateBox.Text)
-            ? Settings.DefaultMultiInstanceWindowTitleTemplate
-            : TitleTemplateBox.Text.Trim();
-
-        _settings.EnableQuickSwitcherHotkey = QuickHotkeyEnabledCheck.IsChecked == true;
-        if (HotkeyParser.TryParse(QuickHotkeyBox.Text, out var parsedQuick))
+        try
         {
-            _settings.QuickSwitcherHotkey = parsedQuick.NormalizedText;
+            bool quickEnabled = QuickHotkeyEnabledCheck.IsChecked == true;
+            bool cycleEnabled = CycleHotkeyEnabledCheck.IsChecked == true;
+            bool cyclePrevEnabled = CyclePrevHotkeyEnabledCheck.IsChecked == true;
+            bool directSlotsEnabled = DirectSlotsEnabledCheck.IsChecked == true;
+
+            string quickNormalized = HotkeyParser.TryParse(QuickHotkeyBox.Text, out var parsedQuick)
+                ? parsedQuick.NormalizedText
+                : _settings.QuickSwitcherHotkey;
+            string cycleNormalized = HotkeyParser.TryParse(CycleHotkeyBox.Text, out var parsedCycle)
+                ? parsedCycle.NormalizedText
+                : _settings.CycleWindowHotkey;
+            string cyclePrevNormalized = HotkeyParser.TryParse(CyclePrevHotkeyBox.Text, out var parsedCyclePrev)
+                ? parsedCyclePrev.NormalizedText
+                : _settings.CyclePreviousWindowHotkey;
+            string directModsNormalized = HotkeyParser.TryParseModifiersOnly(DirectSlotModifierBox.Text, out _, out string normMods)
+                ? normMods
+                : _settings.DirectSlotHotkeyModifier;
+
+            string? conflict = FindDuplicateHotkeyConflict(
+                quickEnabled ? quickNormalized : null,
+                cycleEnabled ? cycleNormalized : null,
+                cyclePrevEnabled ? cyclePrevNormalized : null,
+                directSlotsEnabled ? directModsNormalized : null);
+
+            if (conflict != null)
+            {
+                FluentDialogService.ShowWarning(
+                    LocalizationService.Instance.GetString("Str_SwitcherSettings_DuplicateHotkeyTitle"),
+                    LocalizationService.Instance.Format("Str_SwitcherSettings_DuplicateHotkeyMessageFormat", conflict),
+                    owner: this);
+                return;
+            }
+
+            _settings.AutoTagMultiInstanceWindowTitle = AutoTagToggle.IsChecked == true;
+            _settings.RestoreAccountWindowBounds = RestoreAccountBoundsToggle.IsChecked == true;
+            _settings.MultiInstanceWindowTitleTemplate = string.IsNullOrWhiteSpace(TitleTemplateBox.Text)
+                ? Settings.DefaultMultiInstanceWindowTitleTemplate
+                : TitleTemplateBox.Text.Trim();
+
+            _settings.EnableQuickSwitcherHotkey = quickEnabled;
+            _settings.QuickSwitcherHotkey = quickNormalized;
+
+            _settings.EnableCycleWindowHotkey = cycleEnabled;
+            _settings.CycleWindowHotkey = cycleNormalized;
+
+            _settings.EnableCyclePreviousWindowHotkey = cyclePrevEnabled;
+            _settings.CyclePreviousWindowHotkey = cyclePrevNormalized;
+
+            _settings.EnableDirectSlotHotkeys = directSlotsEnabled;
+            _settings.DirectSlotHotkeyModifier = directModsNormalized;
+
+            _settings.EnableWindowSwitchHighlight = SwitchHighlightToggle.IsChecked == true;
+            _settings.FloatingSwitcherBarEnabled = FloatingBarEnabledToggle.IsChecked == true;
+            _settings.FloatingSwitcherBarAutoShow = FloatingBarAutoShowToggle.IsChecked == true;
+
+            if (TilingModeCombo.SelectedItem is TilingModeOption modeOpt)
+            {
+                _settings.DefaultWindowTilingMode = modeOpt.Mode;
+            }
+
+            _settings.PreferredTilingMonitorDevice = (PreferredMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
+            _settings.MainSidePrimaryMonitorDevice = (MainMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
+            _settings.MainSideSecondaryMonitorDevice = (SideMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
+
+            _settingsManager?.Save();
+            _coordinator?.ReloadSettings();
+            DialogResult = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("WindowSwitcherSettingsDialog.Save", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                this);
+        }
+    }
+
+    private static string? FindDuplicateHotkeyConflict(
+        string? quick,
+        string? cycle,
+        string? cyclePrev,
+        string? directMods)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string? candidate in new[] { quick, cycle, cyclePrev })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (!seen.Add(candidate))
+            {
+                return candidate;
+            }
         }
 
-        _settings.EnableCycleWindowHotkey = CycleHotkeyEnabledCheck.IsChecked == true;
-        if (HotkeyParser.TryParse(CycleHotkeyBox.Text, out var parsedCycle))
+        if (!string.IsNullOrWhiteSpace(directMods))
         {
-            _settings.CycleWindowHotkey = parsedCycle.NormalizedText;
+            for (int slot = 1; slot <= 9; slot++)
+            {
+                string dKey = $"{directMods}+{slot}";
+                string numKey = $"{directMods}+NumPad{slot}";
+                if (seen.Contains(dKey)) return dKey;
+                if (seen.Contains(numKey)) return numKey;
+            }
         }
 
-        _settings.EnableCyclePreviousWindowHotkey = CyclePrevHotkeyEnabledCheck.IsChecked == true;
-        if (HotkeyParser.TryParse(CyclePrevHotkeyBox.Text, out var parsedCyclePrev))
-        {
-            _settings.CyclePreviousWindowHotkey = parsedCyclePrev.NormalizedText;
-        }
-
-        _settings.EnableDirectSlotHotkeys = DirectSlotsEnabledCheck.IsChecked == true;
-        if (HotkeyParser.TryParseModifiersOnly(DirectSlotModifierBox.Text, out _, out string normMods))
-        {
-            _settings.DirectSlotHotkeyModifier = normMods;
-        }
-
-        _settings.EnableWindowSwitchHighlight = SwitchHighlightToggle.IsChecked == true;
-        _settings.FloatingSwitcherBarEnabled = FloatingBarEnabledToggle.IsChecked == true;
-        _settings.FloatingSwitcherBarAutoShow = FloatingBarAutoShowToggle.IsChecked == true;
-
-        if (TilingModeCombo.SelectedItem is TilingModeOption modeOpt)
-        {
-            _settings.DefaultWindowTilingMode = modeOpt.Mode;
-        }
-
-        _settings.PreferredTilingMonitorDevice = (PreferredMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
-        _settings.MainSidePrimaryMonitorDevice = (MainMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
-        _settings.MainSideSecondaryMonitorDevice = (SideMonitorCombo.SelectedItem as MonitorOption)?.DeviceName;
-
-        _settingsManager?.Save();
-        _coordinator?.ReloadSettings();
-        DialogResult = true;
-        Close();
+        return null;
     }
 }

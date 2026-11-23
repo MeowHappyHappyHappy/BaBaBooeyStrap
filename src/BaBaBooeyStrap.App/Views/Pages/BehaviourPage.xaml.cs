@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.App.ViewModels;
 using BaBaBooeyStrap.App.Views.Dialogs;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using Microsoft.Win32;
 
@@ -17,7 +18,30 @@ public partial class BehaviourPage : Page
         InitializeComponent();
     }
 
-    private void CleanNow_Click(object sender, RoutedEventArgs e) => ViewModel?.WindowIntegrations.RunCleanerNow();
+    private async void CleanNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        var owner = Window.GetWindow(this);
+        bool confirmed = FluentDialogService.ShowConfirm(
+            LocalizationService.Instance.GetString("Str_Behaviour_RunCleanerNow"),
+            LocalizationService.Instance.GetString("Str_Behaviour_CleanNowConfirm"),
+            isDestructive: true,
+            owner: owner);
+        if (!confirmed) return;
+
+        try
+        {
+            await ViewModel.WindowIntegrations.RunCleanerNowAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Logger.ExceptionStatic("BehaviourPage.CleanNow_Click", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                owner);
+        }
+    }
 
     private void AddIntegration_Click(object sender, RoutedEventArgs e)
     {
@@ -53,6 +77,14 @@ public partial class BehaviourPage : Page
             return;
         }
 
+        var owner = Window.GetWindow(this);
+        bool confirmed = FluentDialogService.ShowConfirm(
+            LocalizationService.Instance.GetString("Str_Common_Remove"),
+            LocalizationService.Instance.Format("Str_Behaviour_RemoveIntegrationConfirmFormat", existing.Name),
+            isDestructive: true,
+            owner: owner);
+        if (!confirmed) return;
+
         ViewModel.WindowIntegrations.RemoveCustomIntegration(existing);
     }
 
@@ -60,6 +92,7 @@ public partial class BehaviourPage : Page
     {
         if (ViewModel == null) return;
 
+        var owner = Window.GetWindow(this);
         var dlg = new SaveFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_Behaviour_ExportProfile"),
@@ -67,7 +100,7 @@ public partial class BehaviourPage : Page
             FileName = $"BaBaBooeyStrap_Profile_{DateTime.Now:yyyyMMdd}.json"
         };
 
-        if (dlg.ShowDialog() != true) return;
+        if ((owner != null ? dlg.ShowDialog(owner) : dlg.ShowDialog()) != true) return;
 
         try
         {
@@ -75,14 +108,15 @@ public partial class BehaviourPage : Page
             FluentDialogService.ShowInfo(
                 LocalizationService.Instance.GetString("Str_Behaviour_ProfileHeader"),
                 LocalizationService.Instance.Format("Str_Behaviour_ExportProfileSuccessFormat", dlg.FileName),
-                Window.GetWindow(this));
+                owner);
         }
         catch (Exception ex)
         {
+            Logger.ExceptionStatic("BehaviourPage.ExportProfile_Click", ex);
             FluentDialogService.ShowError(
                 LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
                 ex.Message,
-                Window.GetWindow(this));
+                owner);
         }
     }
 
@@ -90,13 +124,14 @@ public partial class BehaviourPage : Page
     {
         if (ViewModel == null) return;
 
+        var owner = Window.GetWindow(this);
         var dlg = new OpenFileDialog
         {
             Title = LocalizationService.Instance.GetString("Str_Behaviour_ImportProfile"),
             Filter = LocalizationService.Instance.GetString("Str_Filter_ProfileJson")
         };
 
-        if (dlg.ShowDialog() != true) return;
+        if ((owner != null ? dlg.ShowDialog(owner) : dlg.ShowDialog()) != true) return;
 
         bool confirmed = FluentDialogService.ShowConfirm(
             LocalizationService.Instance.GetString("Str_Behaviour_ImportProfile"),

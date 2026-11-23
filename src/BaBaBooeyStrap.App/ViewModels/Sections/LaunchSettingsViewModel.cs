@@ -64,38 +64,24 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     }
 
     // --- Launcher Behaviour ---
-    public bool CheckForUpdates { get => _settings.CheckForUpdates; set { _settings.CheckForUpdates = value; OnPropertyChanged(); } }
+    public bool CheckForUpdates { get => _settings.CheckForUpdates; set => SetModelProperty(_settings.CheckForUpdates, value, v => _settings.CheckForUpdates = v); }
     public bool CheckAppUpdates
     {
         get => _settings.CheckAppUpdates;
-        set
-        {
-            if (_settings.CheckAppUpdates != value)
-            {
-                _settings.CheckAppUpdates = value;
-                OnPropertyChanged();
-            }
-        }
+        set => SetModelProperty(_settings.CheckAppUpdates, value, v => _settings.CheckAppUpdates = v);
     }
     public bool RunOnStartup
     {
         get => _settings.RunOnStartup;
-        set
-        {
-            if (_settings.RunOnStartup != value)
-            {
-                _settings.RunOnStartup = value;
-                OnPropertyChanged();
-            }
-        }
+        set => SetModelProperty(_settings.RunOnStartup, value, v => _settings.RunOnStartup = v);
     }
-    public bool BackgroundUpdatesEnabled { get => _settings.BackgroundUpdatesEnabled; set { _settings.BackgroundUpdatesEnabled = value; OnPropertyChanged(); } }
-    public bool ConfirmLaunches { get => _settings.ConfirmLaunches; set { _settings.ConfirmLaunches = value; OnPropertyChanged(); } }
-    public bool ForceLocalData { get => _settings.ForceLocalData; set { _settings.ForceLocalData = value; OnPropertyChanged(); } }
-    public bool StaticDirectory { get => _settings.StaticDirectory; set { _settings.StaticDirectory = value; OnPropertyChanged(); } }
-    public bool WPFSoftwareRender { get => _settings.WPFSoftwareRender; set { _settings.WPFSoftwareRender = value; OnPropertyChanged(); } }
-    public bool DeveloperMode { get => _settings.DeveloperMode; set { _settings.DeveloperMode = value; OnPropertyChanged(); } }
-    public bool DebugDisableVersionPackageCleanup { get => _settings.DebugDisableVersionPackageCleanup; set { _settings.DebugDisableVersionPackageCleanup = value; OnPropertyChanged(); } }
+    public bool BackgroundUpdatesEnabled { get => _settings.BackgroundUpdatesEnabled; set => SetModelProperty(_settings.BackgroundUpdatesEnabled, value, v => _settings.BackgroundUpdatesEnabled = v); }
+    public bool ConfirmLaunches { get => _settings.ConfirmLaunches; set => SetModelProperty(_settings.ConfirmLaunches, value, v => _settings.ConfirmLaunches = v); }
+    public bool ForceLocalData { get => _settings.ForceLocalData; set => SetModelProperty(_settings.ForceLocalData, value, v => _settings.ForceLocalData = v); }
+    public bool StaticDirectory { get => _settings.StaticDirectory; set => SetModelProperty(_settings.StaticDirectory, value, v => _settings.StaticDirectory = v); }
+    public bool WPFSoftwareRender { get => _settings.WPFSoftwareRender; set => SetModelProperty(_settings.WPFSoftwareRender, value, v => _settings.WPFSoftwareRender = v); }
+    public bool DeveloperMode { get => _settings.DeveloperMode; set => SetModelProperty(_settings.DeveloperMode, value, v => _settings.DeveloperMode = v); }
+    public bool DebugDisableVersionPackageCleanup { get => _settings.DebugDisableVersionPackageCleanup; set => SetModelProperty(_settings.DebugDisableVersionPackageCleanup, value, v => _settings.DebugDisableVersionPackageCleanup = v); }
 
     // --- Channel & CDN ---
     public IReadOnlyList<ChannelChangeMode> AvailableChannelChangeModes { get; } = Enum.GetValues<ChannelChangeMode>();
@@ -104,15 +90,15 @@ public sealed class LaunchSettingsViewModel : ViewModelBase
     public IReadOnlyList<RobloxTheme> AvailableRobloxThemes { get; } = Enum.GetValues<RobloxTheme>();
     public IReadOnlyList<string> GlobalMirrors => CdnMirrorSelectorDefaults.GlobalMirrors;
 
-    public string Channel { get => _settings.Channel; set { _settings.Channel = value; OnPropertyChanged(); } }
-    public ChannelChangeMode SelectedChannelChangeMode { get => _settings.ChannelChangeMode; set { _settings.ChannelChangeMode = value; OnPropertyChanged(); } }
-    public DistributorType SelectedDistributorType { get => _settings.DistributorType; set { _settings.DistributorType = value; OnPropertyChanged(); } }
-    public WebEnvironment SelectedWebEnvironment { get => _settings.WebEnvironment; set { _settings.WebEnvironment = value; OnPropertyChanged(); } }
-    public string RobloxDomain { get => _settings.RobloxDomain; set { _settings.RobloxDomain = value; OnPropertyChanged(); } }
-    public string Locale { get => _settings.Locale; set { _settings.Locale = value; OnPropertyChanged(); } }
-    public bool ForceRobloxLanguage { get => _settings.ForceRobloxLanguage; set { _settings.ForceRobloxLanguage = value; OnPropertyChanged(); } }
-    public RobloxTheme SelectedRobloxTheme { get => _settings.RobloxTheme; set { _settings.RobloxTheme = value; OnPropertyChanged(); } }
-    public bool EnableRobloxBackgroundApp { get => _settings.EnableRobloxBackgroundApp; set { _settings.EnableRobloxBackgroundApp = value; OnPropertyChanged(); } }
+    public string Channel { get => _settings.Channel; set => SetModelProperty(_settings.Channel, value, v => _settings.Channel = v); }
+    public ChannelChangeMode SelectedChannelChangeMode { get => _settings.ChannelChangeMode; set => SetModelProperty(_settings.ChannelChangeMode, value, v => _settings.ChannelChangeMode = v); }
+    public DistributorType SelectedDistributorType { get => _settings.DistributorType; set => SetModelProperty(_settings.DistributorType, value, v => _settings.DistributorType = v); }
+    public WebEnvironment SelectedWebEnvironment { get => _settings.WebEnvironment; set => SetModelProperty(_settings.WebEnvironment, value, v => _settings.WebEnvironment = v); }
+    public string RobloxDomain { get => _settings.RobloxDomain; set => SetModelProperty(_settings.RobloxDomain, value, v => _settings.RobloxDomain = v); }
+    public string Locale { get => _settings.Locale; set => SetModelProperty(_settings.Locale, value, v => _settings.Locale = v); }
+    public bool ForceRobloxLanguage { get => _settings.ForceRobloxLanguage; set => SetModelProperty(_settings.ForceRobloxLanguage, value, v => _settings.ForceRobloxLanguage = v); }
+    public RobloxTheme SelectedRobloxTheme { get => _settings.RobloxTheme; set => SetModelProperty(_settings.RobloxTheme, value, v => _settings.RobloxTheme = v); }
+    public bool EnableRobloxBackgroundApp { get => _settings.EnableRobloxBackgroundApp; set => SetModelProperty(_settings.EnableRobloxBackgroundApp, value, v => _settings.EnableRobloxBackgroundApp = v); }
 
     public bool ForceReinstall
     {

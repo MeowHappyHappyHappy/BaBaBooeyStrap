@@ -19,21 +19,19 @@ public partial class ClassicFluentDialog : Window, IBootstrapperDialog
         InitializeComponent();
 
         ViewModel.CancelRequested += (_, _) => CancelRequested?.Invoke(this, EventArgs.Empty);
-        Closing += (_, _) =>
-        {
-            if (!_closingProgrammatically && ViewModel.CancelEnabled)
-                ViewModel.RequestCancel();
-        };
+        Closing += (_, e) => BootstrapperDialogHelper.HandleClosing(_closingProgrammatically, ViewModel, e);
     }
 
     public void SetProgress(double value, double max, bool indeterminate) =>
         ViewModel.UpdateProgress(value, max, indeterminate);
 
-    public void ShowBootstrapper() => Show();
+    public void ShowBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, Show);
 
-    public void CloseBootstrapper()
-    {
-        _closingProgrammatically = true;
-        Close();
-    }
+    public void CloseBootstrapper() =>
+        BootstrapperDialogHelper.DispatchIfAlive(this, () =>
+        {
+            _closingProgrammatically = true;
+            Close();
+        });
 }

@@ -8,7 +8,7 @@ public static class Shell32
     public const uint SHOP_FILEPATH = 0x00000002;
     public const uint SHOP_VOLUMEGUID = 0x00000004;
 
-    [DllImport("shell32.dll", EntryPoint = "ShellExecuteW", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("shell32.dll", EntryPoint = "ShellExecuteW", ExactSpelling = true, CharSet = CharSet.Unicode)]
     public static extern nint ShellExecute(
         nint hwnd,
         string? lpOperation,
@@ -25,7 +25,7 @@ public static class Shell32
         [MarshalAs(UnmanagedType.LPWStr)] string pszObjectName,
         [MarshalAs(UnmanagedType.LPWStr)] string pszPropertyPage);
 
-    [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("shell32.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
     public static extern uint ExtractIconExW(
         string lpszFile,
         int nIconIndex,

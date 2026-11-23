@@ -51,27 +51,36 @@ public sealed class FastFlagManager : IFastFlagManager
 
     public void SetFlag(string name, object value)
     {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            throw new ArgumentException("Flag name cannot be null or whitespace.", nameof(name));
-        }
-        ArgumentNullException.ThrowIfNull(value);
-
-        string key = name.Trim();
         lock (_lock)
         {
-            _flags[key] = value;
+            SetFlagUnlocked(name, value);
         }
     }
 
     public bool RemoveFlag(string name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
-        string key = name.Trim();
         lock (_lock)
         {
-            return _flags.Remove(key);
+            return RemoveFlagUnlocked(name);
         }
+    }
+
+    private void SetFlagUnlocked(string name, object value)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Flag name cannot be null or whitespace.", nameof(name));
+        }
+        ArgumentNullException.ThrowIfNull(value);
+
+        _flags[name.Trim()] = value;
+    }
+
+    private bool RemoveFlagUnlocked(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+        return _flags.Remove(name.Trim());
     }
 
     public object? GetFlag(string name)
@@ -102,7 +111,7 @@ public sealed class FastFlagManager : IFastFlagManager
                 Directory.CreateDirectory(directory);
             }
 
-            string json = ExportJson();
+            string json = ExportJsonUnlocked();
             CrossProcessFileLock.AtomicWrite(_filePath, tempFile =>
             {
                 File.WriteAllText(tempFile, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -134,7 +143,8 @@ public sealed class FastFlagManager : IFastFlagManager
 
             try
             {
-                ImportJson(content);
+                _flags.Clear();
+                ImportJsonUnlocked(content, allowFragmentWrap: false);
                 _originalFlags = new Dictionary<string, object>(_flags, StringComparer.OrdinalIgnoreCase);
             }
             catch (JsonException)
@@ -147,6 +157,15 @@ public sealed class FastFlagManager : IFastFlagManager
 
                 _flags.Clear();
                 _originalFlags.Clear();
+
+                try
+                {
+                    CrossProcessFileLock.AtomicWrite(_filePath, tempFile =>
+                    {
+                        File.WriteAllText(tempFile, "{}", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                    });
+                }
+                catch { }
             }
         }
     }
@@ -155,26 +174,39 @@ public sealed class FastFlagManager : IFastFlagManager
     {
         lock (_lock)
         {
-            var formatted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var kvp in _flags)
-            {
-                formatted[kvp.Key] = kvp.Value switch
-                {
-                    IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-                    null => string.Empty,
-                    _ => kvp.Value.ToString() ?? string.Empty
-                };
-            }
-
-            return JsonSerializer.Serialize(formatted, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            });
+            return ExportJsonUnlocked();
         }
     }
 
+    private string ExportJsonUnlocked()
+    {
+        var formatted = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var kvp in _flags)
+        {
+            formatted[kvp.Key] = kvp.Value switch
+            {
+                IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
+                null => string.Empty,
+                _ => kvp.Value.ToString() ?? string.Empty
+            };
+        }
+
+        return JsonSerializer.Serialize(formatted, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        });
+    }
+
     public void ImportJson(string json)
+    {
+        lock (_lock)
+        {
+            ImportJsonUnlocked(json, allowFragmentWrap: true);
+        }
+    }
+
+    private void ImportJsonUnlocked(string json, bool allowFragmentWrap)
     {
         if (string.IsNullOrWhiteSpace(json)) return;
 
@@ -189,7 +221,7 @@ public sealed class FastFlagManager : IFastFlagManager
         {
             doc = JsonDocument.Parse(json, options);
         }
-        catch (JsonException)
+        catch (JsonException) when (allowFragmentWrap)
         {
             string trimmed = json.Trim();
             string wrapped = trimmed;
@@ -216,51 +248,52 @@ public sealed class FastFlagManager : IFastFlagManager
         {
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
             {
+                if (!allowFragmentWrap)
+                {
+                    throw new JsonException("FastFlag root element must be a JSON object.");
+                }
                 return;
             }
 
-            lock (_lock)
+            foreach (var prop in doc.RootElement.EnumerateObject())
             {
-                foreach (var prop in doc.RootElement.EnumerateObject())
+                string key = prop.Name.Trim();
+                switch (prop.Value.ValueKind)
                 {
-                    string key = prop.Name.Trim();
-                    switch (prop.Value.ValueKind)
-                    {
-                        case JsonValueKind.True:
-                        case JsonValueKind.False:
-                            _flags[key] = prop.Value.GetBoolean();
-                            break;
-                        case JsonValueKind.Number:
-                            if (prop.Value.TryGetInt64(out long lVal))
-                            {
-                                _flags[key] = lVal;
-                            }
-                            else
-                            {
-                                _flags[key] = prop.Value.GetDouble();
-                            }
-                            break;
-                        case JsonValueKind.String:
-                            string str = prop.Value.GetString()!;
-                            if (bool.TryParse(str, out bool b) &&
-                                string.Equals(str, b.ToString(), StringComparison.OrdinalIgnoreCase))
-                            {
-                                _flags[key] = b;
-                            }
-                            else if (long.TryParse(str, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l) &&
-                                string.Equals(str, l.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
-                            {
-                                _flags[key] = l;
-                            }
-                            else
-                            {
-                                _flags[key] = str;
-                            }
-                            break;
-                        default:
-                            _flags[key] = prop.Value.ToString();
-                            break;
-                    }
+                    case JsonValueKind.True:
+                    case JsonValueKind.False:
+                        _flags[key] = prop.Value.GetBoolean();
+                        break;
+                    case JsonValueKind.Number:
+                        if (prop.Value.TryGetInt64(out long lVal))
+                        {
+                            _flags[key] = lVal;
+                        }
+                        else
+                        {
+                            _flags[key] = prop.Value.GetDouble();
+                        }
+                        break;
+                    case JsonValueKind.String:
+                        string str = prop.Value.GetString()!;
+                        if (bool.TryParse(str, out bool b) &&
+                            string.Equals(str, b.ToString(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            _flags[key] = b;
+                        }
+                        else if (long.TryParse(str, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long l) &&
+                            string.Equals(str, l.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
+                        {
+                            _flags[key] = l;
+                        }
+                        else
+                        {
+                            _flags[key] = str;
+                        }
+                        break;
+                    default:
+                        _flags[key] = prop.Value.ToString();
+                        break;
                 }
             }
         }
@@ -271,81 +304,125 @@ public sealed class FastFlagManager : IFastFlagManager
         ArgumentNullException.ThrowIfNull(presetKey);
         ArgumentNullException.ThrowIfNull(value);
 
-        switch (presetKey.ToLowerInvariant())
+        lock (_lock)
         {
-            case "rendering.msaa":
-            case "msaa":
-                SetFlag("FIntDebugForceMSAASamples", value);
-                break;
-            case "rendering.mode.vulkan":
-            case "rendering.vulkan":
-            case "vulkan":
-                SetFlag("FFlagDebugGraphicsPreferVulkan", "True");
-                RemoveFlag("FFlagDebugGraphicsPreferD3D11");
-                break;
-            case "rendering.mode.d3d11":
-            case "rendering.d3d11":
-            case "d3d11":
-                SetFlag("FFlagDebugGraphicsPreferD3D11", "True");
-                RemoveFlag("FFlagDebugGraphicsPreferVulkan");
-                break;
-            case "rendering.frmqualityoverride":
-            case "frmqualityoverride":
-                int quality = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 1, 21);
-                SetFlag("DFIntDebugFRMQualityLevelOverride", quality);
-                break;
-            case "geometry.meshlod":
-            case "meshlod":
-                int num = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 0, 3);
-                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceStatic", num);
-                SetFlag("DFIntCSGLevelOfDetailSwitchingDistance", (Math.Clamp(num - 0, 0, 3) + 1) * 250);
-                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL12", (Math.Clamp(num - 1, 0, 3) + 1) * 250);
-                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL23", (Math.Clamp(num - 2, 0, 3) + 1) * 250);
-                SetFlag("DFIntCSGLevelOfDetailSwitchingDistanceL34", (Math.Clamp(num - 3, 0, 3) + 1) * 250);
-                break;
-            case "rendering.disablescaling":
-            case "disablescaling":
-                SetFlag("DFFlagDisableDPIScale", value);
-                break;
-            case "rendering.manualfullscreen":
-            case "manualfullscreen":
-                SetFlag("FFlagHandleAltEnterFullscreenManually", value);
-                break;
-            default:
-                SetFlag(presetKey, value);
-                break;
+            switch (presetKey.ToLowerInvariant())
+            {
+                case "rendering.msaa":
+                case "msaa":
+                    SetFlagUnlocked("FIntDebugForceMSAASamples", value);
+                    break;
+                case "rendering.mode.vulkan":
+                case "rendering.vulkan":
+                case "vulkan":
+                    if (TryParseBoolValue(value, out bool vulkanEnabled) && !vulkanEnabled)
+                    {
+                        RemoveFlagUnlocked("FFlagDebugGraphicsPreferVulkan");
+                    }
+                    else
+                    {
+                        SetFlagUnlocked("FFlagDebugGraphicsPreferVulkan", "True");
+                        RemoveFlagUnlocked("FFlagDebugGraphicsPreferD3D11");
+                    }
+                    break;
+                case "rendering.mode.d3d11":
+                case "rendering.d3d11":
+                case "d3d11":
+                    if (TryParseBoolValue(value, out bool d3d11Enabled) && !d3d11Enabled)
+                    {
+                        RemoveFlagUnlocked("FFlagDebugGraphicsPreferD3D11");
+                    }
+                    else
+                    {
+                        SetFlagUnlocked("FFlagDebugGraphicsPreferD3D11", "True");
+                        RemoveFlagUnlocked("FFlagDebugGraphicsPreferVulkan");
+                    }
+                    break;
+                case "rendering.frmqualityoverride":
+                case "frmqualityoverride":
+                    int quality = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 1, 21);
+                    SetFlagUnlocked("DFIntDebugFRMQualityLevelOverride", quality);
+                    break;
+                case "geometry.meshlod":
+                case "meshlod":
+                    int num = Math.Clamp(Convert.ToInt32(value, CultureInfo.InvariantCulture), 0, 3);
+                    SetFlagUnlocked("DFIntCSGLevelOfDetailSwitchingDistanceStatic", num);
+                    SetFlagUnlocked("DFIntCSGLevelOfDetailSwitchingDistance", (Math.Clamp(num - 0, 0, 3) + 1) * 250);
+                    SetFlagUnlocked("DFIntCSGLevelOfDetailSwitchingDistanceL12", (Math.Clamp(num - 1, 0, 3) + 1) * 250);
+                    SetFlagUnlocked("DFIntCSGLevelOfDetailSwitchingDistanceL23", (Math.Clamp(num - 2, 0, 3) + 1) * 250);
+                    SetFlagUnlocked("DFIntCSGLevelOfDetailSwitchingDistanceL34", (Math.Clamp(num - 3, 0, 3) + 1) * 250);
+                    break;
+                case "rendering.disablescaling":
+                case "disablescaling":
+                    SetFlagUnlocked("DFFlagDisableDPIScale", value);
+                    break;
+                case "rendering.manualfullscreen":
+                case "manualfullscreen":
+                    SetFlagUnlocked("FFlagHandleAltEnterFullscreenManually", value);
+                    break;
+                default:
+                    SetFlagUnlocked(presetKey, value);
+                    break;
+            }
         }
     }
 
     public void SetPreset(string prefix, object? value)
     {
-        foreach (var item in FastFlagPresets.PresetFlags.Where(x => x.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+        ArgumentNullException.ThrowIfNull(prefix);
+        lock (_lock)
         {
-            if (value == null)
+            foreach (var item in FastFlagPresets.PresetFlags.Where(x => MatchesPresetPrefix(x.Key, prefix)))
             {
-                RemoveFlag(item.Value);
-            }
-            else
-            {
-                SetFlag(item.Value, value);
+                if (value == null)
+                {
+                    RemoveFlagUnlocked(item.Value);
+                }
+                else
+                {
+                    SetFlagUnlocked(item.Value, value);
+                }
             }
         }
     }
 
     public void SetPresetEnum(string prefix, string target, object? value)
     {
-        foreach (var item in FastFlagPresets.PresetFlags.Where(x => x.Key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+        ArgumentNullException.ThrowIfNull(prefix);
+        ArgumentNullException.ThrowIfNull(target);
+        string fullTarget = prefix + "." + target;
+        lock (_lock)
         {
-            if (item.Key.StartsWith(prefix + "." + target, StringComparison.OrdinalIgnoreCase))
+            foreach (var item in FastFlagPresets.PresetFlags.Where(x => MatchesPresetPrefix(x.Key, prefix)))
             {
-                if (value == null) RemoveFlag(item.Value);
-                else SetFlag(item.Value, value);
-            }
-            else
-            {
-                RemoveFlag(item.Value);
+                if (MatchesPresetPrefix(item.Key, fullTarget))
+                {
+                    if (value == null) RemoveFlagUnlocked(item.Value);
+                    else SetFlagUnlocked(item.Value, value);
+                }
+                else
+                {
+                    RemoveFlagUnlocked(item.Value);
+                }
             }
         }
+    }
+
+    private static bool MatchesPresetPrefix(string presetKey, string prefix)
+    {
+        if (string.IsNullOrEmpty(prefix)) return false;
+        return presetKey.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+            || presetKey.StartsWith(prefix + ".", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryParseBoolValue(object value, out bool result)
+    {
+        if (value is bool b)
+        {
+            result = b;
+            return true;
+        }
+        return bool.TryParse(value.ToString(), out result);
     }
 
     public string? GetPreset(string name)

@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
 using System.Windows;
+using System.Windows.Controls;
+using System.Xml;
 using BaBaBooeyStrap.App.Services;
+using BaBaBooeyStrap.Core.Logging;
 using BaBaBooeyStrap.Core.Models;
 using Wpf.Ui.Controls;
 
@@ -148,35 +151,76 @@ public partial class AccountSettingsDialog : FluentWindow
 
     private void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        int? fpsCap = null;
-        if (FpsOverrideCheck.IsChecked == true)
+        try
         {
-            if (!int.TryParse(FpsComboBox.Text.Trim(), out var parsedFps) || parsedFps < 0)
+            CustomOverridesGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+            CustomOverridesGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+            int? fpsCap = null;
+            if (FpsOverrideCheck.IsChecked == true)
             {
-                FluentDialogService.ShowWarning(
-                    LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsTitle"),
-                    LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsMessage"),
-                    owner: this);
-                return;
+                string fpsText = FpsComboBox.Text?.Trim() ?? string.Empty;
+                if (!int.TryParse(fpsText, out var parsedFps) || parsedFps < 0)
+                {
+                    FluentDialogService.ShowWarning(
+                        LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsTitle"),
+                        LocalizationService.Instance.GetString("Str_AccountSettings_InvalidFpsMessage"),
+                        owner: this);
+                    return;
+                }
+
+                fpsCap = parsedFps;
             }
 
-            fpsCap = parsedFps;
+            var dedupedOverrides = new Dictionary<string, CustomSettingOverride>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in _customOverrides)
+            {
+                string key = row.Key?.Trim() ?? string.Empty;
+                if (string.IsNullOrEmpty(key))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    XmlConvert.VerifyName(key);
+                }
+                catch (XmlException)
+                {
+                    FluentDialogService.ShowWarning(
+                        LocalizationService.Instance.GetString("Str_AccountSettings_InvalidOverrideTitle"),
+                        LocalizationService.Instance.Format("Str_AccountSettings_InvalidOverrideMessageFormat", key),
+                        owner: this);
+                    return;
+                }
+
+                dedupedOverrides[key] = new CustomSettingOverride
+                {
+                    Key = key,
+                    Value = row.Value?.Trim() ?? string.Empty
+                };
+            }
+
+            ResultProfile = new RobloxClientSettingsProfile
+            {
+                MasterVolumePercent = VolumeOverrideCheck.IsChecked == true ? (int)VolumeSlider.Value : null,
+                QualityLevel = QualityOverrideCheck.IsChecked == true && QualityComboBox.SelectedValue is int q ? q : null,
+                FramerateCap = fpsCap,
+                Fullscreen = FullscreenOverrideCheck.IsChecked == true && FullscreenComboBox.SelectedValue is bool fs ? fs : null,
+                CustomOverrides = dedupedOverrides.Values.ToList()
+            };
+
+            DialogResult = true;
+            Close();
         }
-
-        ResultProfile = new RobloxClientSettingsProfile
+        catch (Exception ex)
         {
-            MasterVolumePercent = VolumeOverrideCheck.IsChecked == true ? (int)VolumeSlider.Value : null,
-            QualityLevel = QualityOverrideCheck.IsChecked == true && QualityComboBox.SelectedValue is int q ? q : null,
-            FramerateCap = fpsCap,
-            Fullscreen = FullscreenOverrideCheck.IsChecked == true && FullscreenComboBox.SelectedValue is bool fs ? fs : null,
-            CustomOverrides = _customOverrides
-                .Where(o => !string.IsNullOrWhiteSpace(o.Key))
-                .Select(o => new CustomSettingOverride { Key = o.Key.Trim(), Value = o.Value.Trim() })
-                .ToList()
-        };
-
-        DialogResult = true;
-        Close();
+            Logger.ExceptionStatic("AccountSettingsDialog.Save", ex);
+            FluentDialogService.ShowError(
+                LocalizationService.Instance.GetString("Str_Dialog_ErrorTitle"),
+                ex.Message,
+                this);
+        }
     }
 
     private void CancelButton_Click(object sender, RoutedEventArgs e)

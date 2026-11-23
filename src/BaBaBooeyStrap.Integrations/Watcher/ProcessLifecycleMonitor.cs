@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using BaBaBooeyStrap.Core.Interop;
@@ -116,21 +117,18 @@ public sealed class ProcessLifecycleMonitor : IProcessLifecycleMonitor
 
     public bool TerminateProcessSafely(int pid, DateTime? expectedStartTimeUtc, TimeSpan gracefulTimeout)
     {
-        if (pid <= 0) return false;
+        // Fail-closed when no start time is provided to prevent killing an unrelated recycled PID.
+        if (pid <= 0 || !expectedStartTimeUtc.HasValue) return false;
 
         try
         {
             using var proc = Process.GetProcessById(pid);
             if (proc.HasExited) return true;
 
-            if (expectedStartTimeUtc.HasValue)
+            DateTime actual = proc.StartTime.ToUniversalTime();
+            if ((actual - expectedStartTimeUtc.Value).Duration() > StartTimeTolerance)
             {
-                DateTime actual = proc.StartTime.ToUniversalTime();
-                if ((actual - expectedStartTimeUtc.Value).Duration() > StartTimeTolerance)
-                {
-                    // Guard against PID reuse
-                    return false;
-                }
+                return false;
             }
 
             try
@@ -138,7 +136,7 @@ public sealed class ProcessLifecycleMonitor : IProcessLifecycleMonitor
                 if (proc.MainWindowHandle != nint.Zero)
                 {
                     proc.CloseMainWindow();
-                    int waitMs = Math.Max(0, (int)gracefulTimeout.TotalMilliseconds);
+                    int waitMs = (int)Math.Clamp(gracefulTimeout.TotalMilliseconds, 0, 30_000);
                     if (waitMs > 0 && proc.WaitForExit(waitMs))
                     {
                         return true;
@@ -165,9 +163,43 @@ public sealed class ProcessLifecycleMonitor : IProcessLifecycleMonitor
     {
         if (pid <= 0) return;
 
-        while (!ct.IsCancellationRequested && IsProcessRunning(pid, expectedStartTimeUtc))
+        Process? proc = null;
+        try
         {
-            await Task.Delay(100, ct).ConfigureAwait(false);
+            proc = Process.GetProcessById(pid);
+            if (proc.HasExited) return;
+
+            if (expectedStartTimeUtc.HasValue)
+            {
+                DateTime actual = proc.StartTime.ToUniversalTime();
+                if ((actual - expectedStartTimeUtc.Value).Duration() > StartTimeTolerance)
+                {
+                    return;
+                }
+            }
+
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return;
+        }
+        catch (Win32Exception)
+        {
+            proc?.Dispose();
+            proc = null;
+            while (!ct.IsCancellationRequested && IsProcessRunning(pid, expectedStartTimeUtc))
+            {
+                await Task.Delay(200, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            proc?.Dispose();
         }
     }
 }

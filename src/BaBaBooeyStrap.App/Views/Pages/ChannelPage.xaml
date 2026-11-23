@@ -19,27 +19,35 @@
                 <StackPanel>
                     <TextBlock Text="{DynamicResource Str_Channel_EnvHeader}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10"/>
 
-                    <DockPanel Margin="0,4">
-                        <TextBlock Text="{DynamicResource Str_Channel_ForceRobloxLanguage}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ForceRobloxLanguage}" HorizontalAlignment="Right"/>
-                    </DockPanel>
-                    <DockPanel Margin="0,4,0,10">
-                        <TextBlock Text="{DynamicResource Str_Channel_ForceReinstall}" VerticalAlignment="Center"/>
-                        <ui:ToggleSwitch IsChecked="{Binding LaunchSettings.ForceReinstall}" HorizontalAlignment="Right"/>
-                    </DockPanel>
+                    <Grid Margin="0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Channel_ForceRobloxLanguage}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Channel_ForceRobloxLanguage}" IsChecked="{Binding LaunchSettings.ForceRobloxLanguage}"/>
+                    </Grid>
+                    <Grid Margin="0,4,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{DynamicResource Str_Channel_ForceReinstall}" TextWrapping="Wrap" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                        <ui:ToggleSwitch Grid.Column="1" AutomationProperties.Name="{DynamicResource Str_Channel_ForceReinstall}" IsChecked="{Binding LaunchSettings.ForceReinstall}"/>
+                    </Grid>
 
                     <Expander Header="{DynamicResource Str_Channel_AdvancedHeader}" IsExpanded="False">
                         <StackPanel Margin="0,10,0,0">
                             <Border CornerRadius="6"
                                     Padding="12,8"
                                     Margin="0,0,0,12"
-                                    Background="#22F59E0B"
-                                    BorderBrush="#FFF59E0B"
+                                    Background="{DynamicResource AppWarningBackgroundBrush}"
+                                    BorderBrush="{DynamicResource AppWarningBorderBrush}"
                                     BorderThickness="1">
                                 <TextBlock Text="{DynamicResource Str_Channel_AdvancedWarning}"
                                            TextWrapping="Wrap"
                                            FontSize="12"
-                                           Foreground="#FFF59E0B"/>
+                                           Foreground="{DynamicResource AppWarningForegroundBrush}"/>
                             </Border>
 
                             <Grid Margin="0,0,0,8">
@@ -83,10 +91,14 @@
 
             <Border CornerRadius="8" Padding="16" Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <StackPanel>
-                    <DockPanel Margin="0,0,0,10">
-                        <StackPanel>
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
                             <TextBlock Text="{DynamicResource Str_Channel_CdnHeader}" FontSize="15" FontWeight="SemiBold"/>
-                            <TextBlock Opacity="0.75">
+                            <TextBlock Opacity="0.75" TextWrapping="Wrap">
                                 <TextBlock.Text>
                                     <MultiBinding Converter="{x:Static conv:LocalizedFormatMultiConverter.Instance}" ConverterParameter="Str_Channel_InstalledPlayerFormat">
                                         <Binding Source="{x:Static services:LocalizationService.Instance}" Path="CurrentLanguageTag"/>
@@ -95,7 +107,7 @@
                                 </TextBlock.Text>
                             </TextBlock>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                             <ui:ProgressRing Width="18"
                                              Height="18"
                                              IsIndeterminate="True"
@@ -107,7 +119,7 @@
                                        IsEnabled="{Binding LaunchSettings.IsNotTestingCdn}"
                                        Click="TestCdn_Click"/>
                         </StackPanel>
-                    </DockPanel>
+                    </Grid>
                     <ItemsControl ItemsSource="{Binding LaunchSettings.GlobalMirrors}" Margin="0,4,0,8">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

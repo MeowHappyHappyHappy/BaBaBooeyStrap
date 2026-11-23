@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using BaBaBooeyStrap.Core.Logging;
@@ -6,12 +7,17 @@ namespace BaBaBooeyStrap.Integrations.Watcher;
 
 public sealed class ActivityWatcher : IActivityWatcher
 {
+    private const int MaxLineBytes = 65_536;
+    private const int MaxHistoryEntries = 100;
+    private static readonly TimeSpan DirectoryRescanThrottle = TimeSpan.FromSeconds(1);
+
     private readonly ILogger _logger;
     private readonly ActivityWatcherOptions _options;
     private readonly object _stateLock = new();
     private readonly AsyncLocal<bool> _isInsideWatchLoop = new();
     private readonly List<ActivitySessionData> _history = new();
     private readonly List<byte> _carryBuffer = new();
+    private readonly byte[] _readBuffer = new byte[8192];
 
     private CancellationTokenSource? _cts;
     private Task? _watchTask;
@@ -21,7 +27,10 @@ public sealed class ActivityWatcher : IActivityWatcher
     private DateTime _activeFileCreatedUtc;
     private DateTime _activeFileLastWriteUtc;
     private DateTime _watchStartUtc;
+    private DateTime _lastDirScanUtc = DateTime.MinValue;
+    private volatile bool _dirRescanRequested = true;
     private long _byteOffset;
+    private bool _discardingOverlongLine;
     private bool _isWatching;
     private bool _disposed;
 
@@ -88,6 +97,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                 {
                     _byteOffset = 0;
                     _carryBuffer.Clear();
+                    _discardingOverlongLine = false;
                     _pendingJoin = null;
                     _currentActivity = null;
                     _inGame = false;
@@ -99,6 +109,8 @@ public sealed class ActivityWatcher : IActivityWatcher
                     _activeFileLastWriteUtc = DateTime.MinValue;
                     _activeFileGeneration++;
                     _watchStartUtc = DateTime.UtcNow;
+                    _lastDirScanUtc = DateTime.MinValue;
+                    _dirRescanRequested = true;
 
                     bool isDirectory = Directory.Exists(logDirectoryOrFilePath) ||
                                        logDirectoryOrFilePath.EndsWith(Path.DirectorySeparatorChar) ||
@@ -197,7 +209,16 @@ public sealed class ActivityWatcher : IActivityWatcher
                 EnableRaisingEvents = true
             };
 
-            _dirWatcher.Created += (_, e) => TrySelectDirectoryFile(e.FullPath);
+            _dirWatcher.Created += (_, e) =>
+            {
+                _dirRescanRequested = true;
+                TrySelectDirectoryFile(e.FullPath);
+            };
+            _dirWatcher.Error += (_, e) =>
+            {
+                _logger.Warn("ActivityWatcher", $"FileSystemWatcher error: {e.GetException()?.Message}");
+                _dirRescanRequested = true;
+            };
         }
         catch (Exception ex)
         {
@@ -277,8 +298,23 @@ public sealed class ActivityWatcher : IActivityWatcher
 
         if (!Directory.Exists(path)) return (null, 0);
 
+        DateTime nowUtc = DateTime.UtcNow;
+        lock (_stateLock)
+        {
+            if (_dirWatcher != null &&
+                !_dirRescanRequested &&
+                _activeFilePath != null &&
+                (nowUtc - _lastDirScanUtc) < DirectoryRescanThrottle)
+            {
+                return (_activeFilePath, _activeFileGeneration);
+            }
+        }
+
         try
         {
+            _lastDirScanUtc = nowUtc;
+            _dirRescanRequested = false;
+
             var files = Directory.GetFiles(path, "*.log");
             if (_options.ExcludedLogFilePredicate != null)
             {
@@ -366,6 +402,7 @@ public sealed class ActivityWatcher : IActivityWatcher
 
                         _byteOffset = 0;
                         _carryBuffer.Clear();
+                        _discardingOverlongLine = false;
                         lastTargetFile = targetFile;
                         lastGeneration = generation;
                     }
@@ -418,6 +455,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                 // Log file truncated or replaced
                 _byteOffset = 0;
                 _carryBuffer.Clear();
+                _discardingOverlongLine = false;
             }
 
             if (fileLength == _byteOffset)
@@ -426,16 +464,22 @@ public sealed class ActivityWatcher : IActivityWatcher
             }
 
             fs.Seek(_byteOffset, SeekOrigin.Begin);
-            byte[] readBuf = new byte[8192];
             int bytesRead;
-            while ((bytesRead = fs.Read(readBuf, 0, readBuf.Length)) > 0)
+            while ((bytesRead = fs.Read(_readBuffer, 0, _readBuffer.Length)) > 0)
             {
                 _byteOffset += bytesRead;
                 for (int i = 0; i < bytesRead; i++)
                 {
-                    byte b = readBuf[i];
+                    byte b = _readBuffer[i];
                     if (b == (byte)'\n')
                     {
+                        if (_discardingOverlongLine)
+                        {
+                            _discardingOverlongLine = false;
+                            _carryBuffer.Clear();
+                            continue;
+                        }
+
                         int count = _carryBuffer.Count;
                         if (count > 0 && _carryBuffer[count - 1] == (byte)'\r')
                         {
@@ -443,7 +487,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                         }
 
                         string decoded = count > 0
-                            ? Encoding.UTF8.GetString(_carryBuffer.ToArray(), 0, count)
+                            ? Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(_carryBuffer)[..count])
                             : string.Empty;
 
                         if (decoded.Length > 0 && decoded[0] == '\uFEFF')
@@ -455,9 +499,18 @@ public sealed class ActivityWatcher : IActivityWatcher
                         completedLines ??= new List<string>();
                         completedLines.Add(decoded);
                     }
-                    else
+                    else if (!_discardingOverlongLine)
                     {
-                        _carryBuffer.Add(b);
+                        if (_carryBuffer.Count >= MaxLineBytes)
+                        {
+                            _discardingOverlongLine = true;
+                            _carryBuffer.Clear();
+                            _logger.Warn("ActivityWatcher", $"Discarding log line exceeding {MaxLineBytes} bytes.");
+                        }
+                        else
+                        {
+                            _carryBuffer.Add(b);
+                        }
                     }
                 }
             }
@@ -476,7 +529,14 @@ public sealed class ActivityWatcher : IActivityWatcher
         {
             foreach (string line in completedLines)
             {
-                ProcessLine(line);
+                try
+                {
+                    ProcessLine(line);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warn("ActivityWatcher", $"Failed to process log line: {ex.Message}");
+                }
             }
         }
     }
@@ -485,7 +545,7 @@ public sealed class ActivityWatcher : IActivityWatcher
     {
         if (string.IsNullOrWhiteSpace(line)) return;
 
-        LogLineRead?.Invoke(this, line);
+        RaiseSafe(LogLineRead, line);
 
         DateTime timestamp = RobloxLogLineParser.ParseTimestamp(line);
 
@@ -593,7 +653,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                     if (_inGame && _currentActivity != null)
                     {
                         _currentActivity.TimeLeft = timestamp;
-                        _history.Insert(0, _currentActivity);
+                        AddToHistoryLocked(_currentActivity);
                         previousLeaveArgs = new GameLeaveEventArgs(timestamp);
                     }
 
@@ -615,12 +675,12 @@ public sealed class ActivityWatcher : IActivityWatcher
 
             if (previousLeaveArgs != null)
             {
-                GameLeft?.Invoke(this, previousLeaveArgs);
+                RaiseSafe(GameLeft, previousLeaveArgs);
             }
 
             if (joinArgs != null)
             {
-                GameJoined?.Invoke(this, joinArgs);
+                RaiseSafe(GameJoined, joinArgs);
             }
             return;
         }
@@ -639,7 +699,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                     _pendingJoin.ServerStartTime = serverStart;
                 }
             }
-            ServerStartTimeParsed?.Invoke(this, serverStart);
+            RaiseSafe(ServerStartTimeParsed, serverStart);
             return;
         }
 
@@ -659,7 +719,7 @@ public sealed class ActivityWatcher : IActivityWatcher
                 if (_inGame && _currentActivity != null)
                 {
                     _currentActivity.TimeLeft = timestamp;
-                    _history.Insert(0, _currentActivity);
+                    AddToHistoryLocked(_currentActivity);
 
                     bool keepPendingTeleport = _pendingJoin != null &&
                         (_pendingJoin.IsTeleport ||
@@ -681,7 +741,7 @@ public sealed class ActivityWatcher : IActivityWatcher
 
             if (leaveArgs != null)
             {
-                GameLeft?.Invoke(this, leaveArgs);
+                RaiseSafe(GameLeft, leaveArgs);
             }
             return;
         }
@@ -698,7 +758,16 @@ public sealed class ActivityWatcher : IActivityWatcher
                 _teleportPending = false;
                 _reservedTeleportMarker = false;
             }
-            AppClosed?.Invoke(this, EventArgs.Empty);
+            RaiseSafe(AppClosed, EventArgs.Empty);
+        }
+    }
+
+    private void AddToHistoryLocked(ActivitySessionData session)
+    {
+        _history.Insert(0, session);
+        if (_history.Count > MaxHistoryEntries)
+        {
+            _history.RemoveRange(MaxHistoryEntries, _history.Count - MaxHistoryEntries);
         }
     }
 
@@ -719,7 +788,7 @@ public sealed class ActivityWatcher : IActivityWatcher
             if (_inGame && _currentActivity != null)
             {
                 _currentActivity.TimeLeft = timestamp;
-                _history.Insert(0, _currentActivity);
+                AddToHistoryLocked(_currentActivity);
                 leaveArgs = new GameLeaveEventArgs(timestamp);
             }
 
@@ -733,16 +802,21 @@ public sealed class ActivityWatcher : IActivityWatcher
 
         if (leaveArgs != null)
         {
-            GameLeft?.Invoke(this, leaveArgs);
+            RaiseSafe(GameLeft, leaveArgs);
         }
     }
 
     private void HandleBloxstrapRpc(string rawJson, DateTime timestamp)
     {
         DateTime nowUtc = DateTime.UtcNow;
-        if (_options.RpcRateLimit > TimeSpan.Zero && (nowUtc - _lastRpcTimeUtc) < _options.RpcRateLimit)
+        lock (_stateLock)
         {
-            return;
+            if (_options.RpcRateLimit > TimeSpan.Zero && (nowUtc - _lastRpcTimeUtc) < _options.RpcRateLimit)
+            {
+                return;
+            }
+
+            _lastRpcTimeUtc = nowUtc;
         }
 
         if (!RobloxLogLineParser.TryParseBloxstrapRpcMessage(rawJson, out var parsed, out var parseError))
@@ -776,8 +850,39 @@ public sealed class ActivityWatcher : IActivityWatcher
             }
         }
 
-        _lastRpcTimeUtc = nowUtc;
-        BloxstrapRpcReceived?.Invoke(this, new BloxstrapRpcEventArgs(parsed.Command!, rawJson, timestamp));
+        RaiseSafe(BloxstrapRpcReceived, new BloxstrapRpcEventArgs(parsed.Command!, rawJson, timestamp));
+    }
+
+    private void RaiseSafe(EventHandler? handler, EventArgs args)
+    {
+        if (handler == null) return;
+        foreach (EventHandler subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("ActivityWatcher", $"Event subscriber threw an exception: {ex.Message}");
+            }
+        }
+    }
+
+    private void RaiseSafe<T>(EventHandler<T>? handler, T args)
+    {
+        if (handler == null) return;
+        foreach (EventHandler<T> subscriber in handler.GetInvocationList())
+        {
+            try
+            {
+                subscriber(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn("ActivityWatcher", $"Event subscriber threw an exception: {ex.Message}");
+            }
+        }
     }
 
     public void Dispose()

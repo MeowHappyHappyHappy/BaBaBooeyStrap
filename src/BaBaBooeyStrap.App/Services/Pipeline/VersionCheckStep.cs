@@ -57,8 +57,9 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
         context.RequiresDownload = false;
 
         bool force = launchSettings.ForceFlag.Active || _stateManager.Prop.ForceReinstall;
-        if (!force && !string.IsNullOrWhiteSpace(existingGuid))
+        if (!force && PathProvider.TryValidateVersionGuid(existingGuid, out string safeExistingGuid))
         {
+            existingGuid = safeExistingGuid;
             string existingDir = _paths.GetVersionDirectory(existingGuid);
             string existingExe = Path.Combine(existingDir, exeName);
             if (launchSettings.BypassUpdateCheck && File.Exists(existingExe))
@@ -71,6 +72,13 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
             {
                 return;
             }
+        }
+        else if (!string.IsNullOrWhiteSpace(existingGuid))
+        {
+            _logger.Warn("VersionCheckStep", $"Ignoring invalid persisted version GUID '{existingGuid}'.");
+            existingGuid = string.Empty;
+            context.ExistingVersionGuid = string.Empty;
+            context.ResolvedVersionGuid = string.Empty;
         }
 
         if (launchSettings.BypassUpdateCheck)
@@ -92,19 +100,42 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
                     : string.Empty);
 
             context.ReportStatus(LocalizationService.Instance.Format("Str_Bootstrapper_StatusCheckingVersionFormat", binaryType));
-            using var resp = await _httpClient.GetAsync(clientVersionUrl, ct).ConfigureAwait(false);
+            using var checkTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            checkTimeoutCts.CancelAfter(TimeSpan.FromSeconds(15));
+            using var resp = await _httpClient.GetAsync(clientVersionUrl, HttpCompletionOption.ResponseHeadersRead, checkTimeoutCts.Token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
+                if (string.IsNullOrWhiteSpace(existingGuid))
+                {
+                    context.FailureReason = $"Version check returned HTTP {(int)resp.StatusCode} ({resp.ReasonPhrase}).";
+                }
                 return;
             }
 
-            string json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            string json = await resp.Content.ReadAsStringAsync(checkTimeoutCts.Token).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
-            string latestGuid = doc.RootElement.GetProperty("clientVersionUpload").GetString() ?? string.Empty;
-            string latestVersion = doc.RootElement.TryGetProperty("version", out var vProp) ? vProp.GetString() ?? string.Empty : string.Empty;
-
-            if (string.IsNullOrWhiteSpace(latestGuid))
+            if (!doc.RootElement.TryGetProperty("clientVersionUpload", out var guidProp) ||
+                guidProp.ValueKind != JsonValueKind.String)
             {
+                if (string.IsNullOrWhiteSpace(existingGuid))
+                {
+                    context.FailureReason = "Version check response did not contain 'clientVersionUpload'.";
+                }
+                return;
+            }
+
+            string rawLatestGuid = guidProp.GetString() ?? string.Empty;
+            string latestVersion = doc.RootElement.TryGetProperty("version", out var vProp) && vProp.ValueKind == JsonValueKind.String
+                ? vProp.GetString() ?? string.Empty
+                : string.Empty;
+
+            if (!PathProvider.TryValidateVersionGuid(rawLatestGuid, out string latestGuid))
+            {
+                _logger.Warn("VersionCheckStep", $"Rejected unsafe remote version GUID '{rawLatestGuid}'.");
+                if (string.IsNullOrWhiteSpace(existingGuid))
+                {
+                    context.FailureReason = $"Invalid remote version GUID '{rawLatestGuid}'.";
+                }
                 return;
             }
 
@@ -127,7 +158,7 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
             context.Channel = channel;
             context.RequiresDownload = true;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -136,6 +167,10 @@ public sealed class VersionCheckStep : IBootstrapPipelineStep
             _logger.Warn("VersionCheckStep", $"Update/deploy step fell back to local version: {ex.Message}");
             context.ResolvedVersionGuid = existingGuid;
             context.RequiresDownload = false;
+            if (string.IsNullOrWhiteSpace(existingGuid))
+            {
+                context.FailureReason = $"Failed to check Roblox version: {ex.Message}";
+            }
         }
     }
 }

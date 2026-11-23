@@ -43,6 +43,7 @@ public sealed class WindowManipulationService : IWindowManipulation
     private readonly ConcurrentDictionary<uint, PidCacheEntry> _robloxPidCache = new();
     private readonly object _hookLock = new();
     private readonly object _titleLock = new();
+    private readonly object _iconLock = new();
     private IReadOnlyDictionary<string, string>? _dynamicPlaceholders;
 
     private Thread? _hookThread;
@@ -411,10 +412,19 @@ public sealed class WindowManipulationService : IWindowManipulation
 
         foreach (nint hwnd in _windowPids.Keys.ToList())
         {
-            if (IsValidWindowHandle(hwnd))
+            if (!IsValidWindowHandle(hwnd)) continue;
+
+            _interop.GetWindowThreadProcessId(hwnd, out uint actualPid);
+            if (_windowPids.TryGetValue(hwnd, out uint trackedPid) && trackedPid != 0 && actualPid != trackedPid)
             {
-                SetCustomTitle(hwnd, _options.CustomTitleTemplate, snapshot);
+                continue;
             }
+            if (_options.TargetProcessId != 0 && actualPid != _options.TargetProcessId)
+            {
+                continue;
+            }
+
+            SetCustomTitle(hwnd, _options.CustomTitleTemplate, snapshot);
         }
     }
 
@@ -543,18 +553,32 @@ public sealed class WindowManipulationService : IWindowManipulation
             return false;
         }
 
-        _interop.SendMessage(hWnd, User32.WM_SETICON, User32.ICON_SMALL, hSmall);
-        _interop.SendMessage(hWnd, User32.WM_SETICON, User32.ICON_BIG, hLarge);
+        _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_SMALL, hSmall, 200);
+        _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_BIG, hLarge, 200);
 
         var newPair = new OwnedIconPair(hSmall, hLarge);
-        if (_ownedIcons.TryGetValue(hWnd, out var oldPair))
+        OwnedIconPair? oldPairToDestroy = null;
+        lock (_iconLock)
         {
-            _ownedIcons[hWnd] = newPair;
-            DestroyIconPair(oldPair, newPair);
+            if (_disposed)
+            {
+                oldPairToDestroy = newPair;
+            }
+            else if (_ownedIcons.TryGetValue(hWnd, out var oldPair))
+            {
+                _ownedIcons[hWnd] = newPair;
+                oldPairToDestroy = oldPair;
+            }
+            else
+            {
+                _ownedIcons[hWnd] = newPair;
+            }
         }
-        else
+
+        if (oldPairToDestroy != null)
         {
-            _ownedIcons[hWnd] = newPair;
+            DestroyIconPair(oldPairToDestroy, _disposed ? null : newPair);
+            if (_disposed) return false;
         }
 
         return true;
@@ -564,8 +588,8 @@ public sealed class WindowManipulationService : IWindowManipulation
     {
         if (!IsValidWindowHandle(hWnd)) return false;
 
-        _interop.SendMessage(hWnd, User32.WM_SETICON, User32.ICON_SMALL, nint.Zero);
-        _interop.SendMessage(hWnd, User32.WM_SETICON, User32.ICON_BIG, nint.Zero);
+        _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_SMALL, nint.Zero, 200);
+        _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_BIG, nint.Zero, 200);
         ReleaseOwnedIcons(hWnd);
         return true;
     }
@@ -586,6 +610,11 @@ public sealed class WindowManipulationService : IWindowManipulation
     public bool SetBorderlessFullscreen(nint hWnd, bool enabled, int x, int y, int cx, int cy)
     {
         if (!IsValidWindowHandle(hWnd)) return false;
+
+        if (enabled && (_interop.IsZoomed(hWnd) || _interop.IsIconic(hWnd)))
+        {
+            _interop.ShowWindow(hWnd, User32.SW_RESTORE);
+        }
 
         uint currentStyle = unchecked((uint)_interop.GetWindowLongPtr(hWnd, User32.GWL_STYLE).ToInt64());
         uint currentExStyle = unchecked((uint)_interop.GetWindowLongPtr(hWnd, User32.GWL_EXSTYLE).ToInt64());
@@ -673,7 +702,7 @@ public sealed class WindowManipulationService : IWindowManipulation
 
     private bool IsValidWindowHandle(nint hWnd)
     {
-        if (hWnd == nint.Zero || hWnd == unchecked((nint)0xDEADBEEF)) return false;
+        if (hWnd == nint.Zero) return false;
         return _interop.IsWindow(hWnd);
     }
 
@@ -763,7 +792,13 @@ public sealed class WindowManipulationService : IWindowManipulation
 
     private void ReleaseOwnedIcons(nint hWnd)
     {
-        if (_ownedIcons.TryRemove(hWnd, out var pair))
+        OwnedIconPair? pair;
+        lock (_iconLock)
+        {
+            _ownedIcons.TryRemove(hWnd, out pair);
+        }
+
+        if (pair != null)
         {
             DestroyIconPair(pair, null);
         }
@@ -832,6 +867,11 @@ public sealed class WindowManipulationService : IWindowManipulation
 
         foreach (var hWnd in _ownedIcons.Keys.ToList())
         {
+            if (_interop.IsWindow(hWnd))
+            {
+                _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_SMALL, nint.Zero, 200);
+                _interop.SendMessageTimeout(hWnd, User32.WM_SETICON, User32.ICON_BIG, nint.Zero, 200);
+            }
             ReleaseOwnedIcons(hWnd);
         }
         _savedStates.Clear();

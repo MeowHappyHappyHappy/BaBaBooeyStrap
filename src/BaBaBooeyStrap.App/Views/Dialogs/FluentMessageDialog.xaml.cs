@@ -1,6 +1,9 @@
 using System.Windows;
 using System.Windows.Media;
+using Wpf.Ui.Appearance;
 using Wpf.Ui.Controls;
+using Brush = System.Windows.Media.Brush;
+using Color = System.Windows.Media.Color;
 
 namespace BaBaBooeyStrap.App.Views.Dialogs;
 
@@ -21,6 +24,11 @@ public enum FluentDialogSeverity
 
 public partial class FluentMessageDialog : FluentWindow
 {
+    private static readonly Brush WarningDarkBrush = FreezeBrush(0xF5, 0x9E, 0x0B);
+    private static readonly Brush WarningLightBrush = FreezeBrush(0xB4, 0x53, 0x09);
+    private static readonly Brush ErrorBrush = FreezeBrush(0xEF, 0x44, 0x44);
+    private static readonly Brush InfoBrush = FreezeBrush(0x3B, 0x82, 0xF6);
+
     public FluentDialogResult Result { get; private set; } = FluentDialogResult.Cancel;
 
     public FluentMessageDialog(
@@ -43,6 +51,10 @@ public partial class FluentMessageDialog : FluentWindow
 
         PrimaryButton.Content = primaryText;
         PrimaryButton.Appearance = isDestructive ? ControlAppearance.Danger : ControlAppearance.Primary;
+        if (isDestructive)
+        {
+            PrimaryButton.IsDefault = false;
+        }
 
         if (!string.IsNullOrEmpty(secondaryText))
         {
@@ -63,6 +75,7 @@ public partial class FluentMessageDialog : FluentWindow
         else
         {
             PrimaryButton.Margin = new Thickness(0);
+            PrimaryButton.IsCancel = true;
         }
 
         if (owner != null && owner.IsLoaded && owner.IsVisible)
@@ -82,22 +95,41 @@ public partial class FluentMessageDialog : FluentWindow
         {
             case FluentDialogSeverity.Warning:
                 SeverityIcon.Symbol = SymbolRegular.Warning24;
-                SeverityIcon.Foreground = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
+                SeverityIcon.Foreground = IsLightTheme() ? WarningLightBrush : WarningDarkBrush;
                 break;
             case FluentDialogSeverity.Error:
                 SeverityIcon.Symbol = SymbolRegular.ErrorCircle24;
-                SeverityIcon.Foreground = new SolidColorBrush(Color.FromRgb(0xEF, 0x44, 0x44));
+                SeverityIcon.Foreground = ErrorBrush;
                 break;
             case FluentDialogSeverity.Question:
                 SeverityIcon.Symbol = SymbolRegular.QuestionCircle24;
-                SeverityIcon.Foreground = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6));
+                SeverityIcon.Foreground = InfoBrush;
                 break;
             case FluentDialogSeverity.Info:
             default:
                 SeverityIcon.Symbol = SymbolRegular.Info24;
-                SeverityIcon.Foreground = new SolidColorBrush(Color.FromRgb(0x3B, 0x82, 0xF6));
+                SeverityIcon.Foreground = InfoBrush;
                 break;
         }
+    }
+
+    private static bool IsLightTheme()
+    {
+        try
+        {
+            return ApplicationThemeManager.GetAppTheme() == ApplicationTheme.Light;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Brush FreezeBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
     }
 
     private void PrimaryButton_Click(object sender, RoutedEventArgs e)
