@@ -10,671 +10,834 @@
     <Page.Resources>
         <conv:HexStringToBrushConverter x:Key="HexStringToBrushConverter" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        <Style x:Key="SegmentedRadioButtonStyle" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="PillBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsChecked" Value="False"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="PillBorder" Property="Background" Value="{DynamicResource ControlFillColorSecondaryBrush}"/>
+                            </MultiTrigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="PillBorder" Property="Background" Value="{DynamicResource AccentFillColorDefaultBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextOnAccentFillColorPrimaryBrush}"/>
+                                <Setter Property="FontWeight" Value="SemiBold"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Page.Resources>
-    <Grid Margin="20,12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*" MinHeight="220"/>
-            <RowDefinition Height="8"/>
-            <RowDefinition Height="145" MinHeight="90"/>
-        </Grid.RowDefinitions>
+    <ScrollViewer x:Name="PageScrollViewer"
+                  HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Disabled">
+        <Grid x:Name="RootLayoutGrid" Margin="20,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition x:Name="WorkspaceRow" Height="*" MinHeight="220"/>
+                <RowDefinition x:Name="LogSplitterRow" Height="8"/>
+                <RowDefinition x:Name="LogRow" Height="145" MinHeight="90"/>
+            </Grid.RowDefinitions>
 
-        <!-- 1. Multi-Instance Controller Bar -->
-        <Border Grid.Row="0"
-                CornerRadius="8"
-                Padding="14,10"
-                Margin="0,0,0,10"
-                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1">
-            <StackPanel>
-                <StackPanel Margin="0,0,0,8">
-                    <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceHeader}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceDesc}" FontSize="12" Opacity="0.75" Margin="0,2,0,0" TextWrapping="Wrap"/>
-                </StackPanel>
-
-                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
-                    <CheckBox Content="{DynamicResource Str_Accounts_MinimizeToTray}"
-                              IsChecked="{Binding WindowIntegrations.MinimizeToTray, Mode=TwoWay}"
-                              Margin="0,2,10,2"
-                              VerticalAlignment="Center"/>
-
-                    <!-- Protocol Badge -->
-                    <Border CornerRadius="12"
-                            Padding="10,4"
-                            Margin="0,2,8,2"
-                            VerticalAlignment="Center"
-                            Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            ToolTip="{Binding AccountManagement.ProtocolToolTip}">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse Width="8"
-                                     Height="8"
-                                     Margin="0,0,6,0"
-                                     VerticalAlignment="Center"
-                                     Fill="{Binding AccountManagement.ProtocolIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
-                            <TextBlock Text="{Binding AccountManagement.ProtocolStatusText}" FontSize="12" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Running Clients Badge -->
-                    <Border CornerRadius="12"
-                            Padding="10,4"
-                            Margin="0,2,8,2"
-                            VerticalAlignment="Center"
-                            Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            ToolTip="{Binding AccountManagement.RunningPidsToolTip}">
-                        <TextBlock Text="{Binding AccountManagement.RunningPidsText}" FontSize="12" VerticalAlignment="Center"/>
-                    </Border>
-
-                    <!-- Live Mutex Status Badge -->
-                    <Border CornerRadius="12"
-                            Padding="10,4"
-                            Margin="0,2,10,2"
-                            VerticalAlignment="Center"
-                            Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1"
-                            ToolTip="{Binding AccountManagement.MutexToolTip}">
-                        <StackPanel Orientation="Horizontal">
-                            <Ellipse Width="8"
-                                     Height="8"
-                                     Margin="0,0,6,0"
-                                     VerticalAlignment="Center"
-                                     Fill="{Binding AccountManagement.MutexIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
-                            <TextBlock Text="{Binding AccountManagement.MutexBadgeText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Multi-Instance Toggle -->
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
-                        <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceToggleLabel}"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0"/>
-                        <ui:ToggleSwitch IsChecked="{Binding AccountManagement.MultiInstanceEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
-                    </StackPanel>
-                </WrapPanel>
-
-                <!-- Throttle & Quick Tools Row -->
-                <WrapPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,16,2">
-                        <TextBlock Text="{DynamicResource Str_Accounts_LaunchThrottleDelay}"
-                                   FontSize="12"
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,8,0"/>
-                        <ui:NumberBox Value="{Binding AccountManagement.MultiInstanceLaunchDelayMs, Mode=TwoWay, Converter={x:Static conv:NullableDoubleToIntConverter.Instance}}"
-                                      ClearButtonEnabled="False"
-                                      conv:NumberBoxGuard.RestoreOnEmpty="True"
-                                      Minimum="500"
-                                      Maximum="10000"
-                                      SpinButtonPlacementMode="Inline"
-                                      Width="145"/>
-                    </StackPanel>
-
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,0,2">
-                        <ui:Button Content="{DynamicResource Str_Accounts_ImportMultiRoblox}"
-                                   ToolTip="{DynamicResource Str_Accounts_ImportMultiRobloxTip}"
-                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                   Margin="0,0,8,0"
-                                   Click="ImportMultiRoblox_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_RefreshStatus}"
-                                   Margin="0,0,8,0"
-                                   Click="RefreshStatus_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_OpenQuickSwitcher}"
-                                   ToolTip="{DynamicResource Str_Accounts_OpenQuickSwitcherTip}"
-                                   Margin="0,0,6,0"
-                                   Click="QuickSwitcher_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_ToggleFloatingBar}"
-                                   ToolTip="{DynamicResource Str_Accounts_ToggleFloatingBarTip}"
-                                   Margin="0,0,6,0"
-                                   Click="ToggleFloatingBar_Click"/>
-                        <ui:Button x:Name="TileWindowsButton"
-                                   Content="{DynamicResource Str_Accounts_TileWindowsMenu}"
-                                   ToolTip="{DynamicResource Str_Accounts_TileWindowsTip}"
-                                   Margin="0,0,6,0"
-                                   Click="TileMenu_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_SwitcherSettings}"
-                                   ToolTip="{DynamicResource Str_Accounts_SwitcherSettingsTip}"
-                                   Click="SwitcherSettings_Click"/>
-                    </StackPanel>
-                </WrapPanel>
-            </StackPanel>
-        </Border>
-
-        <!-- 2. Main Workspace: Accounts Table (Left) + Launch Target Panel (Right) -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="335"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- Left Card: Accounts DataGrid -->
-            <Border Grid.Column="0"
+            <!-- 1. Multi-Instance Controller Bar -->
+            <Border Grid.Row="0"
                     CornerRadius="8"
-                    Padding="14"
-                    Margin="0,0,12,0"
+                    Padding="14,10"
+                    Margin="0,0,0,10"
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <WrapPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" HorizontalAlignment="Left">
+                            <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceHeader}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center"
+                                       Margin="0,2,10,2"/>
+
+                            <!-- Protocol Badge -->
+                            <Border CornerRadius="12"
+                                    Padding="9,3"
+                                    Margin="0,2,6,2"
+                                    VerticalAlignment="Center"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    ToolTip="{Binding AccountManagement.ProtocolToolTip}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8"
+                                             Height="8"
+                                             Margin="0,0,6,0"
+                                             VerticalAlignment="Center"
+                                             Fill="{Binding AccountManagement.ProtocolIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                    <TextBlock Text="{Binding AccountManagement.ProtocolStatusText}" FontSize="12" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Running Clients Badge -->
+                            <Border CornerRadius="12"
+                                    Padding="9,3"
+                                    Margin="0,2,6,2"
+                                    VerticalAlignment="Center"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    ToolTip="{Binding AccountManagement.RunningPidsToolTip}">
+                                <TextBlock Text="{Binding AccountManagement.RunningPidsText}" FontSize="12" VerticalAlignment="Center"/>
+                            </Border>
+
+                            <!-- Live Mutex Status Badge -->
+                            <Border CornerRadius="12"
+                                    Padding="9,3"
+                                    Margin="0,2,8,2"
+                                    VerticalAlignment="Center"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    ToolTip="{Binding AccountManagement.MutexToolTip}">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="8"
+                                             Height="8"
+                                             Margin="0,0,6,0"
+                                             VerticalAlignment="Center"
+                                             Fill="{Binding AccountManagement.MutexIndicatorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                    <TextBlock Text="{Binding AccountManagement.MutexBadgeText}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Multi-Instance Toggle -->
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,8,2">
+                                <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceToggleLabel}"
+                                           FontSize="12"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0"/>
+                                <ui:ToggleSwitch IsChecked="{Binding AccountManagement.MultiInstanceEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </WrapPanel>
+
+                        <ui:Button x:Name="ControllerDetailsToggle"
+                                   Grid.Column="1"
+                                   Content="▾"
+                                   Padding="8,4"
+                                   VerticalAlignment="Top"
+                                   ToolTip="{DynamicResource Str_Accounts_ToggleDetailsTip}"
+                                   AutomationProperties.Name="{DynamicResource Str_Accounts_ToggleDetailsTip}"
+                                   Click="ToggleControllerDetails_Click"/>
+                    </Grid>
+
+                    <!-- Collapsible Details & Quick Tools Row -->
+                    <StackPanel x:Name="ControllerDetailsPanel" Margin="0,6,0,0">
+                        <TextBlock Text="{DynamicResource Str_Accounts_MultiInstanceDesc}"
+                                   FontSize="12"
+                                   Opacity="0.75"
+                                   Margin="0,0,0,6"
+                                   TextWrapping="Wrap"/>
+
+                        <WrapPanel Orientation="Horizontal">
+                            <CheckBox Content="{DynamicResource Str_Accounts_MinimizeToTray}"
+                                      IsChecked="{Binding WindowIntegrations.MinimizeToTray, Mode=TwoWay}"
+                                      Margin="0,2,14,2"
+                                      VerticalAlignment="Center"/>
+
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,14,2">
+                                <TextBlock Text="{DynamicResource Str_Accounts_LaunchThrottleDelay}"
+                                           FontSize="12"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0"/>
+                                <ui:NumberBox Value="{Binding AccountManagement.MultiInstanceLaunchDelayMs, Mode=TwoWay, Converter={x:Static conv:NullableDoubleToIntConverter.Instance}}"
+                                              ClearButtonEnabled="False"
+                                              conv:NumberBoxGuard.RestoreOnEmpty="True"
+                                              Minimum="500"
+                                              Maximum="10000"
+                                              SpinButtonPlacementMode="Inline"
+                                              Width="140"/>
+                            </StackPanel>
+
+                            <ui:Button Content="{DynamicResource Str_Accounts_ImportMultiRoblox}"
+                                       ToolTip="{DynamicResource Str_Accounts_ImportMultiRobloxTip}"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                       Padding="8,4"
+                                       Margin="0,2,6,2"
+                                       Click="ImportMultiRoblox_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_RefreshStatus}"
+                                       Padding="8,4"
+                                       Margin="0,2,6,2"
+                                       Click="RefreshStatus_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_OpenQuickSwitcher}"
+                                       ToolTip="{DynamicResource Str_Accounts_OpenQuickSwitcherTip}"
+                                       Padding="8,4"
+                                       Margin="0,2,6,2"
+                                       Click="QuickSwitcher_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_ToggleFloatingBar}"
+                                       ToolTip="{DynamicResource Str_Accounts_ToggleFloatingBarTip}"
+                                       Padding="8,4"
+                                       Margin="0,2,6,2"
+                                       Click="ToggleFloatingBar_Click"/>
+                            <ui:Button x:Name="TileWindowsButton"
+                                       Content="{DynamicResource Str_Accounts_TileWindowsMenu}"
+                                       ToolTip="{DynamicResource Str_Accounts_TileWindowsTip}"
+                                       Padding="8,4"
+                                       Margin="0,2,6,2"
+                                       Click="TileMenu_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_SwitcherSettings}"
+                                       ToolTip="{DynamicResource Str_Accounts_SwitcherSettingsTip}"
+                                       Padding="8,4"
+                                       Margin="0,2,0,2"
+                                       Click="SwitcherSettings_Click"/>
+                        </WrapPanel>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 2. Main Workspace: Accounts Table (Left/Top) + Launch Target Panel (Right/Bottom) -->
+            <Grid x:Name="WorkspaceGrid" Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="AccountsColumn" Width="*"/>
+                    <ColumnDefinition x:Name="TargetColumn" Width="310"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition x:Name="WorkspaceRow0" Height="*"/>
+                    <RowDefinition x:Name="WorkspaceRow1" Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Left Card: Accounts DataGrid -->
+                <Border x:Name="AccountsCard"
+                        Grid.Row="0"
+                        Grid.Column="0"
+                        CornerRadius="8"
+                        Padding="14"
+                        Margin="0,0,12,0"
+                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Header + Wrapping Toolbar -->
+                        <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,6">
+                                <TextBlock Text="{DynamicResource Str_Accounts_SavedAccountsHeader}"
+                                           FontSize="15"
+                                           FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding AccountManagement.AccountCountText}"
+                                           FontSize="13"
+                                           Opacity="0.75"
+                                           Margin="6,0,0,0"
+                                           VerticalAlignment="Center"/>
+                                <Border CornerRadius="4"
+                                        Padding="6,1"
+                                        Margin="8,0,0,0"
+                                        VerticalAlignment="Center"
+                                        Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                        BorderThickness="1"
+                                        ToolTip="{DynamicResource Str_Accounts_DpapiBadgeTip}">
+                                    <TextBlock Text="{DynamicResource Str_Accounts_DpapiBadge}"
+                                               FontSize="10.5"
+                                               Opacity="0.8"/>
+                                </Border>
+                            </StackPanel>
+
+                            <WrapPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <ui:Button Content="↑"
+                                           ToolTip="{DynamicResource Str_Accounts_MoveUpTip}"
+                                           AutomationProperties.Name="{DynamicResource Str_Accounts_MoveUpTip}"
+                                           IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
+                                           Padding="7,4"
+                                           Margin="0,2,4,2"
+                                           Click="MoveUp_Click"/>
+                                <ui:Button Content="↓"
+                                           ToolTip="{DynamicResource Str_Accounts_MoveDownTip}"
+                                           AutomationProperties.Name="{DynamicResource Str_Accounts_MoveDownTip}"
+                                           IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="MoveDown_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_VerifyCookies}"
+                                           ToolTip="{DynamicResource Str_Accounts_VerifyCookiesTip}"
+                                           IsEnabled="{Binding AccountManagement.IsNotVerifyingCookies}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="VerifyCookies_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_BatchAfkPreset}"
+                                           ToolTip="{DynamicResource Str_Accounts_BatchAfkPresetTip}"
+                                           IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="BatchAfkPreset_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_EditSettings}"
+                                           IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="EditSettings_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_SelectAll}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="SelectAll_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_AddAccount}"
+                                           Appearance="Primary"
+                                           IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                           Padding="7,4"
+                                           Margin="0,2,5,2"
+                                           Click="AddAccount_Click"/>
+                                <ui:Button Content="{DynamicResource Str_Accounts_RemoveSelected}"
+                                           Appearance="Danger"
+                                           IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                           Padding="7,4"
+                                           Margin="0,2,0,2"
+                                           Click="RemoveAccount_Click"/>
+                            </WrapPanel>
+                        </StackPanel>
+
+                        <!-- Search Bar -->
+                        <ui:TextBox Grid.Row="1"
+                                    AutomationProperties.Name="{DynamicResource Str_Accounts_SearchPlaceholder}"
+                                    PlaceholderText="{DynamicResource Str_Accounts_SearchPlaceholder}"
+                                    Text="{Binding AccountManagement.AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    Margin="0,0,0,8"/>
+
+                        <!-- Running Roblox Windows Strip -->
+                        <Border x:Name="RunningInstancesStrip"
+                                Grid.Row="2"
+                                Visibility="{Binding AccountManagement.HasRunningInstances, Converter={StaticResource BoolToVisibilityConverter}}"
+                                CornerRadius="6"
+                                Padding="10,7"
+                                Margin="0,0,0,8"
+                                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                BorderThickness="1">
+                            <StackPanel>
+                                <Grid x:Name="RunningStripHeaderGrid" Margin="0,0,0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{DynamicResource Str_Accounts_RunningWindowsHeader}"
+                                               FontSize="12.5"
+                                               FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="0,0,8,0"
+                                               VerticalAlignment="Center"/>
+                                    <ui:Button Grid.Column="1"
+                                               HorizontalAlignment="Right"
+                                               Content="{DynamicResource Str_Tray_MinimizeAllWindows}"
+                                               Padding="8,2"
+                                               Margin="0,0,4,0"
+                                               FontSize="11.5"
+                                               Click="MinimizeAllRunning_Click"/>
+                                    <ui:Button x:Name="RunningStripToggle"
+                                               Grid.Column="2"
+                                               Content="▾"
+                                               Padding="7,2"
+                                               FontSize="11.5"
+                                               ToolTip="{DynamicResource Str_Accounts_ToggleRunningStripTip}"
+                                               AutomationProperties.Name="{DynamicResource Str_Accounts_ToggleRunningStripTip}"
+                                               Click="ToggleRunningStrip_Click"/>
+                                </Grid>
+                                <ItemsControl x:Name="RunningInstancesItems" ItemsSource="{Binding AccountManagement.RunningInstances}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="6"
+                                                    Margin="0,0,6,4"
+                                                    Padding="4,3"
+                                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                                                    BorderThickness="1">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFocused}" Value="True">
+                                                                <Setter Property="BorderBrush" Value="#FF3B82F6"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <ui:Button Tag="{Binding ProcessId}"
+                                                               Padding="7,3"
+                                                               Margin="0,0,4,0"
+                                                               Click="RunningInstancePill_Click">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding ShortLabel}" FontWeight="SemiBold" FontSize="12"/>
+                                                            <TextBlock Text="{Binding MonitorBadge}" FontSize="11" Opacity="0.72" Margin="6,0,0,0"/>
+                                                        </StackPanel>
+                                                    </ui:Button>
+                                                    <ui:Button Content="⇄"
+                                                               ToolTip="{DynamicResource Str_Switcher_MoveToMonitor}"
+                                                               IsEnabled="{Binding DataContext.AccountManagement.HasMultipleMonitors, RelativeSource={RelativeSource AncestorType=Page}}"
+                                                               Tag="{Binding ProcessId}"
+                                                               Padding="6,3"
+                                                               Margin="0,0,2,0"
+                                                               Click="RunningInstanceMoveMonitor_Click"/>
+                                                    <ui:Button Content="—"
+                                                               ToolTip="{DynamicResource Str_Switcher_MinimizeRestoreTip}"
+                                                               Tag="{Binding ProcessId}"
+                                                               Padding="6,3"
+                                                               Margin="0,0,2,0"
+                                                               Click="RunningInstanceMinimize_Click"/>
+                                                    <ui:Button Content="✕"
+                                                               ToolTip="{DynamicResource Str_Switcher_CloseWindowTip}"
+                                                               Tag="{Binding ProcessId}"
+                                                               Padding="6,3"
+                                                               Click="RunningInstanceClose_Click"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Accounts Grid -->
+                        <ui:DataGrid x:Name="AccountsGrid"
+                                     Grid.Row="3"
+                                     ItemsSource="{Binding AccountManagement.FilteredAccountItems}"
+                                     SelectedItem="{Binding AccountManagement.SelectedAccountItem, Mode=TwoWay}"
+                                     AutoGenerateColumns="False"
+                                     CanUserAddRows="False"
+                                     IsReadOnly="False"
+                                     GridLinesVisibility="Horizontal"
+                                     HeadersVisibility="Column"
+                                     Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                     CellEditEnding="AccountsGrid_CellEditEnding"
+                                     MouseDoubleClick="AccountsGrid_MouseDoubleClick"
+                                     ContextMenuOpening="AccountsGrid_ContextMenuOpening">
+                            <DataGrid.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem x:Name="CtxFocusWindow"
+                                              Header="{DynamicResource Str_Accounts_CtxFocusWindow}"
+                                              Click="CtxFocusWindow_Click"/>
+                                    <MenuItem x:Name="CtxCloseWindow"
+                                              Header="{DynamicResource Str_Accounts_CtxCloseWindow}"
+                                              Click="CtxCloseWindow_Click"/>
+                                    <Separator x:Name="CtxWindowSeparator" />
+                                    <MenuItem x:Name="CtxLaunchAccount"
+                                              Header="{DynamicResource Str_Accounts_CtxLaunch}"
+                                              Click="LaunchSelected_Click"/>
+                                    <MenuItem x:Name="CtxEditSettings"
+                                              Header="{DynamicResource Str_Accounts_CtxEditSettings}"
+                                              Click="EditSettings_Click"/>
+                                    <MenuItem x:Name="CtxUpdateCookie"
+                                              Header="{DynamicResource Str_Accounts_CtxUpdateCookie}"
+                                              Click="UpdateCookie_Click"/>
+                                    <MenuItem x:Name="CtxVerifyCookie"
+                                              Header="{DynamicResource Str_Accounts_CtxVerifyCookie}"
+                                              Click="VerifySelectedCookie_Click"/>
+                                    <Separator />
+                                    <MenuItem x:Name="CtxApplyAfk"
+                                              Header="{DynamicResource Str_Accounts_CtxApplyAfk}"
+                                              Click="BatchAfkPreset_Click"/>
+                                    <MenuItem x:Name="CtxRemoveAccount"
+                                              Header="{DynamicResource Str_Accounts_CtxRemove}"
+                                              Click="RemoveAccount_Click"/>
+                                </ContextMenu>
+                            </DataGrid.ContextMenu>
+                            <DataGrid.Columns>
+                                <DataGridTemplateColumn Width="44">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColCheck}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Binding="{Binding Username}" Width="*" MinWidth="110" IsReadOnly="True">
+                                    <DataGridTextColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColUsername}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTextColumn.HeaderTemplate>
+                                </DataGridTextColumn>
+                                <DataGridTemplateColumn x:Name="RunStatusColumn" Width="90" IsReadOnly="True">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColRunStatus}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding RunStatusToolTip}">
+                                                <Ellipse Width="8"
+                                                         Height="8"
+                                                         Margin="0,0,6,0"
+                                                         VerticalAlignment="Center"
+                                                         Fill="{Binding RunStatusColorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                                <TextBlock Text="{Binding RunStatusText}" VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsRunningFocused}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Width="88" IsReadOnly="True">
+                                    <DataGridTemplateColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColCookieStatus}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.HeaderTemplate>
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding CookieStatusToolTip}">
+                                                <Ellipse Width="8"
+                                                         Height="8"
+                                                         Margin="0,0,6,0"
+                                                         VerticalAlignment="Center"
+                                                         Fill="{Binding CookieStatusColorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
+                                                <TextBlock Text="{Binding CookieStatusText}" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn x:Name="UserIdColumn" Binding="{Binding UserId}" Width="88" IsReadOnly="True">
+                                    <DataGridTextColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColUserId}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTextColumn.HeaderTemplate>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn Binding="{Binding Notes, UpdateSourceTrigger=LostFocus}" Width="95" IsReadOnly="False">
+                                    <DataGridTextColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColNotes}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTextColumn.HeaderTemplate>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn x:Name="SettingsSummaryColumn" Binding="{Binding SettingsSummary}" Width="125" IsReadOnly="True">
+                                    <DataGridTextColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColSettings}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTextColumn.HeaderTemplate>
+                                </DataGridTextColumn>
+                                <DataGridTextColumn x:Name="LastLaunchedColumn" Binding="{Binding LastLaunchedDisplay}" Width="120" IsReadOnly="True">
+                                    <DataGridTextColumn.HeaderTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{DynamicResource Str_Accounts_ColLastLaunched}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+                                        </DataTemplate>
+                                    </DataGridTextColumn.HeaderTemplate>
+                                </DataGridTextColumn>
+                            </DataGrid.Columns>
+                        </ui:DataGrid>
+                    </Grid>
+                </Border>
+
+                <!-- Right/Bottom Column: Scrollable Launch Panel -->
+                <ScrollViewer x:Name="TargetPanelScroll"
+                              Grid.Row="0"
+                              Grid.Column="1"
+                              VerticalScrollBarVisibility="Auto">
+                    <Border CornerRadius="8"
+                            Padding="14"
+                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1">
+                        <StackPanel>
+                            <TextBlock Text="{DynamicResource Str_Accounts_LaunchTargetHeader}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,10"/>
+
+                            <!-- Merged Saved Targets (Select + Edit Name + Save + Delete) -->
+                            <TextBlock Text="{DynamicResource Str_Accounts_SavedTargetsMergedLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ComboBox x:Name="SavedTargetComboBox"
+                                          Grid.Column="0"
+                                          IsEditable="True"
+                                          IsTextSearchEnabled="False"
+                                          TextSearch.TextPath="Name"
+                                          ItemsSource="{Binding AccountManagement.SavedTargets}"
+                                          SelectedItem="{Binding AccountManagement.SelectedSavedTarget, Mode=TwoWay}"
+                                          Text="{Binding AccountManagement.TargetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          ToolTip="{DynamicResource Str_Accounts_TargetNamePlaceholder}"
+                                          Margin="0,0,6,0">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Border Width="20"
+                                                        Height="20"
+                                                        ClipToBounds="True"
+                                                        Margin="0,0,8,0"
+                                                        Background="{DynamicResource ControlFillColorDefaultBrush}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="CornerRadius" Value="4"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ThumbnailUrl}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsUserTarget}" Value="True">
+                                                                    <Setter Property="CornerRadius" Value="10"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <Image Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
+                                                </Border>
+                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                                <ui:Button Grid.Column="1"
+                                           Content="{DynamicResource Str_Accounts_SaveTarget}"
+                                           IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                           Padding="10,5"
+                                           Margin="0,0,4,0"
+                                           Click="SaveTarget_Click"/>
+                                <ui:Button Grid.Column="2"
+                                           Content="{DynamicResource Str_Accounts_DeleteTarget}"
+                                           Appearance="Danger"
+                                           IsEnabled="{Binding AccountManagement.CanDeleteTarget}"
+                                           Padding="10,5"
+                                           Click="DeleteTarget_Click"/>
+                            </Grid>
+
+                            <!-- Target Mode Segmented Control -->
+                            <TextBlock Text="{DynamicResource Str_Accounts_TargetModeLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                            <Border CornerRadius="6"
+                                    Padding="2"
+                                    Margin="0,0,0,8"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <UniformGrid Columns="2" IsEnabled="{Binding AccountManagement.IsNotLaunching}">
+                                    <RadioButton GroupName="LaunchTargetMode"
+                                                 Style="{StaticResource SegmentedRadioButtonStyle}"
+                                                 Content="{DynamicResource Str_Accounts_TargetModeServer}"
+                                                 IsChecked="{Binding AccountManagement.IsGameServerTargetMode, Mode=TwoWay}"/>
+                                    <RadioButton GroupName="LaunchTargetMode"
+                                                 Style="{StaticResource SegmentedRadioButtonStyle}"
+                                                 Content="{DynamicResource Str_Accounts_TargetModeFollowUser}"
+                                                 IsChecked="{Binding AccountManagement.IsFollowUserModeSelected, Mode=TwoWay}"/>
+                                </UniformGrid>
+                            </Border>
+
+                            <!-- Target Input -->
+                            <TextBlock Text="{Binding AccountManagement.TargetInputLabelText}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                            <ui:TextBox PlaceholderText="{Binding AccountManagement.TargetInputPlaceholderText}"
+                                        Text="{Binding AccountManagement.LaunchTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                        Margin="0,0,0,8"/>
+
+                            <!-- Resolving Game Info Indicator -->
+                            <StackPanel Orientation="Horizontal"
+                                        Margin="0,0,0,8"
+                                        Visibility="{Binding AccountManagement.IsResolvingGameInfo, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <ui:ProgressRing Width="14"
+                                                 Height="14"
+                                                 IsIndeterminate="True"
+                                                 Margin="0,0,8,0"
+                                                 VerticalAlignment="Center"/>
+                                <TextBlock Text="{DynamicResource Str_Accounts_ResolvingTarget}"
+                                           FontSize="11.5"
+                                           Opacity="0.72"
+                                           VerticalAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Resolved Game Info Preview -->
+                            <Border Visibility="{Binding AccountManagement.HasResolvedGameInfo, Converter={StaticResource BoolToVisibilityConverter}}"
+                                    CornerRadius="6"
+                                    Padding="8"
+                                    Margin="0,0,0,8"
+                                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                                    BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0"
+                                            Width="40"
+                                            Height="40"
+                                            ClipToBounds="True"
+                                            Margin="0,0,10,0"
+                                            Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Setter Property="CornerRadius" Value="6"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding AccountManagement.IsResolvedPreviewCircular}" Value="True">
+                                                        <Setter Property="CornerRadius" Value="20"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Image Source="{Binding AccountManagement.ResolvedGameThumbnailUrl}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding AccountManagement.ResolvedGameName}"
+                                                   FontWeight="SemiBold"
+                                                   FontSize="12.5"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding AccountManagement.ResolvedGamePlaceIdText}"
+                                                   FontSize="11"
+                                                   Opacity="0.68"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <!-- Optional JobId -->
+                            <StackPanel Visibility="{Binding AccountManagement.IsJobIdInputVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <TextBlock Text="{DynamicResource Str_Accounts_JobIdLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
+                                <ui:TextBox PlaceholderText="{DynamicResource Str_Accounts_JobIdPlaceholder}"
+                                            Text="{Binding AccountManagement.LaunchJobId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            Margin="0,0,0,8"/>
+                            </StackPanel>
+
+                            <ui:Button Content="{DynamicResource Str_Accounts_LaunchSelected}"
+                                       Appearance="Secondary"
+                                       HorizontalAlignment="Stretch"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                       Margin="0,4,0,8"
+                                       Click="LaunchSelected_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_LaunchChecked}"
+                                       Appearance="Primary"
+                                       HorizontalAlignment="Stretch"
+                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
+                                       Margin="0,0,0,8"
+                                       Click="LaunchChecked_Click"/>
+                            <ui:Button Content="{DynamicResource Str_Accounts_CancelLaunch}"
+                                       Appearance="Danger"
+                                       HorizontalAlignment="Stretch"
+                                       IsEnabled="{Binding AccountManagement.CanCancelLaunch}"
+                                       Click="CancelLaunch_Click"/>
+                        </StackPanel>
+                    </Border>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Resizable Splitter -->
+            <GridSplitter x:Name="ActivityLogSplitter"
+                          Grid.Row="2"
+                          Height="6"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Center"
+                          ResizeDirection="Rows"
+                          ShowsPreview="False"
+                          Background="Transparent"
+                          Cursor="SizeNS"/>
+
+            <!-- 3. Activity Log Bar -->
+            <Border Grid.Row="3"
+                    CornerRadius="8"
+                    Padding="12,8"
                     Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- Header + Toolbar -->
-                    <Grid Grid.Row="0" Margin="0,0,0,8">
+                    <Grid x:Name="ActivityLogHeaderGrid" Grid.Row="0" Margin="0,0,0,6">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
-                            <TextBlock Text="{DynamicResource Str_Accounts_SavedAccountsHeader}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <TextBlock Text="{Binding AccountManagement.AccountCountText}" FontSize="13" Opacity="0.75" Margin="6,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
-
-                        <WrapPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                            <ui:Button Content="↑"
-                                       ToolTip="{DynamicResource Str_Accounts_MoveUpTip}"
-                                       AutomationProperties.Name="{DynamicResource Str_Accounts_MoveUpTip}"
-                                       IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
-                                       Padding="8,4"
-                                       Margin="0,2,4,2"
-                                       Click="MoveUp_Click"/>
-                            <ui:Button Content="↓"
-                                       ToolTip="{DynamicResource Str_Accounts_MoveDownTip}"
-                                       AutomationProperties.Name="{DynamicResource Str_Accounts_MoveDownTip}"
-                                       IsEnabled="{Binding AccountManagement.IsAccountReorderEnabled}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="MoveDown_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_VerifyCookies}"
-                                       ToolTip="{DynamicResource Str_Accounts_VerifyCookiesTip}"
-                                       IsEnabled="{Binding AccountManagement.IsNotVerifyingCookies}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="VerifyCookies_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_BatchAfkPreset}"
-                                       ToolTip="{DynamicResource Str_Accounts_BatchAfkPresetTip}"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="BatchAfkPreset_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_EditSettings}"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="EditSettings_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_SelectAll}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="SelectAll_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_AddAccount}"
-                                       Appearance="Primary"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Padding="8,4"
-                                       Margin="0,2,6,2"
-                                       Click="AddAccount_Click"/>
-                            <ui:Button Content="{DynamicResource Str_Accounts_RemoveSelected}"
-                                       Appearance="Danger"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Padding="8,4"
-                                       Margin="0,2,0,2"
-                                       Click="RemoveAccount_Click"/>
-                        </WrapPanel>
+                        <TextBlock Grid.Column="0"
+                                   Text="{DynamicResource Str_Accounts_ActivityLogHeader}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="0,0,8,0"
+                                   VerticalAlignment="Center"/>
+                        <ui:Button Grid.Column="1"
+                                   Content="{DynamicResource Str_Accounts_ClearLog}"
+                                   Padding="8,3"
+                                   Margin="0,0,4,0"
+                                   HorizontalAlignment="Right"
+                                   Click="ClearLog_Click"/>
+                        <ui:Button x:Name="ActivityLogToggle"
+                                   Grid.Column="2"
+                                   Content="▾"
+                                   Padding="7,3"
+                                   ToolTip="{DynamicResource Str_Accounts_ToggleLogTip}"
+                                   AutomationProperties.Name="{DynamicResource Str_Accounts_ToggleLogTip}"
+                                   Click="ToggleActivityLog_Click"/>
                     </Grid>
 
-                    <!-- Search Bar -->
-                    <ui:TextBox Grid.Row="1"
-                                AutomationProperties.Name="{DynamicResource Str_Accounts_SearchPlaceholder}"
-                                PlaceholderText="{DynamicResource Str_Accounts_SearchPlaceholder}"
-                                Text="{Binding AccountManagement.AccountSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                Margin="0,0,0,8"/>
-
-                    <!-- Running Roblox Windows Strip -->
-                    <Border Grid.Row="2"
-                            Visibility="{Binding AccountManagement.HasRunningInstances, Converter={StaticResource BoolToVisibilityConverter}}"
-                            CornerRadius="6"
-                            Padding="10,8"
-                            Margin="0,0,0,8"
-                            Background="{DynamicResource ControlFillColorDefaultBrush}"
-                            BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                            BorderThickness="1">
-                        <StackPanel>
-                            <Grid Margin="0,0,0,6">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0"
-                                           Text="{DynamicResource Str_Accounts_RunningWindowsHeader}"
-                                           FontSize="12.5"
-                                           FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis"
-                                           Margin="0,0,8,0"
-                                           VerticalAlignment="Center"/>
-                                <ui:Button Grid.Column="1"
-                                           HorizontalAlignment="Right"
-                                           Content="{DynamicResource Str_Tray_MinimizeAllWindows}"
-                                           Padding="8,2"
-                                           FontSize="11.5"
-                                           Click="MinimizeAllRunning_Click"/>
-                            </Grid>
-                            <ItemsControl ItemsSource="{Binding AccountManagement.RunningInstances}">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <WrapPanel Orientation="Horizontal"/>
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border CornerRadius="6"
-                                                Margin="0,0,6,4"
-                                                Padding="4,3"
-                                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                                BorderThickness="1">
-                                            <Border.Style>
-                                                <Style TargetType="Border">
-                                                    <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsFocused}" Value="True">
-                                                            <Setter Property="BorderBrush" Value="#FF3B82F6"/>
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Border.Style>
-                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                <ui:Button Tag="{Binding ProcessId}"
-                                                           Padding="7,3"
-                                                           Margin="0,0,4,0"
-                                                           Click="RunningInstancePill_Click">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding ShortLabel}" FontWeight="SemiBold" FontSize="12"/>
-                                                        <TextBlock Text="{Binding MonitorBadge}" FontSize="11" Opacity="0.72" Margin="6,0,0,0"/>
-                                                    </StackPanel>
-                                                </ui:Button>
-                                                <ui:Button Content="⇄"
-                                                           ToolTip="{DynamicResource Str_Switcher_MoveToMonitor}"
-                                                           IsEnabled="{Binding DataContext.AccountManagement.HasMultipleMonitors, RelativeSource={RelativeSource AncestorType=Page}}"
-                                                           Tag="{Binding ProcessId}"
-                                                           Padding="6,3"
-                                                           Margin="0,0,2,0"
-                                                           Click="RunningInstanceMoveMonitor_Click"/>
-                                                <ui:Button Content="—"
-                                                           ToolTip="{DynamicResource Str_Switcher_MinimizeRestoreTip}"
-                                                           Tag="{Binding ProcessId}"
-                                                           Padding="6,3"
-                                                           Margin="0,0,2,0"
-                                                           Click="RunningInstanceMinimize_Click"/>
-                                                <ui:Button Content="✕"
-                                                           ToolTip="{DynamicResource Str_Switcher_CloseWindowTip}"
-                                                           Tag="{Binding ProcessId}"
-                                                           Padding="6,3"
-                                                           Click="RunningInstanceClose_Click"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- Accounts Grid -->
-                    <ui:DataGrid x:Name="AccountsGrid"
-                                 Grid.Row="3"
-                                 ItemsSource="{Binding AccountManagement.FilteredAccountItems}"
-                                 SelectedItem="{Binding AccountManagement.SelectedAccountItem, Mode=TwoWay}"
-                                 AutoGenerateColumns="False"
-                                 CanUserAddRows="False"
-                                 IsReadOnly="False"
-                                 GridLinesVisibility="Horizontal"
-                                 HeadersVisibility="Column"
-                                 Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                                 BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                 CellEditEnding="AccountsGrid_CellEditEnding"
-                                 MouseDoubleClick="AccountsGrid_MouseDoubleClick"
-                                 ContextMenuOpening="AccountsGrid_ContextMenuOpening">
-                        <DataGrid.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem x:Name="CtxLaunchAccount"
-                                          Header="{DynamicResource Str_Accounts_CtxLaunch}"
-                                          Click="LaunchSelected_Click"/>
-                                <MenuItem x:Name="CtxEditSettings"
-                                          Header="{DynamicResource Str_Accounts_CtxEditSettings}"
-                                          Click="EditSettings_Click"/>
-                                <MenuItem x:Name="CtxUpdateCookie"
-                                          Header="{DynamicResource Str_Accounts_CtxUpdateCookie}"
-                                          Click="UpdateCookie_Click"/>
-                                <MenuItem x:Name="CtxVerifyCookie"
-                                          Header="{DynamicResource Str_Accounts_CtxVerifyCookie}"
-                                          Click="VerifySelectedCookie_Click"/>
-                                <Separator />
-                                <MenuItem x:Name="CtxApplyAfk"
-                                          Header="{DynamicResource Str_Accounts_CtxApplyAfk}"
-                                          Click="BatchAfkPreset_Click"/>
-                                <MenuItem x:Name="CtxRemoveAccount"
-                                          Header="{DynamicResource Str_Accounts_CtxRemove}"
-                                          Click="RemoveAccount_Click"/>
-                            </ContextMenu>
-                        </DataGrid.ContextMenu>
-                        <DataGrid.Columns>
-                            <DataGridTemplateColumn Width="48">
-                                <DataGridTemplateColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColCheck}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.HeaderTemplate>
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                  HorizontalAlignment="Center"
-                                                  VerticalAlignment="Center"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Binding="{Binding Username}" Width="*" IsReadOnly="True">
-                                <DataGridTextColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColUsername}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTextColumn.HeaderTemplate>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Binding="{Binding UserId}" Width="90" IsReadOnly="True">
-                                <DataGridTextColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColUserId}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTextColumn.HeaderTemplate>
-                            </DataGridTextColumn>
-                            <DataGridTemplateColumn Width="98" IsReadOnly="True">
-                                <DataGridTemplateColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColCookieStatus}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.HeaderTemplate>
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" ToolTip="{Binding CookieStatusToolTip}">
-                                            <Ellipse Width="8"
-                                                     Height="8"
-                                                     Margin="0,0,6,0"
-                                                     VerticalAlignment="Center"
-                                                     Fill="{Binding CookieStatusColorHex, Converter={StaticResource HexStringToBrushConverter}}"/>
-                                            <TextBlock Text="{Binding CookieStatusText}" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridTextColumn Binding="{Binding Notes, UpdateSourceTrigger=LostFocus}" Width="105" IsReadOnly="False">
-                                <DataGridTextColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColNotes}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTextColumn.HeaderTemplate>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn x:Name="SettingsSummaryColumn" Binding="{Binding SettingsSummary}" Width="140" IsReadOnly="True">
-                                <DataGridTextColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColSettings}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTextColumn.HeaderTemplate>
-                            </DataGridTextColumn>
-                            <DataGridTextColumn Binding="{Binding LastLaunchedDisplay}" Width="125" IsReadOnly="True">
-                                <DataGridTextColumn.HeaderTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{DynamicResource Str_Accounts_ColLastLaunched}" Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-                                    </DataTemplate>
-                                </DataGridTextColumn.HeaderTemplate>
-                            </DataGridTextColumn>
-                        </DataGrid.Columns>
-                    </ui:DataGrid>
+                    <TextBox x:Name="LogTextBox"
+                             Grid.Row="1"
+                             Text="{Binding AccountManagement.ActivityLogText, Mode=OneWay}"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             VerticalContentAlignment="Top"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Padding="8,4"
+                             Foreground="{DynamicResource TextFillColorPrimaryBrush}"
+                             Background="{DynamicResource ControlFillColorDefaultBrush}"
+                             BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"/>
                 </Grid>
             </Border>
-
-            <!-- Right Column: Scrollable Launch Panel -->
-            <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
-                <Border CornerRadius="8"
-                        Padding="14"
-                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                        BorderThickness="1">
-                    <StackPanel>
-                        <TextBlock Text="{DynamicResource Str_Accounts_LaunchTargetHeader}"
-                                   FontSize="15"
-                                   FontWeight="SemiBold"
-                                   Margin="0,0,0,10"/>
-
-                        <!-- Saved Join Targets -->
-                        <TextBlock Text="{DynamicResource Str_Accounts_SavedTargetsLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <ComboBox Grid.Column="0"
-                                      ItemsSource="{Binding AccountManagement.SavedTargets}"
-                                      SelectedItem="{Binding AccountManagement.SelectedSavedTarget, Mode=TwoWay}"
-                                      Margin="0,0,6,0">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Border Width="20"
-                                                    Height="20"
-                                                    ClipToBounds="True"
-                                                    Margin="0,0,8,0"
-                                                    Background="{DynamicResource ControlFillColorDefaultBrush}">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Setter Property="CornerRadius" Value="4"/>
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding ThumbnailUrl}" Value="{x:Null}">
-                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                            </DataTrigger>
-                                                            <DataTrigger Binding="{Binding IsUserTarget}" Value="True">
-                                                                <Setter Property="CornerRadius" Value="10"/>
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Border.Style>
-                                                <Image Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
-                                            </Border>
-                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                            <ui:Button Grid.Column="1"
-                                       Content="{DynamicResource Str_Accounts_DeleteTarget}"
-                                       Appearance="Danger"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Click="DeleteTarget_Click"/>
-                        </Grid>
-
-                        <!-- Link Name -->
-                        <TextBlock Text="{DynamicResource Str_Accounts_TargetNameLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <ui:TextBox Grid.Column="0"
-                                        PlaceholderText="{DynamicResource Str_Accounts_TargetNamePlaceholder}"
-                                        Text="{Binding AccountManagement.TargetName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                        Margin="0,0,6,0"/>
-                            <ui:Button Grid.Column="1"
-                                       Content="{DynamicResource Str_Accounts_SaveTarget}"
-                                       IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                       Click="SaveTarget_Click"/>
-                        </Grid>
-
-                        <!-- Target Mode Selector -->
-                        <TextBlock Text="{DynamicResource Str_Accounts_TargetModeLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <ComboBox SelectedIndex="{Binding AccountManagement.TargetModeSelectedIndex, Mode=TwoWay}"
-                                  IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                  Margin="0,0,0,8">
-                            <ComboBoxItem Content="{DynamicResource Str_Accounts_TargetModeServer}"/>
-                            <ComboBoxItem Content="{DynamicResource Str_Accounts_TargetModeFollowUser}"/>
-                        </ComboBox>
-
-                        <!-- Target Input -->
-                        <TextBlock Text="{Binding AccountManagement.TargetInputLabelText}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                        <ui:TextBox PlaceholderText="{Binding AccountManagement.TargetInputPlaceholderText}"
-                                    Text="{Binding AccountManagement.LaunchTargetInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                    Margin="0,0,0,8"/>
-
-                        <!-- Resolving Game Info Indicator -->
-                        <StackPanel Orientation="Horizontal"
-                                    Margin="0,0,0,8"
-                                    Visibility="{Binding AccountManagement.IsResolvingGameInfo, Converter={StaticResource BoolToVisibilityConverter}}">
-                            <ui:ProgressRing Width="14"
-                                             Height="14"
-                                             IsIndeterminate="True"
-                                             Margin="0,0,8,0"
-                                             VerticalAlignment="Center"/>
-                            <TextBlock Text="{DynamicResource Str_Accounts_ResolvingTarget}"
-                                       FontSize="11.5"
-                                       Opacity="0.72"
-                                       VerticalAlignment="Center"/>
-                        </StackPanel>
-
-                        <!-- Resolved Game Info Preview -->
-                        <Border Visibility="{Binding AccountManagement.HasResolvedGameInfo, Converter={StaticResource BoolToVisibilityConverter}}"
-                                CornerRadius="6"
-                                Padding="8"
-                                Margin="0,0,0,8"
-                                Background="{DynamicResource ControlFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                                BorderThickness="1">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0"
-                                        Width="40"
-                                        Height="40"
-                                        ClipToBounds="True"
-                                        Margin="0,0,10,0"
-                                        Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
-                                    <Border.Style>
-                                        <Style TargetType="Border">
-                                            <Setter Property="CornerRadius" Value="6"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding AccountManagement.IsResolvedPreviewCircular}" Value="True">
-                                                    <Setter Property="CornerRadius" Value="20"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </Border.Style>
-                                    <Image Source="{Binding AccountManagement.ResolvedGameThumbnailUrl}" Stretch="UniformToFill"/>
-                                </Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding AccountManagement.ResolvedGameName}"
-                                               FontWeight="SemiBold"
-                                               FontSize="12.5"
-                                               TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding AccountManagement.ResolvedGamePlaceIdText}"
-                                               FontSize="11"
-                                               Opacity="0.68"/>
-                                </StackPanel>
-                            </Grid>
-                        </Border>
-
-                        <!-- Optional JobId -->
-                        <StackPanel Visibility="{Binding AccountManagement.IsJobIdInputVisible, Converter={StaticResource BoolToVisibilityConverter}}">
-                            <TextBlock Text="{DynamicResource Str_Accounts_JobIdLabel}" FontSize="12" Opacity="0.8" Margin="0,0,0,4"/>
-                            <ui:TextBox PlaceholderText="{DynamicResource Str_Accounts_JobIdPlaceholder}"
-                                        Text="{Binding AccountManagement.LaunchJobId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                        Margin="0,0,0,8"/>
-                        </StackPanel>
-
-                        <ui:Button Content="{DynamicResource Str_Accounts_LaunchSelected}"
-                                   Appearance="Secondary"
-                                   HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                   Margin="0,4,0,8"
-                                   Click="LaunchSelected_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_LaunchChecked}"
-                                   Appearance="Primary"
-                                   HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding AccountManagement.IsNotLaunching}"
-                                   Margin="0,0,0,8"
-                                   Click="LaunchChecked_Click"/>
-                        <ui:Button Content="{DynamicResource Str_Accounts_CancelLaunch}"
-                                   Appearance="Danger"
-                                   HorizontalAlignment="Stretch"
-                                   IsEnabled="{Binding AccountManagement.CanCancelLaunch}"
-                                   Click="CancelLaunch_Click"/>
-                    </StackPanel>
-                </Border>
-            </ScrollViewer>
         </Grid>
-
-        <!-- Resizable Splitter -->
-        <GridSplitter Grid.Row="2"
-                      Height="6"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Center"
-                      ResizeDirection="Rows"
-                      ShowsPreview="False"
-                      Background="Transparent"
-                      Cursor="SizeNS"/>
-
-        <!-- 3. Activity Log Bar -->
-        <Border Grid.Row="3"
-                CornerRadius="8"
-                Padding="12,8"
-                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
-                BorderThickness="1">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
-
-                <Grid Grid.Row="0" Margin="0,0,0,6">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0"
-                               Text="{DynamicResource Str_Accounts_ActivityLogHeader}"
-                               FontSize="13"
-                               FontWeight="SemiBold"
-                               TextTrimming="CharacterEllipsis"
-                               Margin="0,0,8,0"
-                               VerticalAlignment="Center"/>
-                    <ui:Button Grid.Column="1"
-                               Content="{DynamicResource Str_Accounts_ClearLog}"
-                               Padding="8,3"
-                               HorizontalAlignment="Right"
-                               Click="ClearLog_Click"/>
-                </Grid>
-
-                <TextBox x:Name="LogTextBox"
-                         Grid.Row="1"
-                         Text="{Binding AccountManagement.ActivityLogText, Mode=OneWay}"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         VerticalContentAlignment="Top"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         Padding="8,4"
-                         Foreground="{DynamicResource TextFillColorPrimaryBrush}"
-                         Background="{DynamicResource ControlFillColorDefaultBrush}"
-                         BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"/>
-            </Grid>
-        </Border>
-    </Grid>
+    </ScrollViewer>
 </Page>

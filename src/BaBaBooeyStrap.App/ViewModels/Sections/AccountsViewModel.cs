@@ -317,48 +317,72 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         get => _selectedSavedTarget;
         set
         {
-            if (SetProperty(ref _selectedSavedTarget, value) && value is not null)
+            if (SetProperty(ref _selectedSavedTarget, value))
             {
-                TargetName = value.Name;
-                LaunchTargetInput = value.TargetInput;
-                LaunchJobId = value.JobId ?? string.Empty;
-                try
+                if (value is not null)
                 {
-                    var parsed = RobloxLauncher.ParseTargetInput(value.TargetInput);
-                    IsFollowUserTargetMode = parsed.Kind == LaunchTargetKind.FollowUser;
-                }
-                catch
-                {
-                    IsFollowUserTargetMode = false;
-                }
-
-                if (value.PlaceId is > 0 && !string.IsNullOrWhiteSpace(value.GameName))
-                {
-                    var info = new RobloxGameInfo(value.PlaceId.Value, 0, value.GameName, value.ThumbnailUrl);
-                    if (!string.IsNullOrWhiteSpace(value.ThumbnailUrl))
+                    TargetName = value.Name;
+                    LaunchTargetInput = value.TargetInput;
+                    LaunchJobId = value.JobId ?? string.Empty;
+                    try
                     {
-                        _gameInfoCache.TryAdd(value.PlaceId.Value, info);
+                        var parsed = RobloxLauncher.ParseTargetInput(value.TargetInput);
+                        IsFollowUserTargetMode = parsed.Kind == LaunchTargetKind.FollowUser;
                     }
-                    ApplyResolvedGameInfo(info);
-                }
-                else if (value.UserId is > 0 &&
-                         !string.IsNullOrWhiteSpace(value.GameName) &&
-                         !string.IsNullOrWhiteSpace(value.ThumbnailUrl))
-                {
-                    _gameInfoCts?.Cancel();
-                    _gameInfoCts?.Dispose();
-                    _gameInfoCts = null;
+                    catch
+                    {
+                        IsFollowUserTargetMode = false;
+                    }
 
-                    var userInfo = new UserPreviewInfo(
-                        value.UserId.Value,
-                        value.Name,
-                        value.GameName,
-                        value.ThumbnailUrl,
-                        FormattedLabel: value.GameName);
-                    ApplyResolvedUserInfo(userInfo);
+                    if (value.PlaceId is > 0 && !string.IsNullOrWhiteSpace(value.GameName))
+                    {
+                        var info = new RobloxGameInfo(value.PlaceId.Value, 0, value.GameName, value.ThumbnailUrl);
+                        if (!string.IsNullOrWhiteSpace(value.ThumbnailUrl))
+                        {
+                            _gameInfoCache.TryAdd(value.PlaceId.Value, info);
+                        }
+                        ApplyResolvedGameInfo(info);
+                    }
+                    else if (value.UserId is > 0 &&
+                             !string.IsNullOrWhiteSpace(value.GameName) &&
+                             !string.IsNullOrWhiteSpace(value.ThumbnailUrl))
+                    {
+                        _gameInfoCts?.Cancel();
+                        _gameInfoCts?.Dispose();
+                        _gameInfoCts = null;
+
+                        var userInfo = new UserPreviewInfo(
+                            value.UserId.Value,
+                            value.Name,
+                            value.GameName,
+                            value.ThumbnailUrl,
+                            FormattedLabel: value.GameName);
+                        ApplyResolvedUserInfo(userInfo);
+                    }
                 }
+
+                OnPropertyChanged(nameof(CanDeleteTarget));
             }
         }
+    }
+
+    public bool CanDeleteTarget => IsNotLaunching && ResolveTargetForDelete() != null;
+
+    public SavedJoinTarget? ResolveTargetForDelete()
+    {
+        if (SelectedSavedTarget != null)
+        {
+            return SelectedSavedTarget;
+        }
+
+        string trimmed = _targetName.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return null;
+        }
+
+        return SavedTargets.FirstOrDefault(t =>
+            string.Equals(t.Name, trimmed, StringComparison.OrdinalIgnoreCase));
     }
 
     public bool IsFollowUserTargetMode
@@ -422,9 +446,13 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         get => _targetName;
         set
         {
-            if (SetProperty(ref _targetName, value ?? string.Empty) && _stateManager != null)
+            if (SetProperty(ref _targetName, value ?? string.Empty))
             {
-                _stateManager.Prop.LastTargetName = _targetName.Trim();
+                if (_stateManager != null)
+                {
+                    _stateManager.Prop.LastTargetName = _targetName.Trim();
+                }
+                OnPropertyChanged(nameof(CanDeleteTarget));
             }
         }
     }
@@ -515,6 +543,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(IsNotLaunching));
                 OnPropertyChanged(nameof(CanCancelLaunch));
                 OnPropertyChanged(nameof(IsAccountReorderEnabled));
+                OnPropertyChanged(nameof(CanDeleteTarget));
             }
         }
     }
@@ -611,6 +640,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         }
 
         FilteredAccountItems.Refresh();
+        SyncAccountRunningStates(RunningInstances);
         OnPropertyChanged(nameof(AccountCountText));
     }
 
@@ -629,6 +659,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
             Core.Logging.Logger.WarnStatic("AccountsViewModel", $"Failed to load saved join targets: {ex.Message}");
             AppendActivityLog($"Failed to load saved join targets: {ex.Message}");
         }
+        OnPropertyChanged(nameof(CanDeleteTarget));
     }
 
     private void RestoreSavedTargetState()
@@ -847,6 +878,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
 
             _accountStore?.Upsert(existing);
             existingItem.Refresh();
+            SyncAccountRunningStates(RunningInstances);
             SelectedAccountItem = existingItem;
             _setLocalizedStatus("Str_Accounts_StatusAdded", [existing.Username]);
             AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_StatusAdded", existing.Username));
@@ -867,6 +899,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
             AccountItems.Add(newItem);
             SelectedAccountItem = newItem;
             FilteredAccountItems.Refresh();
+            SyncAccountRunningStates(RunningInstances);
             OnPropertyChanged(nameof(AccountCountText));
         }
 
@@ -1248,6 +1281,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
 
         _joinTargetStore.Upsert(saved);
         SelectedSavedTarget = saved;
+        OnPropertyChanged(nameof(CanDeleteTarget));
 
         _setLocalizedStatus("Str_Accounts_StatusSavedTargetFormat", [saved.Name]);
         AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSavedTargetFormat", saved.Name, saved.TargetInput));
@@ -1724,7 +1758,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
 
     public bool DeleteSelectedJoinTarget()
     {
-        if (SelectedSavedTarget is not SavedJoinTarget selected)
+        if (ResolveTargetForDelete() is not SavedJoinTarget selected)
         {
             _setLocalizedStatus("Str_Accounts_StatusSelectTargetToDelete", Array.Empty<object?>());
             return false;
@@ -1733,8 +1767,17 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         _joinTargetStore.Delete(selected.Id);
         string deletedName = selected.Name;
         SavedTargets.Remove(selected);
-        SelectedSavedTarget = null;
+        if (ReferenceEquals(SelectedSavedTarget, selected))
+        {
+            SelectedSavedTarget = null;
+        }
 
+        if (string.Equals(_targetName.Trim(), deletedName, StringComparison.OrdinalIgnoreCase))
+        {
+            TargetName = string.Empty;
+        }
+
+        OnPropertyChanged(nameof(CanDeleteTarget));
         _setLocalizedStatus("Str_Accounts_StatusDeletedTargetFormat", [deletedName]);
         AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogDeletedTargetFormat", deletedName));
         return true;
@@ -1789,6 +1832,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
                 if (importedAccounts > 0)
                 {
                     FilteredAccountItems.Refresh();
+                    SyncAccountRunningStates(RunningInstances);
                     OnPropertyChanged(nameof(AccountCountText));
                 }
             }
@@ -1820,6 +1864,11 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
                     existingNames.Add(importedTarget.Name);
                     existingIds.Add(importedTarget.Id);
                     importedTargets++;
+                }
+
+                if (importedTargets > 0)
+                {
+                    OnPropertyChanged(nameof(CanDeleteTarget));
                 }
             }
 
@@ -2027,151 +2076,166 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
                 ct.ThrowIfCancellationRequested();
 
                 var item = targets[i];
-                _setLocalizedStatus("Str_Accounts_StatusLaunchingItemFormat", [item.Username, i + 1, targets.Count]);
-                AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_StatusLaunchingItemFormat", item.Username, i + 1, targets.Count));
-
-                if (item.Account.RobloxSettings?.HasOverrides == true)
-                {
-                    try
-                    {
-                        if (lastAppliedOverride)
-                        {
-                            _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
-                        }
-
-                        _globalSettingsGuard.ApplyProfileForLaunch(item.Account.RobloxSettings);
-                        lastAppliedOverride = true;
-                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogAppliedSettingsFormat", item.Username, item.SettingsSummary));
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogApplySettingsFailedFormat", item.Username, ex.Message));
-                    }
-                }
-                else if (lastAppliedOverride)
-                {
-                    try
-                    {
-                        _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
-                        lastAppliedOverride = false;
-                    }
-                    catch (Exception ex)
-                    {
-                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsRestoreFailedFormat", ex.Message));
-                    }
-                }
-
-                var previousPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
-                bool launchSucceeded = false;
-
-                var itemTarget = allocatedJobIds != null &&
-                                 i < allocatedJobIds.Count &&
-                                 !string.IsNullOrWhiteSpace(allocatedJobIds[i])
-                    ? parsedTarget with { JobId = allocatedJobIds[i] }
-                    : parsedTarget;
-                bool skipMatchmakingForItem = allocatedJobIds != null;
-
+                item.SetLaunching(true);
                 try
                 {
-                    LaunchResult result = _launcher is BootstrapperOrchestrator orch
-                        ? await orch.LaunchAccountAsync(
-                            item.Account,
-                            itemTarget,
-                            null,
-                            null,
-                            skipDeploymentCheck: true,
-                            skipBetterMatchmaking: skipMatchmakingForItem,
-                            ct)
-                        : await _launcher.LaunchAccountAsync(item.Account, itemTarget, ct);
+                    _setLocalizedStatus("Str_Accounts_StatusLaunchingItemFormat", [item.Username, i + 1, targets.Count]);
+                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_StatusLaunchingItemFormat", item.Username, i + 1, targets.Count));
 
-                    lastResult = result;
-                    if (result.Success)
+                    if (item.Account.RobloxSettings?.HasOverrides == true)
                     {
-                        _accountStore?.Upsert(item.Account);
-                        item.Refresh();
-                        item.SetCookieHealth(AccountCookieHealth.Valid);
-                        successCount++;
-                        launchSucceeded = true;
-
-                        if (result.ProcessId.HasValue)
+                        try
                         {
-                            pidsToProtect.Add(result.ProcessId.Value);
+                            if (lastAppliedOverride)
+                            {
+                                _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
+                            }
+
+                            _globalSettingsGuard.ApplyProfileForLaunch(item.Account.RobloxSettings);
+                            lastAppliedOverride = true;
+                            AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogAppliedSettingsFormat", item.Username, item.SettingsSummary));
                         }
-
-                        AppendActivityLog(LocalizationService.Instance.Format(
-                            "Str_Accounts_LogLaunchedItemFormat",
-                            item.Username,
-                            result.Target.PlaceId?.ToString() ?? (result.Target.UserId?.ToString() ?? "-"),
-                            result.Target.Kind));
-                    }
-                    else
-                    {
-                        if (result.AuthHttpStatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                        catch (Exception ex)
                         {
-                            item.SetCookieHealth(AccountCookieHealth.Invalid, result.ErrorMessage);
-                        }
-                        AppendActivityLog(LocalizationService.Instance.Format(
-                            "Str_Accounts_LogLaunchItemFailedFormat",
-                            item.Username,
-                            result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback")));
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (RobloxApiException ex)
-                {
-                    string detail = $"{ex.StatusCode}: {ex.Message}";
-                    if (ex.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-                    {
-                        item.SetCookieHealth(AccountCookieHealth.Invalid, detail);
-                    }
-                    lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
-                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, detail));
-                }
-                catch (Exception ex)
-                {
-                    lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
-                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, ex.Message));
-                }
-
-                bool hasOverrideForItem = item.Account.RobloxSettings?.HasOverrides == true;
-                bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || hasOverrideForItem);
-                if (shouldWaitForWindow)
-                {
-                    int timeoutSeconds = Math.Max(1, (int)Math.Ceiling(WindowWaitTimeout.TotalSeconds));
-                    _setLocalizedStatus("Str_Accounts_StatusWaitingWindowFormat", [item.Username, timeoutSeconds]);
-                    AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogWaitingWindowFormat", item.Username));
-
-                    var waitResult = await _processSupervisor!.WaitForNewClientMainWindowAsync(
-                        previousPids,
-                        WindowWaitTimeout,
-                        ProcessSupervisor.DefaultWindowPollInterval,
-                        ct);
-
-                    if (waitResult.ProcessId.HasValue)
-                    {
-                        pidsToProtect.Add(waitResult.ProcessId.Value);
-                    }
-
-                    if (waitResult.WindowReady)
-                    {
-                        AppendActivityLog(i < targets.Count - 1
-                            ? LocalizationService.Instance.Format("Str_Accounts_LogWindowReadyNextFormat", item.Username, waitResult.ProcessId)
-                            : LocalizationService.Instance.Format("Str_Accounts_LogWindowReadySingleFormat", item.Username, waitResult.ProcessId));
-
-                        if (hasOverrideForItem && _settingsApplySettleDelay > TimeSpan.Zero)
-                        {
-                            await Task.Delay(_settingsApplySettleDelay, ct);
+                            AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogApplySettingsFailedFormat", item.Username, ex.Message));
                         }
                     }
-                    else if (waitResult.TimedOut)
+                    else if (lastAppliedOverride)
                     {
-                        AppendActivityLog(i < targets.Count - 1
-                            ? LocalizationService.Instance.Format("Str_Accounts_LogWindowTimeoutNextFormat", item.Username, timeoutSeconds)
-                            : LocalizationService.Instance.Format("Str_Accounts_LogWindowTimeoutSingleFormat", item.Username, timeoutSeconds));
+                        try
+                        {
+                            _globalSettingsGuard.RestoreOriginalAndProtect(Array.Empty<int>(), enableReadOnlyProtection: false);
+                            lastAppliedOverride = false;
+                        }
+                        catch (Exception ex)
+                        {
+                            AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogSettingsRestoreFailedFormat", ex.Message));
+                        }
                     }
+
+                    var previousPids = _processSupervisor?.CaptureRunningClientPids() ?? new HashSet<int>();
+                    bool launchSucceeded = false;
+
+                    var itemTarget = allocatedJobIds != null &&
+                                     i < allocatedJobIds.Count &&
+                                     !string.IsNullOrWhiteSpace(allocatedJobIds[i])
+                        ? parsedTarget with { JobId = allocatedJobIds[i] }
+                        : parsedTarget;
+                    bool skipMatchmakingForItem = allocatedJobIds != null;
+
+                    try
+                    {
+                        LaunchResult result = _launcher is BootstrapperOrchestrator orch
+                            ? await orch.LaunchAccountAsync(
+                                item.Account,
+                                itemTarget,
+                                null,
+                                null,
+                                skipDeploymentCheck: true,
+                                skipBetterMatchmaking: skipMatchmakingForItem,
+                                ct)
+                            : await _launcher.LaunchAccountAsync(item.Account, itemTarget, ct);
+
+                        lastResult = result;
+                        if (result.Success)
+                        {
+                            _accountStore?.Upsert(item.Account);
+                            item.Refresh();
+                            item.SetCookieHealth(AccountCookieHealth.Valid);
+                            successCount++;
+                            launchSucceeded = true;
+
+                            if (result.ProcessId.HasValue)
+                            {
+                                pidsToProtect.Add(result.ProcessId.Value);
+                            }
+
+                            AppendActivityLog(LocalizationService.Instance.Format(
+                                "Str_Accounts_LogLaunchedItemFormat",
+                                item.Username,
+                                result.Target.PlaceId?.ToString() ?? (result.Target.UserId?.ToString() ?? "-"),
+                                result.Target.Kind));
+                        }
+                        else
+                        {
+                            if (result.AuthHttpStatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                            {
+                                item.SetCookieHealth(AccountCookieHealth.Invalid, result.ErrorMessage);
+                            }
+                            AppendActivityLog(LocalizationService.Instance.Format(
+                                "Str_Accounts_LogLaunchItemFailedFormat",
+                                item.Username,
+                                result.ErrorMessage ?? LocalizationService.Instance.GetString("Str_Dialog_LaunchFailedFallback")));
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (RobloxApiException ex)
+                    {
+                        string detail = $"{ex.StatusCode}: {ex.Message}";
+                        if (ex.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+                        {
+                            item.SetCookieHealth(AccountCookieHealth.Invalid, detail);
+                        }
+                        lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
+                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, detail));
+                    }
+                    catch (Exception ex)
+                    {
+                        lastResult = new LaunchResult(false, string.Empty, itemTarget, DateTimeOffset.UtcNow, null, ex.Message);
+                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogLaunchItemFailedFormat", item.Username, ex.Message));
+                    }
+
+                    bool hasOverrideForItem = item.Account.RobloxSettings?.HasOverrides == true;
+                    bool shouldWaitForWindow = launchSucceeded && _processSupervisor != null && (i < targets.Count - 1 || hasOverrideForItem);
+                    if (shouldWaitForWindow)
+                    {
+                        int timeoutSeconds = Math.Max(1, (int)Math.Ceiling(WindowWaitTimeout.TotalSeconds));
+                        _setLocalizedStatus("Str_Accounts_StatusWaitingWindowFormat", [item.Username, timeoutSeconds]);
+                        AppendActivityLog(LocalizationService.Instance.Format("Str_Accounts_LogWaitingWindowFormat", item.Username));
+
+                        var waitResult = await _processSupervisor!.WaitForNewClientMainWindowAsync(
+                            previousPids,
+                            WindowWaitTimeout,
+                            ProcessSupervisor.DefaultWindowPollInterval,
+                            ct);
+
+                        if (waitResult.ProcessId.HasValue)
+                        {
+                            pidsToProtect.Add(waitResult.ProcessId.Value);
+                        }
+
+                        if (waitResult.WindowReady)
+                        {
+                            AppendActivityLog(i < targets.Count - 1
+                                ? LocalizationService.Instance.Format("Str_Accounts_LogWindowReadyNextFormat", item.Username, waitResult.ProcessId)
+                                : LocalizationService.Instance.Format("Str_Accounts_LogWindowReadySingleFormat", item.Username, waitResult.ProcessId));
+
+                            if (hasOverrideForItem && _settingsApplySettleDelay > TimeSpan.Zero)
+                            {
+                                await Task.Delay(_settingsApplySettleDelay, ct);
+                            }
+                        }
+                        else if (waitResult.TimedOut)
+                        {
+                            AppendActivityLog(i < targets.Count - 1
+                                ? LocalizationService.Instance.Format("Str_Accounts_LogWindowTimeoutNextFormat", item.Username, timeoutSeconds)
+                                : LocalizationService.Instance.Format("Str_Accounts_LogWindowTimeoutSingleFormat", item.Username, timeoutSeconds));
+                        }
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        RefreshRunningInstances();
+                    }
+                    catch
+                    {
+                    }
+                    item.SetLaunching(false);
                 }
             }
 
@@ -2335,6 +2399,27 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
         _setLocalizedStatus("Str_Accounts_StatusTiledFormat", [count]);
     }
 
+    internal void SyncAccountRunningStates(IReadOnlyList<RunningRobloxInstance> instances)
+    {
+        foreach (var item in AccountItems)
+        {
+            RunningRobloxInstance? matched = instances
+                .Where(inst =>
+                    (inst.AccountId.HasValue && inst.AccountId.Value == item.Id) ||
+                    (item.UserId > 0 && inst.UserId.HasValue && inst.UserId.Value == item.UserId) ||
+                    (!string.IsNullOrWhiteSpace(inst.Username) &&
+                     string.Equals(inst.Username, item.Username, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(inst =>
+                    inst.AccountId.HasValue && inst.AccountId.Value == item.Id ? 0 :
+                    (item.UserId > 0 && inst.UserId.HasValue && inst.UserId.Value == item.UserId ? 1 : 2))
+                .ThenByDescending(inst => inst.IsFocused)
+                .ThenBy(inst => inst.SlotIndex)
+                .FirstOrDefault();
+
+            item.UpdateRunningState(matched);
+        }
+    }
+
     private void UpdateRunningInstancesOnDispatcher(IReadOnlyList<RunningRobloxInstance> instances)
     {
         void Apply()
@@ -2344,6 +2429,7 @@ public sealed class AccountsViewModel : ViewModelBase, IDisposable
             {
                 RunningInstances.Add(inst);
             }
+            SyncAccountRunningStates(instances);
             OnPropertyChanged(nameof(HasRunningInstances));
             OnPropertyChanged(nameof(AvailableMonitors));
             OnPropertyChanged(nameof(HasMultipleMonitors));

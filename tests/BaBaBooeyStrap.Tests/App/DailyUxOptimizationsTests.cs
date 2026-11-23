@@ -14,6 +14,7 @@ using BaBaBooeyStrap.Core.Models.Enums;
 using BaBaBooeyStrap.Core.Roblox;
 using BaBaBooeyStrap.Core.Storage;
 using BaBaBooeyStrap.Integrations.Custom;
+using BaBaBooeyStrap.Integrations.Window;
 using FluentAssertions;
 using Xunit;
 
@@ -511,6 +512,191 @@ public sealed class DailyUxOptimizationsTests : IDisposable
         {
             LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. AccountsPage UX: Running State, Merged Target Selector & Segmented Mode
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AccountItem_RunningStateTransitions_UpdateStatusColorsAndTooltips()
+    {
+        LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
+        try
+        {
+            var account = new RobloxAccount { UserId = 1001, Username = "PlayerOne", DisplayName = "PlayerOne" };
+            var item = new AccountItem(account);
+
+            item.RunState.Should().Be(AccountRunState.NotRunning);
+            item.IsRunning.Should().BeFalse();
+            item.RunStatusText.Should().Be("Idle");
+            item.RunStatusColorHex.Should().Be("#FF9CA3AF");
+            item.RunStatusToolTip.Should().Contain("No running Roblox window");
+
+            item.SetLaunching(true);
+            item.RunState.Should().Be(AccountRunState.Launching);
+            item.IsRunning.Should().BeFalse();
+            item.RunStatusText.Should().Be("Launching");
+            item.RunStatusColorHex.Should().Be("#FF3B82F6");
+            item.RunStatusToolTip.Should().Contain("Launching Roblox");
+
+            var focusedInstance = new RunningRobloxInstance(
+                ProcessId: 4321,
+                WindowHandle: 100,
+                SlotIndex: 2,
+                AccountId: account.Id,
+                UserId: 1001,
+                Username: "PlayerOne",
+                DisplayName: "PlayerOne",
+                Notes: null,
+                IsExternal: false,
+                IsMinimized: false,
+                IsFocused: true,
+                MonitorDeviceName: "\\\\.\\DISPLAY1",
+                MonitorIndex: 1,
+                StartedAtUtc: DateTimeOffset.UtcNow);
+
+            item.UpdateRunningState(focusedInstance);
+            item.RunState.Should().Be(AccountRunState.Running);
+            item.IsRunning.Should().BeTrue();
+            item.IsRunningFocused.Should().BeTrue();
+            item.RunningProcessId.Should().Be(4321);
+            item.RunningSlotIndex.Should().Be(2);
+            item.RunningMonitorIndex.Should().Be(1);
+            item.RunStatusText.Should().Be("Running");
+            item.RunStatusColorHex.Should().Be("#FF10B981");
+            item.RunStatusToolTip.Should().Contain("Focused").And.Contain("#2").And.Contain("PID 4321").And.Contain("M1");
+
+            // Clearing launching flag while process is running must preserve Running state
+            item.SetLaunching(false);
+            item.RunState.Should().Be(AccountRunState.Running);
+
+            var minimizedInstance = focusedInstance with { IsMinimized = true, IsFocused = false, MonitorIndex = 2 };
+            item.UpdateRunningState(minimizedInstance);
+            item.RunState.Should().Be(AccountRunState.Minimized);
+            item.IsRunning.Should().BeTrue();
+            item.IsRunningFocused.Should().BeFalse();
+            item.RunStatusText.Should().Be("Minimized");
+            item.RunStatusColorHex.Should().Be("#FFF59E0B");
+            item.RunStatusToolTip.Should().Contain("Minimized").And.Contain("M2");
+
+            item.UpdateRunningState(null);
+            item.RunState.Should().Be(AccountRunState.NotRunning);
+            item.IsRunning.Should().BeFalse();
+            item.RunningProcessId.Should().BeNull();
+        }
+        finally
+        {
+            LocalizationService.Instance.ApplyLanguage(AppLanguage.English);
+        }
+    }
+
+    [Fact]
+    public void AccountsViewModel_SyncAccountRunningStates_MatchesAndPrioritizesFocusedInstance()
+    {
+        var paths = new PathProvider(_tempDir);
+        var settings = new Settings { Language = AppLanguage.English };
+        var accountStore = new DpapiAccountStore(paths.AccountsFile);
+        var accById = new RobloxAccount { UserId = 101, Username = "MatchById", DisplayName = "MatchById" };
+        var accByUserId = new RobloxAccount { UserId = 202, Username = "OldName", DisplayName = "OldName" };
+        var accByUsername = new RobloxAccount { UserId = 0, Username = "MatchByName", DisplayName = "MatchByName" };
+        accountStore.Upsert(accById);
+        accountStore.Upsert(accByUserId);
+        accountStore.Upsert(accByUsername);
+
+        using var vm = new AccountsViewModel(
+            settings,
+            paths,
+            accountStore,
+            new JoinTargetStore(paths.TargetsFile),
+            multiInstanceController: null,
+            processSupervisor: null,
+            launcher: null,
+            new BaBaBooeyStrap.Bootstrapper.Settings.GlobalSettingsManager(paths.RobloxGlobalSettings),
+            stateManager: null,
+            setLocalizedStatus: (_, _) => { });
+
+        var instances = new List<RunningRobloxInstance>
+        {
+            new(1111, 1, 1, accById.Id, 101, "MatchById", "MatchById", null, false, false, false, null, 1, DateTimeOffset.UtcNow),
+            new(2222, 2, 2, accById.Id, 101, "MatchById", "MatchById", null, false, false, true, null, 2, DateTimeOffset.UtcNow),
+            new(3333, 3, 3, Guid.NewGuid(), 202, "RenamedUser", "RenamedUser", null, false, true, false, null, 1, DateTimeOffset.UtcNow),
+            new(4444, 4, 4, null, null, "matchbyname", "matchbyname", null, true, false, false, null, 1, DateTimeOffset.UtcNow)
+        };
+
+        vm.SyncAccountRunningStates(instances);
+
+        var item1 = vm.AccountItems.Single(a => a.Id == accById.Id);
+        item1.RunState.Should().Be(AccountRunState.Running);
+        item1.RunningProcessId.Should().Be(2222);
+        item1.IsRunningFocused.Should().BeTrue();
+
+        var item2 = vm.AccountItems.Single(a => a.Id == accByUserId.Id);
+        item2.RunState.Should().Be(AccountRunState.Minimized);
+        item2.RunningProcessId.Should().Be(3333);
+
+        var item3 = vm.AccountItems.Single(a => a.Id == accByUsername.Id);
+        item3.RunState.Should().Be(AccountRunState.Running);
+        item3.RunningProcessId.Should().Be(4444);
+
+        vm.SyncAccountRunningStates(Array.Empty<RunningRobloxInstance>());
+        vm.AccountItems.Should().OnlyContain(a => a.RunState == AccountRunState.NotRunning && !a.IsRunning);
+    }
+
+    [Fact]
+    public void AccountsViewModel_MergedSavedTargetAndSegmentedMode_WorkCorrectly()
+    {
+        var paths = new PathProvider(_tempDir);
+        var settings = new Settings { Language = AppLanguage.English };
+        var targetStore = new JoinTargetStore(paths.TargetsFile);
+
+        using var vm = new AccountsViewModel(
+            settings,
+            paths,
+            new DpapiAccountStore(paths.AccountsFile),
+            targetStore,
+            multiInstanceController: null,
+            processSupervisor: null,
+            launcher: null,
+            new BaBaBooeyStrap.Bootstrapper.Settings.GlobalSettingsManager(paths.RobloxGlobalSettings),
+            stateManager: null,
+            setLocalizedStatus: (_, _) => { });
+
+        // Segmented control two-way bindings & JobId visibility
+        vm.IsGameServerTargetMode.Should().BeTrue();
+        vm.IsFollowUserModeSelected.Should().BeFalse();
+        vm.IsJobIdInputVisible.Should().BeTrue();
+
+        vm.IsFollowUserModeSelected = true;
+        vm.IsFollowUserTargetMode.Should().BeTrue();
+        vm.IsGameServerTargetMode.Should().BeFalse();
+        vm.IsJobIdInputVisible.Should().BeFalse();
+
+        vm.IsGameServerTargetMode = true;
+        vm.IsFollowUserTargetMode.Should().BeFalse();
+        vm.IsFollowUserModeSelected.Should().BeFalse();
+        vm.IsJobIdInputVisible.Should().BeTrue();
+
+        // Save new target via merged selector TargetName + TargetInput
+        vm.CanDeleteTarget.Should().BeFalse();
+        vm.TargetName = "Private Hub";
+        vm.LaunchTargetInput = "1818";
+        vm.SaveCurrentJoinTarget().Should().BeTrue();
+
+        vm.SavedTargets.Should().ContainSingle(t => t.Name == "Private Hub");
+        vm.SelectedSavedTarget.Should().NotBeNull();
+        vm.CanDeleteTarget.Should().BeTrue();
+
+        // When user clears SelectedSavedTarget (e.g. typing in editable ComboBox) matching name still resolves for delete
+        vm.SelectedSavedTarget = null;
+        vm.TargetName = "private hub";
+        vm.ResolveTargetForDelete().Should().NotBeNull();
+        vm.CanDeleteTarget.Should().BeTrue();
+
+        vm.DeleteSelectedJoinTarget().Should().BeTrue();
+        vm.SavedTargets.Should().BeEmpty();
+        vm.TargetName.Should().BeEmpty();
+        vm.CanDeleteTarget.Should().BeFalse();
     }
 
     private static HttpResponseMessage JsonOk(string json) =>

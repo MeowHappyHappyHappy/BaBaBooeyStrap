@@ -7,8 +7,8 @@
                  Title="{DynamicResource Str_MainWindow_Title}"
                  Width="1120"
                  Height="740"
-                 MinWidth="920"
-                 MinHeight="600"
+                 MinWidth="680"
+                 MinHeight="500"
                  Foreground="{DynamicResource TextFillColorPrimaryBrush}"
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="Mica">
@@ -63,6 +63,9 @@
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0"
                                Text="{Binding AccountManagement.MultiInstanceStatusText}"
+                               ToolTip="{Binding AccountManagement.MultiInstanceStatusText}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="280"
                                FontWeight="SemiBold"
                                Margin="0,0,16,0"
                                VerticalAlignment="Center"/>
@@ -89,9 +92,9 @@
                 </Grid>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
-                    <ui:Button Content="{DynamicResource Str_MainWindow_Save}" Click="Save_Click" Margin="0,0,8,0" MinWidth="90"/>
-                    <ui:Button Content="{DynamicResource Str_MainWindow_SaveAndLaunch}" Appearance="Primary" Click="SaveAndLaunch_Click" Margin="0,0,8,0" MinWidth="120"/>
-                    <ui:Button Content="{DynamicResource Str_MainWindow_Close}" Click="Close_Click" MinWidth="80"/>
+                    <ui:Button Content="{DynamicResource Str_MainWindow_Save}" Click="Save_Click" Margin="0,0,8,0" MinWidth="76"/>
+                    <ui:Button Content="{DynamicResource Str_MainWindow_SaveAndLaunch}" Appearance="Primary" Click="SaveAndLaunch_Click" Margin="0,0,8,0" MinWidth="108"/>
+                    <ui:Button Content="{DynamicResource Str_MainWindow_Close}" Click="Close_Click" MinWidth="72"/>
                 </StackPanel>
             </Grid>
         </Border>

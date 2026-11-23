@@ -14,8 +14,19 @@ namespace BaBaBooeyStrap.App.Views.Pages;
 
 public partial class AccountsPage : Page
 {
+    private const double NarrowPageThreshold = 820;
+    private const double WidePageThreshold = 850;
+    private const double CompactHeightThreshold = 580;
+    private const double ExpandedHeightThreshold = 640;
+
     private readonly DispatcherTimer _statusTimer;
     private AccountsViewModel? _subscribedViewModel;
+    private bool _isNarrowLayout;
+    private bool _isControllerDetailsCollapsed;
+    private bool _userToggledControllerDetails;
+    private bool _isRunningStripCollapsed;
+    private bool _isActivityLogCollapsed;
+    private double _expandedLogHeight = 145;
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;
 
@@ -42,6 +53,8 @@ public partial class AccountsPage : Page
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
         DataContextChanged += OnDataContextChanged;
+        SizeChanged += OnPageSizeChanged;
+        AccountsCard.SizeChanged += OnAccountsCardSizeChanged;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -54,6 +67,8 @@ public partial class AccountsPage : Page
         {
             _ = accVm.BackfillMissingTargetThumbnailsAsync();
         }
+        UpdateResponsiveLayout(ActualWidth, ActualHeight, forceApply: true);
+        UpdateResponsiveGridColumns(AccountsCard.ActualWidth);
         _statusTimer.Start();
         LogTextBox.ScrollToEnd();
     }
@@ -100,6 +115,182 @@ public partial class AccountsPage : Page
         }
 
         LogTextBox.ScrollToEnd();
+    }
+
+    private void OnPageSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        UpdateResponsiveLayout(e.NewSize.Width, e.NewSize.Height);
+    }
+
+    private void OnAccountsCardSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        UpdateResponsiveGridColumns(e.NewSize.Width);
+    }
+
+    private void UpdateResponsiveLayout(double pageWidth, double pageHeight, bool forceApply = false)
+    {
+        if (pageWidth <= 0 || pageHeight <= 0)
+        {
+            return;
+        }
+
+        bool nextNarrow = _isNarrowLayout
+            ? pageWidth < WidePageThreshold
+            : pageWidth < NarrowPageThreshold;
+
+        if (nextNarrow != _isNarrowLayout || forceApply)
+        {
+            _isNarrowLayout = nextNarrow;
+            ApplyWorkspaceLayoutMode();
+        }
+
+        if (!_userToggledControllerDetails)
+        {
+            if (pageHeight < CompactHeightThreshold && !_isControllerDetailsCollapsed)
+            {
+                _isControllerDetailsCollapsed = true;
+                ApplyControllerDetailsCollapsedState();
+            }
+            else if (pageHeight >= ExpandedHeightThreshold && _isControllerDetailsCollapsed)
+            {
+                _isControllerDetailsCollapsed = false;
+                ApplyControllerDetailsCollapsedState();
+            }
+        }
+    }
+
+    private void ApplyWorkspaceLayoutMode()
+    {
+        if (_isNarrowLayout)
+        {
+            PageScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+            RootLayoutGrid.Margin = new Thickness(12, 10, 12, 10);
+            WorkspaceRow.MinHeight = 0;
+            WorkspaceRow.Height = GridLength.Auto;
+
+            TargetColumn.Width = new GridLength(0);
+            WorkspaceRow0.Height = GridLength.Auto;
+            WorkspaceRow1.Height = GridLength.Auto;
+
+            Grid.SetRow(AccountsCard, 0);
+            Grid.SetColumn(AccountsCard, 0);
+            AccountsCard.Margin = new Thickness(0, 0, 0, 10);
+
+            Grid.SetRow(TargetPanelScroll, 1);
+            Grid.SetColumn(TargetPanelScroll, 0);
+            TargetPanelScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+
+            AccountsGrid.MinHeight = 200;
+            AccountsGrid.MaxHeight = 360;
+        }
+        else
+        {
+            PageScrollViewer.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
+            RootLayoutGrid.Margin = new Thickness(20, 12, 20, 12);
+            WorkspaceRow.MinHeight = 220;
+            WorkspaceRow.Height = new GridLength(1, GridUnitType.Star);
+
+            TargetColumn.Width = new GridLength(310);
+            WorkspaceRow0.Height = new GridLength(1, GridUnitType.Star);
+            WorkspaceRow1.Height = GridLength.Auto;
+
+            Grid.SetRow(AccountsCard, 0);
+            Grid.SetColumn(AccountsCard, 0);
+            AccountsCard.Margin = new Thickness(0, 0, 12, 0);
+
+            Grid.SetRow(TargetPanelScroll, 0);
+            Grid.SetColumn(TargetPanelScroll, 1);
+            TargetPanelScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+
+            AccountsGrid.MinHeight = 0;
+            AccountsGrid.MaxHeight = double.PositiveInfinity;
+        }
+
+        ApplyActivityLogCollapsedState();
+    }
+
+    private void UpdateResponsiveGridColumns(double cardWidth)
+    {
+        if (cardWidth <= 0)
+        {
+            return;
+        }
+
+        SettingsSummaryColumn.Visibility = cardWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
+        UserIdColumn.Visibility = cardWidth >= 620 ? Visibility.Visible : Visibility.Collapsed;
+        LastLaunchedColumn.Visibility = cardWidth >= 540 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ApplyControllerDetailsCollapsedState()
+    {
+        ControllerDetailsPanel.Visibility = _isControllerDetailsCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        ControllerDetailsToggle.Content = _isControllerDetailsCollapsed ? "▸" : "▾";
+    }
+
+    private void ApplyRunningStripCollapsedState()
+    {
+        RunningInstancesItems.Visibility = _isRunningStripCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        RunningStripToggle.Content = _isRunningStripCollapsed ? "▸" : "▾";
+        RunningStripHeaderGrid.Margin = _isRunningStripCollapsed ? new Thickness(0) : new Thickness(0, 0, 0, 6);
+    }
+
+    private void ApplyActivityLogCollapsedState()
+    {
+        if (_isActivityLogCollapsed)
+        {
+            if (LogRow.Height.IsAbsolute && LogRow.Height.Value >= 90)
+            {
+                _expandedLogHeight = LogRow.Height.Value;
+            }
+
+            LogTextBox.Visibility = Visibility.Collapsed;
+            ActivityLogSplitter.Visibility = Visibility.Collapsed;
+            LogSplitterRow.Height = new GridLength(0);
+            LogRow.MinHeight = 0;
+            LogRow.Height = GridLength.Auto;
+            ActivityLogHeaderGrid.Margin = new Thickness(0);
+            ActivityLogToggle.Content = "▸";
+            return;
+        }
+
+        LogTextBox.Visibility = Visibility.Visible;
+        ActivityLogHeaderGrid.Margin = new Thickness(0, 0, 0, 6);
+        ActivityLogToggle.Content = "▾";
+        LogRow.MinHeight = 90;
+
+        if (_isNarrowLayout)
+        {
+            ActivityLogSplitter.Visibility = Visibility.Collapsed;
+            LogSplitterRow.Height = new GridLength(0);
+            LogRow.Height = new GridLength(130);
+        }
+        else
+        {
+            ActivityLogSplitter.Visibility = Visibility.Visible;
+            LogSplitterRow.Height = new GridLength(8);
+            LogRow.Height = new GridLength(Math.Max(90, _expandedLogHeight));
+        }
+    }
+
+    private void ToggleControllerDetails_Click(object sender, RoutedEventArgs e)
+    {
+        _userToggledControllerDetails = true;
+        _isControllerDetailsCollapsed = !_isControllerDetailsCollapsed;
+        ApplyControllerDetailsCollapsedState();
+    }
+
+    private void ToggleRunningStrip_Click(object sender, RoutedEventArgs e)
+    {
+        _isRunningStripCollapsed = !_isRunningStripCollapsed;
+        ApplyRunningStripCollapsedState();
+    }
+
+    private void ToggleActivityLog_Click(object sender, RoutedEventArgs e)
+    {
+        _isActivityLogCollapsed = !_isActivityLogCollapsed;
+        ApplyActivityLogCollapsedState();
     }
 
     private void RefreshStatus_Click(object sender, RoutedEventArgs e) =>
@@ -371,7 +562,7 @@ public partial class AccountsPage : Page
         RunSafe("AccountsPage.DeleteTarget", () =>
         {
             if (ViewModel == null) return;
-            if (ViewModel.AccountManagement.SelectedSavedTarget is { } selected)
+            if (ViewModel.AccountManagement.ResolveTargetForDelete() is { } selected)
             {
                 bool confirmed = FluentDialogService.ShowConfirm(
                     LocalizationService.Instance.GetString("Str_Accounts_DeleteTargetConfirmTitle"),
@@ -441,9 +632,18 @@ public partial class AccountsPage : Page
 
     private void AccountsGrid_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
-        bool hasSelection = ViewModel?.AccountManagement.SelectedAccountItem != null;
+        var selected = ViewModel?.AccountManagement.SelectedAccountItem;
+        bool hasSelection = selected != null;
+        bool isRunningWithPid = selected is { IsRunning: true, RunningProcessId: > 0 };
         bool notLaunching = ViewModel?.AccountManagement.IsNotLaunching ?? false;
         bool notVerifying = ViewModel?.AccountManagement.IsNotVerifyingCookies ?? false;
+
+        var windowActionVisibility = isRunningWithPid ? Visibility.Visible : Visibility.Collapsed;
+        CtxFocusWindow.Visibility = windowActionVisibility;
+        CtxFocusWindow.IsEnabled = isRunningWithPid;
+        CtxCloseWindow.Visibility = windowActionVisibility;
+        CtxCloseWindow.IsEnabled = isRunningWithPid;
+        CtxWindowSeparator.Visibility = windowActionVisibility;
 
         CtxLaunchAccount.IsEnabled = hasSelection && notLaunching;
         CtxEditSettings.IsEnabled = hasSelection && notLaunching;
@@ -452,6 +652,24 @@ public partial class AccountsPage : Page
         CtxApplyAfk.IsEnabled = hasSelection && notLaunching;
         CtxRemoveAccount.IsEnabled = hasSelection && notLaunching;
     }
+
+    private void CtxFocusWindow_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.CtxFocusWindow", () =>
+        {
+            if (ViewModel?.AccountManagement.SelectedAccountItem is { RunningProcessId: > 0 } item)
+            {
+                ViewModel.AccountManagement.FocusRunningInstance(item.RunningProcessId.Value);
+            }
+        });
+
+    private void CtxCloseWindow_Click(object sender, RoutedEventArgs e) =>
+        RunSafe("AccountsPage.CtxCloseWindow", () =>
+        {
+            if (ViewModel?.AccountManagement.SelectedAccountItem is { RunningProcessId: > 0 } item)
+            {
+                ViewModel.AccountManagement.CloseRunningInstance(item.RunningProcessId.Value);
+            }
+        });
 
     private void OpenSettingsForSelectedAccount()
     {

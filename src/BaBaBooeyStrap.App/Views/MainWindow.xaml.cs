@@ -21,6 +21,7 @@ public partial class MainWindow : FluentWindow
     private bool _allowRealClose;
     private bool _shownTrayBalloon;
     private bool _initialNavigated;
+    private bool _paneAutoCollapsed;
 
     public MainWindowViewModel ViewModel { get; }
 
@@ -51,12 +52,15 @@ public partial class MainWindow : FluentWindow
         {
             ApplyTheme(ViewModel.WindowIntegrations.CurrentTheme);
             _trayWrapper?.AttachWindow(this);
+            UpdateNavigationPaneForWidth();
             if (!_initialNavigated)
             {
                 _initialNavigated = true;
                 RootNavigation.Navigate(typeof(AccountsPage));
             }
         };
+
+        SizeChanged += (_, _) => UpdateNavigationPaneForWidth();
 
         StateChanged += (_, _) =>
         {
@@ -77,6 +81,25 @@ public partial class MainWindow : FluentWindow
             ThemeService.UnwatchWindow(this);
             ViewModel.Dispose();
         };
+    }
+
+    private void UpdateNavigationPaneForWidth()
+    {
+        if (!IsLoaded || ActualWidth <= 0)
+        {
+            return;
+        }
+
+        if (ActualWidth < 900 && RootNavigation.IsPaneOpen)
+        {
+            RootNavigation.IsPaneOpen = false;
+            _paneAutoCollapsed = true;
+        }
+        else if (ActualWidth >= 980 && _paneAutoCollapsed)
+        {
+            RootNavigation.IsPaneOpen = true;
+            _paneAutoCollapsed = false;
+        }
     }
 
     private void OnWindowThemeChanged(object? sender, Theme theme) => ApplyTheme(theme);

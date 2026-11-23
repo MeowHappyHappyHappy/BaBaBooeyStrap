@@ -1,5 +1,6 @@
 using BaBaBooeyStrap.App.Services;
 using BaBaBooeyStrap.Core.Models;
+using BaBaBooeyStrap.Integrations.Window;
 
 namespace BaBaBooeyStrap.App.ViewModels;
 
@@ -11,9 +12,17 @@ public enum AccountCookieHealth
     Invalid
 }
 
+public enum AccountRunState
+{
+    NotRunning,
+    Launching,
+    Running,
+    Minimized
+}
+
 /// <summary>
 /// Presentation wrapper for <see cref="RobloxAccount"/> that supports selection, inline note editing,
-/// localized setting summaries, and never exposes the raw session cookie to UI bindings.
+/// localized setting summaries, live running state, and never exposes the raw session cookie to UI bindings.
 /// </summary>
 public sealed class AccountItem : ViewModelBase
 {
@@ -22,9 +31,20 @@ public sealed class AccountItem : ViewModelBase
     private const string HexValid = "#FF10B981";
     private const string HexInvalid = "#FFEF4444";
 
+    private const string HexRunRunning = "#FF10B981";
+    private const string HexRunMinimized = "#FFF59E0B";
+    private const string HexRunLaunching = "#FF3B82F6";
+    private const string HexRunIdle = "#FF9CA3AF";
+
     private bool _isChecked;
     private AccountCookieHealth _cookieHealth = AccountCookieHealth.Unknown;
     private string? _cookieHealthDetail;
+    private bool _isLaunching;
+    private AccountRunState _runState = AccountRunState.NotRunning;
+    private int? _runningProcessId;
+    private int? _runningSlotIndex;
+    private int? _runningMonitorIndex;
+    private bool _isRunningFocused;
 
     public AccountItem(RobloxAccount account)
     {
@@ -138,6 +158,131 @@ public sealed class AccountItem : ViewModelBase
             ? _cookieHealthDetail
             : CookieStatusText;
 
+    public AccountRunState RunState => _runState;
+    public bool IsRunning => _runState is AccountRunState.Running or AccountRunState.Minimized;
+    public int? RunningProcessId => _runningProcessId;
+    public int? RunningSlotIndex => _runningSlotIndex;
+    public int? RunningMonitorIndex => _runningMonitorIndex;
+    public bool IsRunningFocused => _isRunningFocused;
+
+    public string RunStatusText
+    {
+        get
+        {
+            var loc = LocalizationService.Instance;
+            return _runState switch
+            {
+                AccountRunState.Running => loc.GetString("Str_Accounts_RunStateRunning"),
+                AccountRunState.Minimized => loc.GetString("Str_Accounts_RunStateMinimized"),
+                AccountRunState.Launching => loc.GetString("Str_Accounts_RunStateLaunching"),
+                _ => loc.GetString("Str_Accounts_RunStateIdle")
+            };
+        }
+    }
+
+    public string RunStatusColorHex => _runState switch
+    {
+        AccountRunState.Running => HexRunRunning,
+        AccountRunState.Minimized => HexRunMinimized,
+        AccountRunState.Launching => HexRunLaunching,
+        _ => HexRunIdle
+    };
+
+    public string RunStatusToolTip
+    {
+        get
+        {
+            var loc = LocalizationService.Instance;
+            int slot = _runningSlotIndex ?? 0;
+            int pid = _runningProcessId ?? 0;
+            int monitor = Math.Max(1, _runningMonitorIndex ?? 1);
+
+            return _runState switch
+            {
+                AccountRunState.Running when _isRunningFocused => loc.Format("Str_Accounts_RunStateFocusedTipFormat", slot, pid, monitor),
+                AccountRunState.Running => loc.Format("Str_Accounts_RunStateRunningTipFormat", slot, pid, monitor),
+                AccountRunState.Minimized => loc.Format("Str_Accounts_RunStateMinimizedTipFormat", slot, pid, monitor),
+                AccountRunState.Launching => loc.GetString("Str_Accounts_RunStateLaunchingTip"),
+                _ => loc.GetString("Str_Accounts_RunStateIdleTip")
+            };
+        }
+    }
+
+    public void UpdateRunningState(RunningRobloxInstance? instance)
+    {
+        int? nextPid = instance?.ProcessId;
+        int? nextSlot = instance?.SlotIndex;
+        int? nextMonitor = instance != null ? Math.Max(1, instance.MonitorIndex) : null;
+        bool nextFocused = instance?.IsFocused ?? false;
+        AccountRunState nextState = instance != null
+            ? (instance.IsMinimized ? AccountRunState.Minimized : AccountRunState.Running)
+            : (_isLaunching ? AccountRunState.Launching : AccountRunState.NotRunning);
+
+        bool stateChanged = _runState != nextState;
+        bool wasRunning = IsRunning;
+        bool pidChanged = _runningProcessId != nextPid;
+        bool slotChanged = _runningSlotIndex != nextSlot;
+        bool monitorChanged = _runningMonitorIndex != nextMonitor;
+        bool focusedChanged = _isRunningFocused != nextFocused;
+
+        if (!stateChanged && !pidChanged && !slotChanged && !monitorChanged && !focusedChanged)
+        {
+            return;
+        }
+
+        _runState = nextState;
+        _runningProcessId = nextPid;
+        _runningSlotIndex = nextSlot;
+        _runningMonitorIndex = nextMonitor;
+        _isRunningFocused = nextFocused;
+
+        if (stateChanged)
+        {
+            OnPropertyChanged(nameof(RunState));
+            OnPropertyChanged(nameof(RunStatusText));
+            OnPropertyChanged(nameof(RunStatusColorHex));
+        }
+
+        if (wasRunning != IsRunning)
+        {
+            OnPropertyChanged(nameof(IsRunning));
+        }
+
+        if (pidChanged) OnPropertyChanged(nameof(RunningProcessId));
+        if (slotChanged) OnPropertyChanged(nameof(RunningSlotIndex));
+        if (monitorChanged) OnPropertyChanged(nameof(RunningMonitorIndex));
+        if (focusedChanged) OnPropertyChanged(nameof(IsRunningFocused));
+
+        OnPropertyChanged(nameof(RunStatusToolTip));
+    }
+
+    public void SetLaunching(bool isLaunching)
+    {
+        if (_isLaunching == isLaunching)
+        {
+            return;
+        }
+
+        _isLaunching = isLaunching;
+        AccountRunState nextState = _runningProcessId.HasValue
+            ? _runState
+            : (_isLaunching ? AccountRunState.Launching : AccountRunState.NotRunning);
+
+        if (_runState != nextState)
+        {
+            bool wasRunning = IsRunning;
+            _runState = nextState;
+            OnPropertyChanged(nameof(RunState));
+            if (wasRunning != IsRunning)
+            {
+                OnPropertyChanged(nameof(IsRunning));
+            }
+            OnPropertyChanged(nameof(RunStatusText));
+            OnPropertyChanged(nameof(RunStatusColorHex));
+            OnPropertyChanged(nameof(RunStatusToolTip));
+        }
+    }
+
     public void SetCookieHealth(AccountCookieHealth health, string? detail = null)
     {
         _cookieHealthDetail = detail;
@@ -171,5 +316,9 @@ public sealed class AccountItem : ViewModelBase
         OnPropertyChanged(nameof(CookieStatusText));
         OnPropertyChanged(nameof(CookieStatusColorHex));
         OnPropertyChanged(nameof(CookieStatusToolTip));
+        OnPropertyChanged(nameof(IsRunning));
+        OnPropertyChanged(nameof(RunStatusText));
+        OnPropertyChanged(nameof(RunStatusColorHex));
+        OnPropertyChanged(nameof(RunStatusToolTip));
     }
 }

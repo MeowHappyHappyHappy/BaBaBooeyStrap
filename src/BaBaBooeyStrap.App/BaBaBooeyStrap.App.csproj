@@ -13,9 +13,9 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationIcon>Resources\Icons\BaBaBooeyStrap.ico</ApplicationIcon>
 
-    <Version>1.2.4</Version>
-    <AssemblyVersion>1.2.4.0</AssemblyVersion>
-    <FileVersion>1.2.4.0</FileVersion>
+    <Version>1.2.5</Version>
+    <AssemblyVersion>1.2.5.0</AssemblyVersion>
+    <FileVersion>1.2.5.0</FileVersion>
     <Product>BaBaBooeyStrap</Product>
     <Company>BaBaBooeyStrap</Company>
     <Authors>BaBaBooeyStrap</Authors>
